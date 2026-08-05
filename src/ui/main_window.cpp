@@ -5252,9 +5252,7 @@ bool MainWindow::prepare_plot(const PlotSpec& spec, core::Vec2& amin, core::Vec2
     // drawing (or stray far-off geometry) inflates an extents-based tolerance so a circle
     // that fills the picked window collapses into a polygon. ~0.3 px chord deviation at
     // 300 DPI keeps every on-page feature smooth while staying cheap for tiny ones.
-    const double area_diag = std::max(core::length(amax - amin), 1e-9);
-    const double paper_diag_px = std::hypot(spec.paper_w_mm, spec.paper_h_mm) / 25.4 * 300.0;
-    const double tol = std::max(area_diag / paper_diag_px * 0.3, 1e-9);
+    const double tol = plot_tolerance(amin, amax, spec.paper_w_mm, spec.paper_h_mm);
     const std::uint64_t v0 = engine_->plot_snapshot_version();
     engine_->submit(core::BuildPlotSnapshotCommand{tol});
     pump_with_progress(QStringLiteral("Preparing plot…"),
@@ -5283,19 +5281,18 @@ void MainWindow::do_plot(const PlotSpec& spec) {
             path += QStringLiteral(".pdf");
         }
         QString err;
-        run_with_progress(QStringLiteral("Plotting…"),
-                          [&](QString&) -> bool {
-                              QPdfWriter w(path);
-                              w.setPageSize(QPageSize(paper, QPageSize::Millimeter));
-                              w.setResolution(300);
-                              paint_plot(w, snap, spec, amin, amax);
-                              return true;
-                          },
-                          err);
-        const QFileInfo fi(path);
-        if (!fi.exists() || fi.size() == 0) {
+        std::string write_err;
+        // write_plot_pdf is the shared device setup + paint_plot call the headless CLI uses;
+        // the GUI adds only the file dialog and the progress modal around it.
+        run_with_progress(
+            QStringLiteral("Plotting…"),
+            [&](QString&) -> bool {
+                return write_plot_pdf(path.toStdString(), snap, spec, amin, amax, write_err);
+            },
+            err);
+        if (!write_err.empty()) {
             QMessageBox::warning(this, QStringLiteral("Plot"),
-                                 QStringLiteral("Could not write the PDF: ") + path);
+                                 QString::fromStdString(write_err));
             return;
         }
         command_widget_->append_line("Plotted to PDF: " + path.toStdString());

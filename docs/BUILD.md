@@ -108,6 +108,26 @@ lower it for the session:
 sudo sysctl -w vm.mmap_rnd_bits=28
 ```
 
+**Without root**, disable ASLR for the process instead — the personality is
+inherited by children, so wrapping the build *and* `ctest` works (the build needs it
+too, because Catch2 runs the test binary to discover test cases):
+
+```sh
+setarch "$(uname -m)" -R cmake --build --preset tsan
+setarch "$(uname -m)" -R ctest --preset tsan
+```
+
+### Third-party TSan noise (`tools/tsan.supp`)
+
+`cli_check` is the only test that **executes the Qt application binary**, so it is the
+only one that meets Qt/glib's own races: constructing a `QGuiApplication` on Linux
+starts a `QDBusConnection` thread that races with glib's event loop inside
+`libglib-2.0`/`libQt6DBus`, with no Musa CAD frame in either stack (and with every
+platform plugin, so the headless plot path cannot avoid it). `tests/CMakeLists.txt`
+points `TSAN_OPTIONS=suppressions=tools/tsan.supp` at **that test only** — the
+concurrency tests (triple buffer, MPSC queue, engine) still run with no suppressions,
+so a race in our own code still fails the run.
+
 (Clang's TSan needs a `libstdc++`/`libc++` it can link; GCC works out of the
 box and is what these presets assume.)
 

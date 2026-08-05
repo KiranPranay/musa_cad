@@ -20,21 +20,13 @@
 namespace musacad::ui {
 
 namespace {
-// Standard paper sizes as (long edge, short edge) in millimetres.
-struct Paper {
-    const char* name;
-    double long_mm;
-    double short_mm;
-};
-constexpr std::array<Paper, 7> kPapers{{
-    {"ISO A4", 297.0, 210.0},
-    {"ISO A3", 420.0, 297.0},
-    {"ISO A2", 594.0, 420.0},
-    {"ISO A1", 841.0, 594.0},
-    {"ISO A0", 1189.0, 841.0},
-    {"ANSI A (Letter)", 279.4, 215.9},
-    {"ANSI B (Tabloid)", 431.8, 279.4},
-}};
+// The paper table lives in plot.cpp (standard_papers()) so the dialog and the
+// headless CLI's --paper resolve the same sheets; this is just a local alias.
+using Paper = PaperSize;
+const std::span<const PaperSize>& papers() {
+    static const std::span<const PaperSize> p = standard_papers();
+    return p;
+}
 } // namespace
 
 PlotDialog::PlotDialog(const PlotSpec& initial, std::vector<std::string> printer_names,
@@ -55,7 +47,7 @@ PlotDialog::PlotDialog(const PlotSpec& initial, std::vector<std::string> printer
     form->addRow(QStringLiteral("Printer/plotter"), target_);
 
     paper_ = new QComboBox(this);
-    for (const Paper& p : kPapers) {
+    for (const Paper& p : papers()) {
         paper_->addItem(QString::fromLatin1(p.name));
     }
     form->addRow(QStringLiteral("Paper size"), paper_);
@@ -163,8 +155,8 @@ void PlotDialog::set_spec(const PlotSpec& s) {
     if (const int i = target_->findData(QString::fromStdString(s.target)); i >= 0) {
         target_->setCurrentIndex(i);
     }
-    for (std::size_t i = 0; i < kPapers.size(); ++i) {
-        if (s.paper == kPapers[i].name) {
+    for (std::size_t i = 0; i < papers().size(); ++i) {
+        if (s.paper == papers()[i].name) {
             paper_->setCurrentIndex(static_cast<int>(i));
         }
     }
@@ -185,7 +177,7 @@ void PlotDialog::set_spec(const PlotSpec& s) {
 PlotSpec PlotDialog::spec() const {
     PlotSpec s = spec_; // carries the picked window corners
     s.target = target_->currentData().toString().toStdString();
-    const Paper& p = kPapers[static_cast<std::size_t>(paper_->currentIndex())];
+    const Paper& p = papers()[static_cast<std::size_t>(paper_->currentIndex())];
     s.paper = p.name;
     s.landscape = orient_->currentIndex() == 0;
     s.paper_w_mm = s.landscape ? p.long_mm : p.short_mm;

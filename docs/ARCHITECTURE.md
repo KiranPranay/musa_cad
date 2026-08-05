@@ -1725,6 +1725,79 @@ Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop
   `QScreen`, so dragging the window between the laptop panel and an external monitor
   self-corrects on the next frame (no explicit screen-change signal needed).
 
+## The plot path, and the command line that rides it (Phase 30 + issue #11)
+
+The PLOT feature landed in Phase 30 but was never written up here; this section states
+the shape it actually has, and the CLI added on top of it.
+
+### One renderer, several devices
+
+Plotting does **not** go through the GL renderer. It is a second *render context* over
+the same snapshot: `ui::paint_plot(QPaintDevice&, snapshot, spec, amin, amax)` walks the
+snapshot's colour batches with `QPainter` (vector line/polygon operators, so a PDF is
+vectors, not a raster). The **device** is the only thing that varies — `QPdfWriter` for
+a PDF, `QPrinter` for a physical printer, `QImage` for the print preview. This is the
+"same entity, two render contexts" pattern the screen-vs-plot lineweight rule already
+uses: `paint_plot` ignores `ColorBatch::is_text` (the screen-only weight boost) and
+honours the entity lineweight in paper millimetres, so on-screen polish never reaches
+paper.
+
+Because plotting consumes the **same `build_render_snapshot` output** as the viewport,
+every derived-not-baked behaviour comes along for free with no plot-specific code:
+linetype dashing at `LTSCALE × CELTSCALE`, hatch fills and line patterns, resolved
+ByLayer colours, off/frozen layer skipping, dimension and block resolution, and text
+layout. There is no plot fork of any of it.
+
+### Tessellation is tied to the plotted region, not the drawing
+
+`ui::plot_tolerance(amin, amax, paper_w, paper_h)` returns ~0.3 px of chord deviation at
+300 DPI **across the area being plotted**. Deriving it from the whole-drawing extents was
+the bug it exists to prevent: one piece of stray far-off geometry inflates the extents,
+and a circle that fills the picked window then collapses into a visible polygon.
+
+### The CLI (issue #11)
+
+`main()` parses the command line **before constructing any Qt object**
+(`musacad::app::parse_cli`, in the Qt-free `musacad_cli` library), which is what lets
+`--help`, `--version` and `--check` run with no display, no windowing system and no GL
+context. See [CLI.md](CLI.md) for the full grammar.
+
+* **`musacad <file>`** submits the existing `OpenDocumentCommand` — the same
+  geometry-thread path `File ▸ Open` uses. **No second load path**, so the fail-safe
+  "store untouched on a parse error" rule is inherited rather than reimplemented.
+* **`--check`** calls the same `io::load_native`/`io::load_dxf` the engine calls, so the
+  validator can never disagree with what opening the file would do.
+* **`--plot`** constructs a `QGuiApplication` (never `QApplication`) with the **offscreen**
+  platform plugin forced, loads through the same loaders, builds a plot-resolution
+  snapshot and calls the same `write_plot_pdf` → `paint_plot`. It never touches the
+  renderer and creates no GL context.
+
+**Why offscreen is forced rather than merely defaulted.** An inherited
+`QT_QPA_PLATFORM` (a desktop session exports `wayland;xcb`) makes a plot launched from
+cron/CI/ssh abort with *"no Qt platform plugin could be initialized"* — the exact
+unattended case the option exists for. An explicit `-platform` on the command line still
+wins, so the override is a default-for-batch, not a lock.
+
+**What this phase changed structurally** is that the shared pieces became shared. The
+tolerance rule and the `QPdfWriter` setup were copy-pasted between `MainWindow` and
+`tools/plot_check.cpp`, and the paper table lived privately inside `plot_dialog.cpp`.
+`ui::plot_tolerance`, `ui::write_plot_pdf` and `ui::standard_papers` are now single
+definitions with both a GUI and a headless caller — which is the point of the issue:
+"none of that effort lands back in the product" is fixed by making the product's own
+entry points the ones the harness uses.
+
+**Rejected alternative: a separate `musacad-plot` binary.** It would have duplicated
+argument handling and drifted from the GUI's plot semantics, and a second shipped
+executable is a packaging change on three platforms. One binary that branches on its
+mode keeps a single plot path, which is the invariant that matters.
+
+**Verification.** `tests/test_cli.cpp` asserts the parser's outputs directly (it links
+the Qt-free `musacad_cli`); `tests/cli_check.cmake` runs the **shipped executable** with
+`DISPLAY`/`WAYLAND_DISPLAY` cleared and `QT_QPA_PLATFORM` left as a desktop session sets
+it, asserting each exit code (0/1/2/3) and that `--plot` emits a structurally valid PDF
+(`%PDF-` signature, `%%EOF` trailer, non-trivial size). PDFs are **not** byte-compared —
+that would be flaky; geometry correctness is asserted numerically elsewhere.
+
 ## Build / phase status
 
 * **Phase 1 — complete:** cross-platform CMake build; empty "Musa CAD" Qt6

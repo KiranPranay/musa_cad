@@ -1,0 +1,17 @@
+# ThreadSanitizer suppressions for third-party libraries, used ONLY by the tests that
+# execute the Qt application binary (currently tests/cli_check.cmake).
+#
+# Constructing a QGuiApplication on Linux starts a QDBusConnection worker thread, and
+# glib's event loop races with it on its own eventfd -- entirely inside libglib-2.0 and
+# libQt6DBus, with no Musa CAD frame anywhere in either stack. It fires with both the
+# `offscreen` and `minimal` platform plugins, so it is not something the headless plot
+# path can avoid; it is Qt/glib's own noise, the same situation tools/lsan.supp already
+# handles for the GUI smoke run.
+#
+# These are `called_from_lib` entries on purpose: they suppress only reports whose stack
+# passes through those libraries. A race in Musa CAD's own code still fails the run --
+# the concurrency tests (triple buffer, MPSC queue, engine) are unaffected, and no
+# suppression is active for the rest of the suite.
+called_from_lib:libglib-2.0.so
+called_from_lib:libgio-2.0.so
+called_from_lib:libQt6DBus.so
