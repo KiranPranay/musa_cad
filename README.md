@@ -90,6 +90,25 @@ ctest --preset dev
 
 ---
 
+## Command line
+
+The shipped binary is scriptable — open, validate or plot a drawing without a GUI
+session:
+
+```sh
+musacad drawing.musa                       # open in the GUI
+musacad --check drawing.musa               # parse it; exit non-zero on a bad file
+musacad --plot drawing.musa out.pdf \      # headless, no display needed
+        --paper A4 --portrait --scale 1:5
+```
+
+Exit codes are `0` ok, `1` usage, `2` load/parse, `3` output — so it works as a
+validator and a batch plotter in CI. `--plot` uses the same loaders, snapshot builder
+and plot renderer as `PLOT`/`Ctrl+P` in the GUI. Full grammar in
+[docs/CLI.md](docs/CLI.md).
+
+---
+
 ## Repository layout
 
 ```
@@ -103,7 +122,8 @@ src/app/       main(), thread orchestration
 include/musacad/   public headers mirroring src/
 shaders/       GLSL (embedded into the build)
 tests/         per-module unit tests + offscreen render & insertion benchmarks
-docs/          BUILD.md, ARCHITECTURE.md
+docs/          BUILD.md, ARCHITECTURE.md, CLI.md, COMMANDS.md
+scripts/       release + fixture-plotting helpers
 assets/        branding (logo/icons), ribbon SVG icons, screenshots
 ```
 

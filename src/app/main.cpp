@@ -1,18 +1,33 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 Pranay Kiran
 
+#include <algorithm>
 #include <cstdio>
 #include <string>
 #include <vector>
 
 #include <QApplication>
+#include <QGuiApplication>
 #include <QIcon>
 #include <QStringList>
 #include <QTimer>
 
 #include "musacad/app/cli.hpp"
+#include "musacad/app/plot_cli.hpp"
 #include "musacad/ui/main_window.hpp"
 #include "musacad/ui/theme.hpp"
+
+namespace {
+/// Rebuild an argv for Qt from the arguments the CLI parser did not claim.
+std::vector<char*> qt_argv(const std::vector<std::string>& args) {
+    std::vector<char*> v;
+    v.reserve(args.size());
+    for (const std::string& a : args) {
+        v.push_back(const_cast<char*>(a.c_str()));
+    }
+    return v;
+}
+} // namespace
 
 int main(int argc, char* argv[]) {
     // The command line is parsed BEFORE any Qt object exists, so --help/--version/
@@ -41,16 +56,37 @@ int main(int argc, char* argv[]) {
         }
         return rc;
     }
+    case CliOptions::Mode::Plot: {
+        // Headless plotting is the QPainter/QPdfWriter route -- no GL context, no widgets,
+        // no renderer. A QGuiApplication is enough, and the offscreen platform plugin means
+        // it needs no DISPLAY/WAYLAND_DISPLAY.
+        //
+        // Force offscreen unless the user asked for a platform ON THE COMMAND LINE. An
+        // INHERITED QT_QPA_PLATFORM must not win here: a desktop session exports e.g.
+        // "wayland;xcb", and a batch plot launched from cron/CI/ssh with that in its
+        // environment would abort with "no Qt platform plugin could be initialized" --
+        // exactly the unattended use this option exists for.
+        const bool explicit_platform =
+            std::find(opts.qt_args.begin(), opts.qt_args.end(), "-platform") != opts.qt_args.end();
+        if (!explicit_platform) {
+            qputenv("QT_QPA_PLATFORM", "offscreen");
+        }
+        std::vector<char*> pargv = qt_argv(opts.qt_args);
+        int pargc = static_cast<int>(pargv.size());
+        QGuiApplication gui(pargc, pargv.data());
+        std::string error;
+        const int rc = run_plot(opts, error);
+        if (rc != kExitOk) {
+            std::fprintf(stderr, "musacad: %s\n", error.c_str());
+        }
+        return rc;
+    }
     case CliOptions::Mode::Gui:
         break;
     }
 
     // Only the options Qt understands reach QApplication; ours are already consumed.
-    std::vector<char*> qargv;
-    qargv.reserve(opts.qt_args.size());
-    for (const std::string& a : opts.qt_args) {
-        qargv.push_back(const_cast<char*>(a.c_str()));
-    }
+    std::vector<char*> qargv = qt_argv(opts.qt_args);
     int qargc = static_cast<int>(qargv.size());
     QApplication app(qargc, qargv.data());
     QCoreApplication::setOrganizationName(QStringLiteral("Musa-CAD"));

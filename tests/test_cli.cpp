@@ -84,6 +84,42 @@ TEST_CASE("parse_cli: single-dash options are forwarded to Qt untouched") {
     REQUIRE(o.qt_args[2] == "offscreen");
 }
 
+TEST_CASE("parse_cli: --plot takes a drawing, an output and the sheet options") {
+    const CliOptions o = parse({"musacad", "--plot", "part.musa", "out.pdf", "--paper", "A3",
+                                "--portrait", "--scale", "1:5"});
+    REQUIRE(o.error.empty());
+    REQUIRE(o.mode == CliOptions::Mode::Plot);
+    REQUIRE(o.input == "part.musa");
+    REQUIRE(o.plot.output == "out.pdf");
+    REQUIRE(o.plot.paper == "A3");
+    REQUIRE_FALSE(o.plot.landscape);
+    REQUIRE_FALSE(o.plot.fit); // an explicit ratio turns fit-to-paper off
+    REQUIRE(o.plot.scale_num == 1.0);
+    REQUIRE(o.plot.scale_den == 5.0);
+    REQUIRE(o.plot.area == musacad::app::PlotRequest::Area::Extents); // the default
+}
+
+TEST_CASE("parse_cli: --window takes four numbers and normalises the corners") {
+    const CliOptions o = parse({"musacad", "--plot", "p.musa", "o.pdf", "--window",
+                                "80,60,-20,-10"});
+    REQUIRE(o.error.empty());
+    REQUIRE(o.plot.area == musacad::app::PlotRequest::Area::Window);
+    // Given back-to-front, the corners come out min-first so the area is never negative.
+    REQUIRE(o.plot.win[0] == -20.0);
+    REQUIRE(o.plot.win[1] == -10.0);
+    REQUIRE(o.plot.win[2] == 80.0);
+    REQUIRE(o.plot.win[3] == 60.0);
+}
+
+TEST_CASE("parse_cli: malformed plot options are usage errors") {
+    REQUIRE_FALSE(parse({"musacad", "--plot", "p.musa"}).error.empty());          // no output
+    REQUIRE_FALSE(parse({"musacad", "--plot"}).error.empty());                    // nothing
+    REQUIRE_FALSE(parse({"musacad", "--plot", "p.musa", "o.pdf", "--scale", "x"}).error.empty());
+    REQUIRE_FALSE(parse({"musacad", "--plot", "p.musa", "o.pdf", "--window", "1,2,3"}).error.empty());
+    REQUIRE_FALSE(parse({"musacad", "--plot", "p.musa", "o.pdf", "--paper"}).error.empty()); // no value
+    REQUIRE_FALSE(parse({"musacad", "--check", "--plot", "a", "b"}).error.empty()); // exclusive
+}
+
 TEST_CASE("help/version text is non-empty and names the exit codes") {
     const std::string h = app::help_text();
     REQUIRE(h.find("--check") != std::string::npos);

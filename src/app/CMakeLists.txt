@@ -10,6 +10,9 @@ musacad_enable_sanitizers(musacad_cli)
 
 add_executable(musacad_app
     main.cpp
+    # The --plot runner: needs Qt (QPdfWriter via ui::write_plot_pdf), so it lives here
+    # rather than in the Qt-free musacad_cli parser library.
+    plot_cli.cpp
     # Branding logo embedded as a Qt resource (:/branding/musacad_logo.svg) for the
     # window icon + About dialog. AUTORCC compiles the .qrc.
     ${CMAKE_SOURCE_DIR}/assets/branding/branding.qrc

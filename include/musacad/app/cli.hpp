@@ -22,14 +22,32 @@ enum ExitCode : int {
     kExitOutput = 3, ///< the output could not be written
 };
 
+/// A headless plot request (`--plot`). Mirrors the PLOT dialog's fields; the
+/// values are handed to a `ui::PlotSpec` by the plot runner, which lives in the
+/// Qt-linked half so this header stays Qt-free.
+struct PlotRequest {
+    enum class Area { Extents, Window };
+
+    std::string output;             ///< destination PDF
+    std::string paper = "A4";       ///< resolved against ui::standard_papers()
+    bool landscape = true;          ///< --portrait flips it
+    Area area = Area::Extents;
+    double win[4] = {0, 0, 0, 0};   ///< x0,y0,x1,y1 for Area::Window
+    bool fit = true;                ///< false when --scale gave an explicit ratio
+    double scale_num = 1.0;         ///< plotted mm ...
+    double scale_den = 1.0;         ///< ... per this many drawing units
+    bool monochrome = false;        ///< --monochrome: the built-in mono CTB style
+};
+
 /// The parsed command line. `mode` selects what `main` does; `error` being
 /// non-empty means the line was malformed (print it to stderr, exit kExitUsage).
 struct CliOptions {
-    enum class Mode { Gui, Help, Version, Check };
+    enum class Mode { Gui, Help, Version, Check, Plot };
 
     Mode mode = Mode::Gui;
-    std::string input;         ///< drawing to open (Gui) or validate (Check); "" = none
+    std::string input;         ///< drawing to open (Gui), validate (Check) or plot (Plot)
     bool input_is_dxf = false; ///< derived from the input's extension
+    PlotRequest plot;          ///< meaningful when mode == Plot
     std::string error;         ///< non-empty => usage error
 
     /// Arguments we did not claim, forwarded verbatim to Qt (single-dash options
@@ -43,6 +61,8 @@ struct CliOptions {
 /// Grammar (double-dash options are ours; single-dash ones belong to Qt):
 ///   musacad [<file>]              open a drawing in the GUI ("" = empty drawing)
 ///   musacad --check <file>        parse the drawing and exit (validator)
+///   musacad --plot <file> <out.pdf> [--paper A4] [--portrait|--landscape]
+///           [--scale 1:5 | --fit] [--window x0,y0,x1,y1 | --extents] [--monochrome]
 ///   musacad --help | -h
 ///   musacad --version | -v
 [[nodiscard]] CliOptions parse_cli(int argc, const char* const* argv);

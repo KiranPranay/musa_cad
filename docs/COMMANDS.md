@@ -243,6 +243,8 @@ phase covers **import, display, and selection**; in-app authoring is staged.
 | Dirty tracking (modified `*` in title, prompt before discard) | — | Implemented |
 | PLOT / PRINT (PDF + installed printers; paper/orientation/area Display·Extents·Window/scale fit·ratio/centre·offset/lineweights/CTB None·Mono·Grayscale/copies; window-pick; print-preview; off-thread; vector output) | Ctrl+P / PLOT / PRINT | Implemented (Phase 30) |
 | Saved page setups (named, persisted in the drawing; recall in the PLOT dialog) | PLOT ▸ Page setup | Implemented (Phase 30) |
+| **Command line** — `musacad <drawing>` opens a file (via the existing OpenDocumentCommand); `musacad --check <drawing>` validates it and exits non-zero on a parse error; `--help` / `--version`. Parsed before any Qt object exists, so it needs no display | shell | Implemented (issue #11) |
+| **Headless plot** — `musacad --plot <drawing> <out.pdf> [--paper A4] [--portrait\|--landscape] [--scale 1:5\|--fit] [--window x0,y0,x1,y1\|--extents] [--monochrome]`. Same loaders, snapshot builder, paper table, tessellation rule and PDF writer as the GUI's PLOT; offscreen Qt platform forced, so it runs from cron/CI/ssh. Exit codes 0/1/2/3 | shell | Implemented (issue #11) |
 
 ## Object snap (OSNAP)
 

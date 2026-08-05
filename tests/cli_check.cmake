@@ -82,6 +82,46 @@ endif()
 # --- 4: --check on a missing file exits 2 ------------------------------------------
 run(2 miss_out --check "${WORK}/definitely_absent.musa")
 
+# --- 5: --plot writes a structurally valid PDF, with no display --------------------
+# NOTE the environment: DISPLAY/WAYLAND_DISPLAY are cleared above, and QT_QPA_PLATFORM
+# is deliberately left as the desktop session set it (often "wayland;xcb"). --plot must
+# still work -- that inherited value is exactly what breaks a cron/CI plot, so forcing
+# offscreen is part of the contract, not an optimisation.
+set(pdf "${WORK}/cli_plot.pdf")
+file(REMOVE "${pdf}")
+run(0 plot_out --plot "${good}" "${pdf}" --paper A4 --portrait)
+if(EXISTS "${pdf}")
+    file(SIZE "${pdf}" pdf_size)
+    if(pdf_size LESS 400)
+        list(APPEND failures "--plot produced a suspiciously small PDF (${pdf_size} bytes)")
+    endif()
+    # Structural validity, not a byte comparison: a real PDF starts with %PDF- and ends
+    # with %%EOF. Byte-comparing plots would be flaky; the geometry itself is asserted
+    # numerically by the unit tests. Read as HEX -- a PDF has binary streams, so CMake's
+    # text file(READ) truncates at the first NUL and would report a false failure.
+    file(READ "${pdf}" pdf_head_hex LIMIT 5 HEX)
+    if(NOT pdf_head_hex STREQUAL "255044462d") # "%PDF-"
+        list(APPEND failures "--plot output does not start with the %PDF- signature")
+    endif()
+    file(READ "${pdf}" pdf_hex HEX)
+    string(FIND "${pdf_hex}" "2525454f46" eof_pos REVERSE) # "%%EOF"
+    if(eof_pos EQUAL -1)
+        list(APPEND failures "--plot output has no %%EOF trailer")
+    endif()
+else()
+    list(APPEND failures "--plot did not create ${pdf}")
+endif()
+
+# Scale, window and monochrome all reach the shared renderer.
+run(0 plot_scale --plot "${good}" "${WORK}/cli_scale.pdf" --scale 1:5)
+run(0 plot_win --plot "${good}" "${WORK}/cli_win.pdf" --window 0,0,50,25 --monochrome)
+run(0 plot_a3 --plot "${good}" "${WORK}/cli_a3.pdf" --paper A3 --landscape)
+
+# --- 6: plot failure modes are distinguishable by exit code ------------------------
+run(1 plot_bad_paper --plot "${good}" "${WORK}/x.pdf" --paper A9)          # usage
+run(2 plot_bad_input --plot "${WORK}/absent.musa" "${WORK}/x.pdf")         # load
+run(1 plot_no_output --plot "${good}")                                     # usage
+
 if(failures)
     string(REPLACE ";" "\n  " pretty "${failures}")
     message(FATAL_ERROR "CLI end-to-end check failed:\n  ${pretty}")

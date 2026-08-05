@@ -154,3 +154,14 @@ add_test(
             -DAPP=$<TARGET_FILE:musacad_app>
             -DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_work
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cli_check.cmake)
+
+# This is the only test that EXECUTES the Qt application binary, so it is the only one
+# that meets Qt/glib's own sanitizer noise: QGuiApplication starts a QDBusConnection
+# thread that races with glib's event loop inside libglib/libQt6DBus (no Musa CAD frame
+# in either stack, and it happens with every platform plugin). Point TSan at the
+# third-party suppression file for THIS test only -- the concurrency tests keep running
+# with no suppressions at all. Same shape as the LSan suppression the GUI smoke run uses.
+if(ENABLE_TSAN)
+    set_tests_properties(cli_check PROPERTIES
+        ENVIRONMENT "TSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tools/tsan.supp")
+endif()

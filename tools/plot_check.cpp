@@ -37,19 +37,19 @@ void plot_store(const core::GeometryStore& store, core::Vec2 amin, core::Vec2 am
                 const std::string& out) {
     core::NativeKernel2D kernel;
     core::RenderSnapshot snap;
-    // Tolerance: plotted region at paper-pixel resolution (same rule as MainWindow::prepare_plot).
-    const double area_diag = std::max(core::length(amax - amin), 1e-9);
-    const double paper_diag_px = std::hypot(297.0, 210.0) / 25.4 * 300.0;
-    const double tol = std::max(area_diag / paper_diag_px * 0.3, 1e-9);
-    core::build_render_snapshot(store, kernel, snap, tol, store.ltscale());
-
     ui::PlotSpec spec;
     spec.fit = true;
     spec.center = true;
-    QPdfWriter w(QString::fromStdString(out));
-    w.setPageSize(QPageSize(QSizeF(spec.paper_w_mm, spec.paper_h_mm), QPageSize::Millimeter));
-    w.setResolution(300);
-    ui::paint_plot(w, snap, spec, amin, amax);
+    // The shared tolerance rule + PDF device setup (ui/plot.hpp) -- the same ones the GUI's
+    // PLOT and the CLI's --plot use, so this harness measures the product, not a copy of it.
+    const double tol = ui::plot_tolerance(amin, amax, spec.paper_w_mm, spec.paper_h_mm);
+    core::build_render_snapshot(store, kernel, snap, tol, store.ltscale());
+
+    std::string err;
+    if (!ui::write_plot_pdf(out, snap, spec, amin, amax, err)) {
+        std::printf("[plot_check] %s\n", err.c_str());
+        return;
+    }
     std::printf("[plot_check] lines=%zu fills=%zu tol=%.4f bounds=(%.1f,%.1f)..(%.1f,%.1f) -> %s\n",
                 snap.line_vertices.size(), snap.fill_vertices.size(), tol, amin.x, amin.y, amax.x,
                 amax.y, out.c_str());
@@ -132,10 +132,11 @@ int main(int argc, char** argv) {
     ui::PlotSpec spec;
     spec.fit = true;
     spec.center = true;
-    QPdfWriter w(QString::fromStdString(out));
-    w.setPageSize(QPageSize(QSizeF(spec.paper_w_mm, spec.paper_h_mm), QPageSize::Millimeter));
-    w.setResolution(300);
-    ui::paint_plot(w, snap, spec, {-130.0, -130.0}, {130.0, 130.0});
+    std::string err;
+    if (!ui::write_plot_pdf(out, snap, spec, {-130.0, -130.0}, {130.0, 130.0}, err)) {
+        std::printf("[plot_check] %s\n", err.c_str());
+        return 1;
+    }
     std::printf("[plot_check] tol=%.4f line_vertices=%zu -> %s\n", tol, snap.line_vertices.size(),
                 out.c_str());
     return 0;

@@ -4,18 +4,25 @@
 #include "musacad/ui/plot.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
 #include <vector>
 
 #include <QBrush>
 #include <QColor>
+#include <QFileInfo>
 #include <QLineF>
+#include <QPageSize>
 #include <QPaintDevice>
 #include <QPainter>
+#include <QPdfWriter>
 #include <QPen>
 #include <QPointF>
 #include <QPolygonF>
 #include <QRectF>
+#include <QSizeF>
+#include <QString>
 
 #include "musacad/core/render_snapshot.hpp"
 
@@ -23,11 +30,87 @@ namespace musacad::ui {
 
 namespace {
 constexpr double kMmPerInch = 25.4;
+constexpr int kPlotDpi = 300; ///< PDF device resolution; the tolerance rule assumes it
 
 double luminance(core::Rgb c) {
     return 0.30 * c.r + 0.59 * c.g + 0.11 * c.b;
 }
+
+// Standard sheets as (long edge, short edge) millimetres. THE paper table -- the PLOT
+// dialog and the CLI's --paper both read it, so a sheet cannot mean two things.
+constexpr std::array<PaperSize, 7> kPapers{{
+    {"ISO A4", 297.0, 210.0},
+    {"ISO A3", 420.0, 297.0},
+    {"ISO A2", 594.0, 420.0},
+    {"ISO A1", 841.0, 594.0},
+    {"ISO A0", 1189.0, 841.0},
+    {"ANSI A (Letter)", 279.4, 215.9},
+    {"ANSI B (Tabloid)", 431.8, 279.4},
+}};
+
+std::string lower(std::string_view s) {
+    std::string r(s);
+    for (char& c : r) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return r;
+}
 } // namespace
+
+std::span<const PaperSize> standard_papers() {
+    return {kPapers.data(), kPapers.size()};
+}
+
+bool resolve_paper(std::string_view name, bool landscape, double& w_mm, double& h_mm) {
+    const std::string want = lower(name);
+    if (want.empty()) {
+        return false;
+    }
+    for (const PaperSize& p : kPapers) {
+        const std::string full = lower(p.name);
+        // Exact ("iso a4"), or the short form users actually type: the trailing token of
+        // an ISO name ("a4"), or the parenthesised alias of an ANSI one ("letter").
+        bool hit = full == want;
+        if (!hit) {
+            const std::size_t sp = full.rfind(' ');
+            hit = sp != std::string::npos && full.substr(sp + 1) == want;
+        }
+        if (!hit) {
+            const std::size_t op = full.find('(');
+            const std::size_t cp = full.find(')');
+            hit = op != std::string::npos && cp > op && full.substr(op + 1, cp - op - 1) == want;
+        }
+        if (hit) {
+            w_mm = landscape ? p.long_mm : p.short_mm;
+            h_mm = landscape ? p.short_mm : p.long_mm;
+            return true;
+        }
+    }
+    return false;
+}
+
+double plot_tolerance(core::Vec2 amin, core::Vec2 amax, double paper_w_mm, double paper_h_mm) {
+    const double area_diag = std::max(core::length(amax - amin), 1e-9);
+    const double paper_diag_px = std::hypot(paper_w_mm, paper_h_mm) / kMmPerInch * kPlotDpi;
+    return std::max(area_diag / paper_diag_px * 0.3, 1e-9);
+}
+
+bool write_plot_pdf(const std::string& path, const core::RenderSnapshot& snap,
+                    const PlotSpec& spec, core::Vec2 amin, core::Vec2 amax, std::string& error) {
+    const QString qpath = QString::fromStdString(path);
+    {
+        QPdfWriter w(qpath);
+        w.setPageSize(QPageSize(QSizeF(spec.paper_w_mm, spec.paper_h_mm), QPageSize::Millimeter));
+        w.setResolution(kPlotDpi);
+        paint_plot(w, snap, spec, amin, amax);
+    } // the writer must be destroyed before the file is complete on disk
+    const QFileInfo fi(qpath);
+    if (!fi.exists() || fi.size() == 0) {
+        error = "could not write the PDF: " + path;
+        return false;
+    }
+    return true;
+}
 
 core::Rgb plot_color(core::Rgb resolved, PlotSpec::Style style) {
     core::Rgb c = resolved;
