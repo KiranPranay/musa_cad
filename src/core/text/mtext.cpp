@@ -72,11 +72,12 @@ double text_advance(const IFontEngine* fonts, std::string_view font_name, std::s
 MTextLayout layout_mtext(const MTextBlock& block, std::string_view raw_content,
                          const IFontEngine* fonts, std::string_view font_name) {
     MTextLayout out;
-    // Expand control codes (%%c, %%d, %%p, %%nnn, and the MTEXT \U+XXXX escape) to Unicode
-    // before wrap/measure/emit so the rendered glyphs and the wrap box reflect the visible
-    // text. Storage stays the raw string (derived-not-baked). Overline/underline toggles are
-    // stripped here (the single-line TEXT path draws the bars); MTEXT decoration is deferred.
-    const std::string content = substitute_text(raw_content, /*mtext=*/true);
+    // Expand control codes (%%c, %%d, %%p, %%b, %%h, %%v, %%nnn, and the \U+XXXX escape) to
+    // Unicode before wrap/measure/emit so the rendered glyphs and the wrap box reflect the
+    // visible text. Storage stays the raw string (derived-not-baked). Overline/underline
+    // toggles are stripped here (the single-line TEXT path draws the bars); MTEXT decoration
+    // is deferred.
+    const std::string content = substitute_text(raw_content);
     const double height = block.height > 0.0 ? block.height : 1.0;
     const double wf = block.width_factor > 0.0 ? block.width_factor : 1.0;
     // An outline (TTF) face emits filled glyphs and uses its own advances; the stroke font

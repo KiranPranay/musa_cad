@@ -41,7 +41,7 @@ int hex_value(char c) {
 
 } // namespace
 
-SubstitutedText substitute_text_codes(std::string_view in, bool mtext) {
+SubstitutedText substitute_text_codes(std::string_view in) {
     SubstitutedText r;
     r.text.reserve(in.size());
 
@@ -78,6 +78,24 @@ SubstitutedText substitute_text_codes(std::string_view in, bool mtext) {
             }
             if (lc == 'c') {
                 append_utf8(r.text, 0x2300); // diameter
+                i += 3;
+                continue;
+            }
+            // Hole-callout aliases. The letters are chosen from what is still free:
+            // d/p/c/o/u/% and the numeric %%nnn form are all taken, so counterbore,
+            // depth ("hole depth") and countersink ("vee") get b/h/v.
+            if (lc == 'b') {
+                append_utf8(r.text, 0x2334); // counterbore / spotface
+                i += 3;
+                continue;
+            }
+            if (lc == 'h') {
+                append_utf8(r.text, 0x21A7); // depth
+                i += 3;
+                continue;
+            }
+            if (lc == 'v') {
+                append_utf8(r.text, 0x2335); // countersink
                 i += 3;
                 continue;
             }
@@ -121,8 +139,12 @@ SubstitutedText substitute_text_codes(std::string_view in, bool mtext) {
             ++i;
             continue;
         }
-        // MTEXT-only Unicode escape \U+XXXX -------------------------------------
-        if (mtext && in[i] == '\\' && i + 2 < in.size() &&
+        // Unicode escape \U+XXXX ------------------------------------------------
+        // Universal, not MTEXT-only: it is the general escape for any code point the
+        // font carries but no %%-alias names (the GD&T characteristics, the material
+        // condition modifiers). Restricting it to MTEXT would mean a symbol reachable
+        // in a paragraph but not in a single-line TEXT, a leader, or dimension text.
+        if (in[i] == '\\' && i + 2 < in.size() &&
             (in[i + 1] == 'U' || in[i + 1] == 'u') && in[i + 2] == '+') {
             std::size_t j = i + 3;
             unsigned cp = 0;
@@ -155,8 +177,8 @@ SubstitutedText substitute_text_codes(std::string_view in, bool mtext) {
     return r;
 }
 
-std::string substitute_text(std::string_view in, bool mtext) {
-    return substitute_text_codes(in, mtext).text;
+std::string substitute_text(std::string_view in) {
+    return substitute_text_codes(in).text;
 }
 
 } // namespace musacad::core::text

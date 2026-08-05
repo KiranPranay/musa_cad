@@ -35,14 +35,20 @@ struct SubstitutedText {
 /// function shared by the single-line TEXT, the paragraph MTEXT, and the Leader/MLeader
 /// labels. Codes (case-insensitive letter):
 ///   %%d -> U+00B0 degree, %%p -> U+00B1 plus-minus, %%c -> U+2300 diameter,
+///   %%b -> U+2334 counterbore/spotface, %%h -> U+21A7 depth, %%v -> U+2335 countersink,
 ///   %%% -> literal '%', %%nnn -> Latin-1 char nnn (1-3 decimal digits),
-///   %%o / %%u -> overline / underline TOGGLE (removed; the covered run is recorded).
-/// When `mtext` is true the MTEXT-only Unicode escape `\U+XXXX` (4 hex digits) is also
-/// expanded.
-[[nodiscard]] SubstitutedText substitute_text_codes(std::string_view raw, bool mtext = false);
+///   %%o / %%u -> overline / underline TOGGLE (removed; the covered run is recorded),
+///   \U+XXXX -> that code point (4 hex digits).
+///
+/// `\U+XXXX` is the GENERAL escape and works everywhere, not only in MTEXT: the stroke
+/// font carries far more symbols than there are free %%-letters (the GD&T
+/// characteristics, the material-condition modifiers), and a symbol reachable in a
+/// paragraph but not in a single-line TEXT or a leader would be an arbitrary gap.
+/// A malformed escape stays literal.
+[[nodiscard]] SubstitutedText substitute_text_codes(std::string_view raw);
 
 /// Convenience wrapper returning only the visible string (for measurement / callers
 /// that do not draw the over/under-line decoration).
-[[nodiscard]] std::string substitute_text(std::string_view raw, bool mtext = false);
+[[nodiscard]] std::string substitute_text(std::string_view raw);
 
 } // namespace musacad::core::text

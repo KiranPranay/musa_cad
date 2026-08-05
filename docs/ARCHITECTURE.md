@@ -1725,6 +1725,66 @@ Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop
   `QScreen`, so dragging the window between the laptop panel and an external monitor
   self-corrects on the next frame (no explicit screen-change signal needed).
 
+## Drafting symbols in the stroke font (issue #9)
+
+The stroke font covered ASCII plus exactly three symbols (`°` `±` `⌀`), so the standard
+hole-callout and GD&T characters had to be spelled out (`C'BORE ⌀15 X 8.6 DEEP`) or drawn
+as loose line work beside the text — at which point the symbol is no longer part of the
+string and has to be re-placed by hand whenever the text moves.
+
+**The whole set now lives in the font**, which is what makes it work uniformly in TEXT,
+MTEXT, LEADER and dimension text: those all render through `append_text_segments`, so a
+glyph added once appears in every one of them with no per-entity change. Coverage is
+listed in `text/stroke_font.hpp`: hole callouts (counterbore/spotface, depth,
+countersink), the fourteen GD&T characteristics, the seven material-condition modifiers,
+and square / conical taper / slope.
+
+**The monospace invariant is the constraint everything obeys.** One shared advance drives
+`text_width`, `layout_mtext`, entity bounds and pick, so a glyph that measured differently
+would desynchronise all four. Every symbol is therefore authored on the *same 6×8 cell* at
+the *same advance* as the letters — asserted directly (`text_width(symbol) ==
+text_width("A")`, and geometry bounded by the cell the letters occupy). Adding glyphs can
+never change layout.
+
+**Composition instead of a second alphabet.** Every circle in the font is one shape (the
+capital-O outline), reused for circularity, concentricity and as the ring of every circled
+modifier; the letter inside `Ⓜ Ⓛ Ⓢ Ⓟ Ⓕ Ⓣ Ⓤ` is the existing capital scaled about the cell
+centre. So there is one circle and one alphabet, not three.
+
+**Two glyphs are sampled arcs, not grid points.** The stroke table's parser takes integer
+grid coordinates, which is right for straight-edged glyphs but turns "profile of a line"
+into a visible peak and "profile of a surface" into a triangle. Those two use a sampled
+arc. *This was caught by plotting the symbol sheet and looking at it* — the numeric tests
+were perfectly happy with a peak, because a peak is also non-empty geometry at the right
+advance.
+
+**Reaching them from a string.** `%%b` counterbore, `%%h` depth, `%%v` countersink join
+the existing `%%d`/`%%p`/`%%c` (checked against every taken letter: `d p c o u %` and the
+numeric `%%nnn` form). There are far more symbols than free letters, so **`\U+XXXX` became
+the general escape and is no longer MTEXT-only** — restricting it there would leave a GD&T
+symbol usable in a paragraph but not in a callout or a dimension. That deliberately changed
+an existing test, which is called out in its own commit. All of it still runs through the
+single `substitute_text_codes` pass at render/layout/measure time, so the entity keeps the
+raw string and native + DXF round-trip it byte-for-byte.
+
+**Found on the way: fifteen printable ASCII characters had no glyph at all** — `%` `!` `?`
+`$` `&` `@` `[` `]` `{` `}` `^` `_` `` ` `` `|` `~` drew blank with only an advance, so
+`50% FULL` plotted as `50 FULL`, while the header claimed "covers ASCII 0x20-0x7E". The old
+test iterated a curated subset, which is exactly why it never noticed. They are authored in
+the same style and the test now walks the whole printable range.
+
+**Licensing.** Every outline is drawn from the ASME Y14.5 / ISO 1101 symbol *descriptions*
+on this project's own grid, in the style of the existing lowercase set. Nothing is traced
+from an SHX file, a proprietary font, or any other source, so this adds no third-party
+content and no licence-inventory entry.
+
+**Verification.** Numeric assertions per code point (non-empty stroke geometry, exact
+monospace advance, geometry inside the letters' own cell, unmapped code points blank but
+still advancing) plus the substitution tests; `artifacts/issue-9.pdf` plots the whole set
+from `tests/fixtures/symbol_sheet.musa`, where every symbol is reached from a **plain
+single-line TEXT** through `\U+XXXX` — so the sheet proves the escape's new reach as well
+as the glyphs.
+
 ## The plot path, and the command line that rides it (Phase 30 + issue #11)
 
 The PLOT feature landed in Phase 30 but was never written up here; this section states
