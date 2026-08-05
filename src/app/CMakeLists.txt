@@ -1,3 +1,13 @@
+# The shipped binary's command-line parser. Its own Qt-FREE static library so it can be
+# unit-tested without linking the GUI (musacad_tests links core/render/command only) and
+# so main() can parse argv before any Qt object exists.
+add_library(musacad_cli STATIC cli.cpp)
+add_library(musacad::cli ALIAS musacad_cli)
+target_include_directories(musacad_cli PUBLIC "${CMAKE_SOURCE_DIR}/include")
+target_link_libraries(musacad_cli PUBLIC musacad::core)
+musacad_set_warnings(musacad_cli AS_ERRORS)
+musacad_enable_sanitizers(musacad_cli)
+
 add_executable(musacad_app
     main.cpp
     # Branding logo embedded as a Qt resource (:/branding/musacad_logo.svg) for the
@@ -15,6 +25,7 @@ endif()
 target_link_libraries(musacad_app
     PRIVATE
         musacad::core
+        musacad::cli
         musacad::render
         musacad::command
         musacad::ui

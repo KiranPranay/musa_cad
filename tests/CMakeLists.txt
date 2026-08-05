@@ -115,10 +115,12 @@ add_executable(musacad_tests
     test_fonts.cpp
     test_properties.cpp
     test_linetype.cpp
+    test_cli.cpp
     test_header_hygiene.cpp)
 
 target_link_libraries(musacad_tests PRIVATE
     musacad::core
+    musacad::cli
     musacad::render
     musacad::command
     Catch2::Catch2WithMain)
@@ -141,3 +143,14 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
             -DINCLUDE_DIR=${CMAKE_SOURCE_DIR}/include/musacad/core
             -P ${CMAKE_CURRENT_SOURCE_DIR}/header_scan.cmake)
+
+# ---------------------------------------------------------------------------
+# CLI end-to-end: run the SHIPPED binary and assert its exit codes with no
+# display available (issue #11). Cross-platform via `cmake -P`, like the scan above.
+# ---------------------------------------------------------------------------
+add_test(
+    NAME cli_check
+    COMMAND ${CMAKE_COMMAND}
+            -DAPP=$<TARGET_FILE:musacad_app>
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_work
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cli_check.cmake)

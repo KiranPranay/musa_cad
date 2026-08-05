@@ -170,6 +170,11 @@ public:
     /// dialog's INITIAL state, and assert the painted geometry maps within the page.
     bool selftest_gui_plot_file(const QString& in_path, const QString& out_pdf);
 
+    /// Open a drawing into a new tab by submitting the EXISTING OpenDocumentCommand
+    /// (the same geometry-thread path File ▸ Open uses -- there is no second load
+    /// path). Public so `musacad <file>` can hand the CLI's argument straight in.
+    void open_from(const QString& path, bool dxf);
+
 protected:
     /// Application-wide Delete/Backspace handling (erase selection unless a text
     /// field is focused).
@@ -286,7 +291,6 @@ private:
     bool pump_with_progress(const QString& label, const std::function<bool()>& done,
                             int timeout_ms);
     void save_to(const QString& path, bool dxf); // testable: send SaveDocumentCommand
-    void open_from(const QString& path, bool dxf); // testable: send OpenDocumentCommand
     [[nodiscard]] bool confirm_discard_if_dirty(); // returns true to proceed
     void update_title();
 

@@ -2,17 +2,57 @@
 // Copyright (C) 2026 Pranay Kiran
 
 #include <cstdio>
+#include <string>
+#include <vector>
 
 #include <QApplication>
 #include <QIcon>
 #include <QStringList>
 #include <QTimer>
 
+#include "musacad/app/cli.hpp"
 #include "musacad/ui/main_window.hpp"
 #include "musacad/ui/theme.hpp"
 
 int main(int argc, char* argv[]) {
-    QApplication app(argc, argv);
+    // The command line is parsed BEFORE any Qt object exists, so --help/--version/
+    // --check need no display, no windowing system and no GL context.
+    using namespace musacad::app;
+    const CliOptions opts = parse_cli(argc, argv);
+    if (!opts.error.empty()) {
+        std::fprintf(stderr, "musacad: %s\n", opts.error.c_str());
+        std::fprintf(stderr, "Try 'musacad --help'.\n");
+        return kExitUsage;
+    }
+    switch (opts.mode) {
+    case CliOptions::Mode::Help:
+        std::fputs(help_text().c_str(), stdout);
+        return kExitOk;
+    case CliOptions::Mode::Version:
+        std::printf("%s\n", version_text().c_str());
+        return kExitOk;
+    case CliOptions::Mode::Check: {
+        std::string message;
+        const int rc = check_drawing(opts.input, opts.input_is_dxf, message);
+        if (rc == kExitOk) {
+            std::printf("%s: %s\n", opts.input.c_str(), message.c_str());
+        } else {
+            std::fprintf(stderr, "musacad: %s: %s\n", opts.input.c_str(), message.c_str());
+        }
+        return rc;
+    }
+    case CliOptions::Mode::Gui:
+        break;
+    }
+
+    // Only the options Qt understands reach QApplication; ours are already consumed.
+    std::vector<char*> qargv;
+    qargv.reserve(opts.qt_args.size());
+    for (const std::string& a : opts.qt_args) {
+        qargv.push_back(const_cast<char*>(a.c_str()));
+    }
+    int qargc = static_cast<int>(qargv.size());
+    QApplication app(qargc, qargv.data());
     QCoreApplication::setOrganizationName(QStringLiteral("Musa-CAD"));
     QCoreApplication::setApplicationName(QStringLiteral("musa_cad"));
 
@@ -45,6 +85,13 @@ int main(int argc, char* argv[]) {
         window.show();
     } else {
         window.showMaximized();
+    }
+
+    // `musacad drawing.musa` -- the file argument rides the EXISTING OpenDocumentCommand
+    // (the same geometry-thread path File ▸ Open uses). Submitting before exec() is safe:
+    // the command sits on the MPSC queue until the geometry worker picks it up.
+    if (!opts.input.empty()) {
+        window.open_from(QString::fromStdString(opts.input), opts.input_is_dxf);
     }
 
     // Headless structural check: dump the ribbon/frame widget tree and confirm
