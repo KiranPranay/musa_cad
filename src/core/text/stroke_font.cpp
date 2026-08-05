@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
+#include <utility>
 
 namespace musacad::core::text {
 
@@ -135,6 +137,24 @@ constexpr Entry kFont[] = {
     {'*', "3,5 3,7|2,5 4,7|4,5 2,7"},
     {'\'', "3,8 3,7"},
     {'"', "2,8 2,7|4,8 4,7"},
+    // The remaining printable ASCII. These were missing, so '%' (and 14 others) drew
+    // BLANK with only an advance -- "50% FULL" plotted as "50 FULL". Same 6x8 cell,
+    // same advance, authored in the style of the punctuation above.
+    {'!', "3,8 3,4|3,3 3,2"},
+    {'?', "1,7 2,8 4,8 5,7 5,6 3,5 3,4|3,3 3,2"},
+    {'%', "1,7 2,8 1,8 1,7|1,2 5,8|5,3 4,2 5,2 5,3"},
+    {'$', "5,7 4,8 2,8 1,7 1,6 5,4 5,3 4,2 2,2 1,3|3,8 3,1"},
+    {'&', "5,2 2,5 2,7 3,8 4,7 4,6 1,4 1,3 2,2 4,2 5,3"},
+    {'@', "4,4 3,3 2,4 2,5 3,6 4,5 4,3|4,4 5,4 5,7 4,8 2,8 1,7 1,3 2,2 4,2"},
+    {'[', "4,8 2,8 2,2 4,2"},
+    {']', "2,8 4,8 4,2 2,2"},
+    {'{', "4,8 3,7 3,6 2,5 3,4 3,3 4,2"},
+    {'}', "2,8 3,7 3,6 4,5 3,4 3,3 2,2"},
+    {'^', "1,6 3,8 5,6"},
+    {'_', "1,1 5,1"},
+    {'`', "2,8 4,7"},
+    {'|', "3,8 3,1"},
+    {'~', "1,5 2,6 4,4 5,5"},
     // Real lowercase (simplex/Hershey-class, single-stroke). x-height = gy 6, ascenders
     // reach the cap line (gy 8), descenders drop to gy 0. Hand-authored on the same grid;
     // monospace advance is unchanged (kAdvance), so layout/width metrics are preserved.
@@ -200,6 +220,149 @@ const std::array<Glyph, 128>& ascii_table() {
     return table;
 }
 
+// ---------------------------------------------------------------------------
+// Drafting symbols (hole callouts + GD&T), hand-authored on the SAME 6x8 cell as
+// the letters, at the SAME advance -- the font stays monospace, so text_width,
+// layout, bounds and pick are untouched by adding glyphs.
+//
+// Every outline here is drawn from the ASME Y14.5 / ISO 1101 symbol descriptions
+// on this project's own grid, in the style of the existing lowercase set. Nothing
+// is traced from an SHX file, a proprietary font, or any other source.
+// ---------------------------------------------------------------------------
+
+// The capital-O outline. Reused as the ring for circularity and for every circled
+// material-condition modifier, so they all share one circle shape.
+constexpr const char* kRing = "2,2 1,3 1,7 2,8 4,8 5,7 5,3 4,2 2,2";
+
+/// A smooth arc in GRID coordinates (gx 0..6, gy 0..8), sampled to `steps` segments.
+/// The stroke table's parser only takes integers, which is fine for straight-edged
+/// glyphs but turns a profile arc into a visible peak -- these need real curvature.
+Stroke arc_stroke(double cx, double cy, double rx, double ry, double a0_deg, double a1_deg,
+                  int steps) {
+    Stroke s;
+    s.reserve(static_cast<std::size_t>(steps) + 1);
+    constexpr double kPi = 3.14159265358979;
+    for (int i = 0; i <= steps; ++i) {
+        const double t = static_cast<double>(i) / steps;
+        const double a = (a0_deg + (a1_deg - a0_deg) * t) * kPi / 180.0;
+        s.push_back(cell(cx + rx * std::cos(a), cy + ry * std::sin(a)));
+    }
+    return s;
+}
+
+/// Scales a glyph about the cell centre -- how the letter inside a circled modifier
+/// (Ⓜ Ⓛ Ⓢ …) is shrunk to fit its ring without authoring a second alphabet.
+Glyph scaled_about_center(const Glyph& src, double s) {
+    const Vec2 c = cell(3, 5); // the cell's optical centre
+    Glyph out;
+    out.reserve(src.size());
+    for (const Stroke& stroke : src) {
+        Stroke t;
+        t.reserve(stroke.size());
+        for (const Vec2& p : stroke) {
+            t.push_back({c.x + (p.x - c.x) * s, c.y + (p.y - c.y) * s});
+        }
+        out.push_back(std::move(t));
+    }
+    return out;
+}
+
+void append_glyph(Glyph& dst, const Glyph& src) {
+    dst.insert(dst.end(), src.begin(), src.end());
+}
+
+/// A material-condition modifier: the shared ring with a shrunken capital inside.
+Glyph circled_letter(char letter) {
+    Glyph g = parse(kRing);
+    append_glyph(g, scaled_about_center(ascii_table()[static_cast<std::size_t>(letter)], 0.52));
+    return g;
+}
+
+// Symbols whose whole outline is plain strokes on the grid.
+struct SymbolEntry {
+    char32_t cp;
+    const char* strokes;
+};
+constexpr SymbolEntry kSymbols[] = {
+    // --- Hole callouts (ASME Y14.5 §3.3) ---------------------------------------
+    {0x2334, "1,7 1,3 5,3 5,7"},                 // counterbore / spotface
+    {0x21A7, "1,8 5,8|3,8 3,3|1,5 3,3 5,5"},     // depth ("deep"): barred down-arrow
+    {0x2335, "1,7 3,3 5,7"},                     // countersink: 90-degree opened V
+    // --- GD&T characteristics (ISO 1101 / ASME Y14.5 Table) --------------------
+    {0x23E4, "1,5 5,5"},                         // straightness
+    // Flatness is a parallelogram. It must be WIDE and SHALLOW: the cell is far taller
+    // than it is wide, so a parallelogram spanning gy 3..7 collapses into two near-
+    // vertical slashes and becomes indistinguishable from parallelism (//).
+    {0x23E5, "1,3 2,6 5,6 4,3 1,3"},
+    {0x2220, "1,3 5,3|1,3 5,7"},                 // angularity
+    {0x27C2, "3,8 3,3|1,3 5,3"},                 // perpendicularity
+    {0x2225, "1,3 3,7|3,3 5,7"},                 // parallelism
+    {0x232F, "3,8 3,2|1,6 5,6|1,4 5,4"},         // symmetry
+    {0x2197, "1,3 5,7|5,7 3,7|5,7 5,5"},         // circular runout: single arrow
+    {0x2330, "0,3 3,6|3,6 1,6|3,6 3,4|"          // total runout: double arrow
+              "3,3 6,6|6,6 4,6|6,6 6,4"},
+    // --- Feature-of-size / form modifiers --------------------------------------
+    {0x25A1, "1,3 5,3 5,7 1,7 1,3"},             // square (a square feature)
+    // Taper and slope are both wedges opening right; they only read as DIFFERENT
+    // symbols if the taper is symmetric about the axis and the slope is markedly
+    // shallower with a flat base. At equal angles they both just look like an angle.
+    {0x2332, "1,5 5,7|1,5 5,3"},                 // conical taper: symmetric wedge
+    {0x2333, "1,3 5,3|1,3 5,5"},                 // slope: shallow, flat-based
+};
+
+// Symbols composed from the shared ring (so every circle in the font is one shape).
+struct ComposedEntry {
+    char32_t cp;
+    char letter; ///< '\0' = no letter inside
+    const char* extra; ///< additional strokes, or nullptr
+    double inner; ///< 0 = none, else a concentric ring scaled by this
+};
+constexpr ComposedEntry kComposed[] = {
+    {0x25CB, '\0', nullptr, 0.0},        // circularity: the bare ring
+    {0x232D, '\0', "0,3 1,7|5,3 6,7", 0.0}, // cylindricity: ring between two obliques
+    {0x2316, '\0', "3,2 3,8|0,5 6,5", 0.0}, // position: ring with a full crosshair
+    {0x25CE, '\0', nullptr, 0.5},        // concentricity: two concentric rings
+    {0x24C2, 'M', nullptr, 0.0},         // MMC
+    {0x24C1, 'L', nullptr, 0.0},         // LMC
+    {0x24C8, 'S', nullptr, 0.0},         // RFS (regardless of feature size)
+    {0x24C5, 'P', nullptr, 0.0},         // projected tolerance zone
+    {0x24BB, 'F', nullptr, 0.0},         // free state
+    {0x24C9, 'T', nullptr, 0.0},         // tangent plane
+    {0x24CA, 'U', nullptr, 0.0},         // unequally disposed profile
+};
+
+/// Every non-ASCII glyph, built once. A flat sorted-by-insertion map is plenty for
+/// ~30 entries and keeps the authored tables above as the single source of truth.
+const std::unordered_map<char32_t, Glyph>& symbol_table() {
+    static const std::unordered_map<char32_t, Glyph> table = [] {
+        std::unordered_map<char32_t, Glyph> t;
+        t.emplace(0x00B0, degree_glyph());
+        t.emplace(0x00B1, plusminus_glyph());
+        t.emplace(0x2300, diameter_glyph());
+        for (const SymbolEntry& e : kSymbols) {
+            t.emplace(e.cp, parse(e.strokes));
+        }
+        // The two profile symbols are genuine arcs, so they are sampled rather than
+        // authored as grid points -- a 5-point integer polyline reads as a sharp peak,
+        // not an arc, and "profile of a surface" then looks like a triangle.
+        const Stroke profile_arc = arc_stroke(3.0, 3.4, 2.6, 3.0, 160.0, 20.0, 10);
+        t.emplace(0x2312, Glyph{profile_arc});                       // profile of a LINE
+        t.emplace(0x2313, Glyph{profile_arc, parse("1,4 5,4")[0]});  // ... of a SURFACE
+        for (const ComposedEntry& e : kComposed) {
+            Glyph g = e.letter != '\0' ? circled_letter(e.letter) : parse(kRing);
+            if (e.extra != nullptr) {
+                append_glyph(g, parse(e.extra));
+            }
+            if (e.inner > 0.0) {
+                append_glyph(g, scaled_about_center(parse(kRing), e.inner));
+            }
+            t.emplace(e.cp, std::move(g));
+        }
+        return t;
+    }();
+    return table;
+}
+
 std::vector<char32_t> decode_utf8(std::string_view s) {
     std::vector<char32_t> out;
     std::size_t i = 0;
@@ -228,17 +391,10 @@ std::vector<char32_t> decode_utf8(std::string_view s) {
 const Glyph* glyph_for(char32_t cp, bool& small_cap) {
     small_cap = false;
     static const Glyph empty;
-    if (cp == 0x00B0) {
-        static const Glyph g = degree_glyph();
-        return &g;
-    }
-    if (cp == 0x00B1) {
-        static const Glyph g = plusminus_glyph();
-        return &g;
-    }
-    if (cp == 0x2300) {
-        static const Glyph g = diameter_glyph();
-        return &g;
+    if (cp >= 0x80) {
+        const auto& t = symbol_table();
+        const auto it = t.find(cp);
+        return it != t.end() ? &it->second : &empty;
     }
     if (cp >= 'a' && cp <= 'z') {
         const Glyph& lower = ascii_table()[static_cast<std::size_t>(cp)];

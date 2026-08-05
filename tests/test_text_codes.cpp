@@ -57,13 +57,37 @@ TEST_CASE("substitute_text_codes records overline / underline runs and removes t
     CHECK(open.overline[0].end == open.text.size());
 }
 
-TEST_CASE("substitute_text_codes: MTEXT \\U+XXXX Unicode escape (mtext only)") {
-    CHECK(substitute_text("\\U+2300 50", /*mtext=*/true) == kDia + " 50");
-    CHECK(substitute_text("\\U+00B1", /*mtext=*/true) == kPm);
-    // Outside MTEXT the escape is left as-is (only %%-codes apply to single-line TEXT).
-    CHECK(substitute_text("\\U+2300", /*mtext=*/false) == "\\U+2300");
-    // A malformed escape (too few hex digits) is left literal.
-    CHECK(substitute_text("\\U+12", /*mtext=*/true) == "\\U+12");
+TEST_CASE("substitute_text_codes: \\U+XXXX Unicode escape is universal") {
+    // Deliberately widened from MTEXT-only: the stroke font carries far more symbols
+    // than there are free %%-letters, so \U+ is THE general escape and must reach
+    // single-line TEXT, leaders and dimension text too -- otherwise a GD&T symbol
+    // would be usable in a paragraph but not in a callout.
+    CHECK(substitute_text("\\U+2300 50") == kDia + " 50");
+    CHECK(substitute_text("\\U+00B1") == kPm);
+    CHECK(substitute_text("\\U+2300") == kDia); // was left literal before; now expands
+    // A malformed escape (too few hex digits) is still left literal.
+    CHECK(substitute_text("\\U+12") == "\\U+12");
+    // A backslash that is not an escape is untouched, so paths survive.
+    CHECK(substitute_text("C:\\Users\\parts") == "C:\\Users\\parts");
+}
+
+TEST_CASE("substitute_text_codes expands the hole-callout aliases") {
+    const std::string kCbore = "\xE2\x8C\xB4"; // U+2334 counterbore / spotface
+    const std::string kDepth = "\xE2\x86\xA7"; // U+21A7 depth
+    const std::string kCsink = "\xE2\x8C\xB5"; // U+2335 countersink
+    CHECK(substitute_text("%%b%%c15") == kCbore + kDia + "15");
+    CHECK(substitute_text("%%h8.6") == kDepth + "8.6");
+    CHECK(substitute_text("%%v%%c20") == kCsink + kDia + "20");
+    CHECK(substitute_text("%%B %%H %%V") == kCbore + " " + kDepth + " " + kCsink); // case-insensitive
+
+    // The new letters must not have shadowed an existing code, and the numeric form
+    // must still win for digits.
+    CHECK(substitute_text("%%d%%p%%c%%%") == kDeg + kPm + kDia + "%");
+    CHECK(substitute_text("%%176") == kDeg);
+
+    // The full three-line counterbore callout from the issue, as one string.
+    CHECK(substitute_text("6X %%c9 THRU / %%b%%c15 / %%h8.6") ==
+          "6X " + kDia + "9 THRU / " + kCbore + kDia + "15 / " + kDepth + "8.6");
 }
 
 TEST_CASE("substitute_text_codes leaves plain text untouched (no allocation surprises)") {
