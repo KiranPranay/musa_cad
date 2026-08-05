@@ -130,3 +130,43 @@ from `tests/fixtures/cli_demo.musa` (verified by rasterising and counting colour
 non-default layer colour does survive to paper).
 
 **Left:** nothing for #11. Next: merge to `main`, then #9.
+
+---
+
+## 2026-08-06 01:15 — #9 DONE (branch `feat/issue-9-drafting-symbols`)
+
+Commits `4b8ad22` (glyphs), `e96ef19` (deliberate test change), `37ebf89` (codes).
+
+**Decisions:**
+1. **Symbols live in the FONT, not as per-entity line work** — that is what makes them
+   work in TEXT/MTEXT/LEADER/dimension text at once, since all four render through
+   `append_text_segments`.
+2. **One circle, one alphabet.** Circularity, concentricity and all seven circled
+   modifiers reuse the capital-O outline; the letter inside is the existing capital
+   scaled about the cell centre. Rejected authoring a second small alphabet.
+3. **`\U+XXXX` made universal; the `mtext` parameter removed** rather than defaulted —
+   a mode every caller passes identically is not a mode. This inverted an existing
+   assertion, so that test change is its own commit with the reasoning (as instructed).
+4. **The symbol-list contract lives in the test, not in a public accessor.** I nearly
+   added `drafting_symbols()` to the header for the test to iterate, then didn't: it
+   would be public surface with no product caller, and a test that re-derives its list
+   from the implementation asserts nothing. The test declares the list independently.
+
+**What the visual artifact caught that the numeric tests could not.** The first plotted
+symbol sheet showed four glyphs that were *technically correct and visually wrong*:
+"profile of a line" rendered as a sharp peak and "profile of a surface" as a triangle
+(a 5-point integer polyline is not an arc), and flatness collapsed into `//`, identical
+to parallelism, because a parallelogram spanning the full cell height is all vertical in
+a cell that is twice as tall as it is wide. Every one passed "non-empty geometry at the
+right advance". Fixed by sampling real arcs for the two profile symbols and making the
+parallelogram wide-and-shallow. **This is the argument for the artifact requirement.**
+
+**Bug found on the way (pre-existing, fixed):** fifteen printable ASCII characters had
+no glyph — `% ! ? $ & @ [ ] { } ^ _ ` | ~` drew blank with only an advance, so
+`50% FULL` plotted as `50 FULL`, while `stroke_font.hpp` claimed to cover 0x20–0x7E. The
+old test walked a *curated subset* of the charset, which is precisely why it never
+noticed. Authored the missing 15 and the test now walks the whole printable range.
+
+**Gate: PASSED.** dev clean/0 warnings + **348/348**; release clean; tsan **348/348**.
+Artifact `artifacts/issue-9.pdf` (symbol sheet, every symbol via `\U+XXXX` from a plain
+TEXT). **Left:** nothing. Next: merge, then #7.
