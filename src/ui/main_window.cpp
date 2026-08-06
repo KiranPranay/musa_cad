@@ -2008,8 +2008,10 @@ bool MainWindow::selftest_grips() {
     // dim-line-offset grip (the headline ask).
     engine_->submit(core::NewDocumentCommand{});
     pump([this] { return viewport_->line_vertex_count() == 0; });
-    engine_->submit(core::AddDimensionCommand{static_cast<std::uint8_t>(core::DimType::Linear),
-                                              {0, 0}, {20, 0}, {10, 5}, 0, 0});
+    engine_->submit(core::AddDimensionCommand{.type = static_cast<std::uint8_t>(core::DimType::Linear),
+                                              .a = {0, 0},
+                                              .b = {20, 0},
+                                              .line_pt = {10, 5}});
     pump([this] { return viewport_->line_vertex_count() > 0; });
     engine_->submit(core::SelectPickCommand{{10, 5}, 2.0, false});
     // Full set: 2 ext-line origins + 2 dim-line feet + offset midpoint.
@@ -2373,10 +2375,18 @@ bool MainWindow::selftest_dim_properties() {
     };
 
     // Two linear dimensions (so we can test multi-select varies/set-all).
-    engine_->submit(core::AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear),
-                                              {0, 0}, {10, 0}, {5, 3}, 0, 1});
-    engine_->submit(core::AddDimensionCommand{static_cast<std::uint8_t>(DimType::Linear),
-                                              {0, 20}, {10, 20}, {5, 23}, 0, 2});
+    engine_->submit(core::AddDimensionCommand{.type = static_cast<std::uint8_t>(DimType::Linear),
+                                              .a = {0, 0},
+                                              .b = {10, 0},
+                                              .line_pt = {5, 3},
+                                              .style = 0,
+                                              .group = 1});
+    engine_->submit(core::AddDimensionCommand{.type = static_cast<std::uint8_t>(DimType::Linear),
+                                              .a = {0, 20},
+                                              .b = {10, 20},
+                                              .line_pt = {5, 23},
+                                              .style = 0,
+                                              .group = 2});
     pump([this] { return viewport_->line_vertex_count() > 0; });
 
     // One dim selected -> the Dimension group is present and ByStyle.
@@ -4052,7 +4062,8 @@ bool MainWindow::matchprop_shot(int kind, const std::string& out_png) {
     } else if (kind == 2) {
         // Within dim family: a source linear dim with per-dim overrides (bigger arrows +
         // text) -> a default target dim, which inherits the overrides.
-        engine_->submit(core::AddDimensionCommand{std::uint8_t{0}, {-70, 5}, {-25, 5}, {-47, 20}, 0, 1});
+        engine_->submit(core::AddDimensionCommand{
+            .type = 0, .a = {-70, 5}, .b = {-25, 5}, .line_pt = {-47, 20}, .style = 0, .group = 1});
         pump(160);
         engine_->submit(core::SelectPickCommand{{-47, 20}, r, false});
         pump(160);
@@ -4068,7 +4079,8 @@ bool MainWindow::matchprop_shot(int kind, const std::string& out_png) {
         pump(100);
         engine_->submit(core::ClearSelectionCommand{});
         pump(100);
-        engine_->submit(core::AddDimensionCommand{std::uint8_t{0}, {15, 5}, {60, 5}, {37, 20}, 0, 4});
+        engine_->submit(core::AddDimensionCommand{
+            .type = 0, .a = {15, 5}, .b = {60, 5}, .line_pt = {37, 20}, .style = 0, .group = 4});
         pump(160);
         engine_->submit(core::MatchPropPickSourceCommand{{-47, 20}, r});
         pump(140);

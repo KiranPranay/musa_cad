@@ -54,6 +54,13 @@ enum class PropertyId : std::uint16_t {
     DimTextColor,
     DimTextPlacement, ///< Above / Centered
     DimPrecision,
+    // Text decoration around the measured value (issue #7). The VALUE stays computed
+    // from the def points; only these qualify it.
+    DimPrefix,     ///< raw text before the value ("6X", "%%c")
+    DimSuffix,     ///< raw text after the value ("TYP", "MAX", " H7")
+    DimTolMode,    ///< TolMode: none / symmetric / limits / basic / reference
+    DimTolUpper,   ///< upper deviation
+    DimTolLower,   ///< lower deviation
     // Leader / MLeader per-leader arrow overrides (ByStyle unless overridden) -- the same
     // override model as dimensions, on the leader's referenced dimstyle.
     LeaderArrowType,
@@ -86,6 +93,7 @@ enum class PropEditor : std::uint8_t {
     NumberOverride,    ///< value.flag = ByStyle; value.num = effective/override value
     DimArrowTypeCombo, ///< value.choice: 0=ByStyle, 1..4 = ArrowType+1
     DimPlacementCombo, ///< value.choice: 0=ByStyle, 1=Above, 2=Centered
+    DimTolModeCombo,   ///< value.choice = TolMode (0=None..4=Reference); NOT a ByStyle combo
 };
 
 /// A typed value carried by a field / a SetPropertyCommand. Only the members

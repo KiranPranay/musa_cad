@@ -401,6 +401,18 @@ std::string serialize_native(const Document& doc) {
         append_uint(s, d.style);
         append_props(s, d.props);
         append_overrides(s, d.overrides); // per-dimension overrides (v8): full block => lossless
+        // v15 decoration: mode + the two deviations inline, then the raw prefix/suffix
+        // on their own lines (they may contain spaces, so they cannot be tokens).
+        s += ' ';
+        append_uint(s, static_cast<std::uint64_t>(d.tol.mode));
+        s += ' ';
+        append_double(s, d.tol.upper);
+        s += ' ';
+        append_double(s, d.tol.lower);
+        s += '\n';
+        s += d.prefix;
+        s += '\n';
+        s += d.suffix;
         s += '\n';
     }
     // LEADER tipx tipy kneex kneey height style <props7>; content on next line.
@@ -690,6 +702,19 @@ IoResult parse_native(std::string_view text, Document& out) {
     std::istringstream in{std::string(text)};
     // v10: a font-name line follows the content of TEXT/MTEXT/LEADER/MLEADER. Older files
     // have none -> the stroke font (""). Returns false only on a truncated v10 record.
+    // Reads one raw following line (content that may be empty or contain spaces, so it
+    // cannot be tokenised). Shared by the v15 DIM prefix/suffix.
+    const auto read_line = [&](std::string& out_line) -> bool {
+        out_line.clear();
+        if (!std::getline(in, out_line)) {
+            return false;
+        }
+        ++line_no;
+        if (!out_line.empty() && out_line.back() == '\r') {
+            out_line.pop_back();
+        }
+        return true;
+    };
     const auto read_font = [&](std::string& font) -> bool {
         font.clear();
         if (version < 10) {
@@ -923,10 +948,14 @@ IoResult parse_native(std::string_view text, Document& out) {
                                         props,
                                         std::move(tfont)});
         } else if (key == "DIM") {
-            // DIM type ax ay bx by lx ly style <props7> [override block of 15]
+            // DIM type ax ay bx by lx ly style <props7> [override15] [tolmode up lo]
+            // Token count is the version discriminator, as everywhere else in this
+            // format: 16 = pre-v8, 31 = v8 override block, 34 = v15 + decoration
+            // (which also brings a prefix line and a suffix line after the record).
             std::uint64_t dtype = 0;
             vals.clear();
-            const bool has_ov = tok.size() == 31; // v8 appends the override block
+            const bool has_decor = tok.size() == 34;
+            const bool has_ov = tok.size() == 31 || has_decor;
             if ((tok.size() != 16 && !has_ov) || !to_uint(tok[1], dtype) ||
                 !parse_doubles(tok, 2, 6, vals)) {
                 return fail("DIM record malformed");
@@ -961,13 +990,32 @@ IoResult parse_native(std::string_view text, Document& out) {
                 ov.ext_color = {b(3), b(4), b(5)};
                 ov.text_color = {b(6), b(7), b(8)};
             }
+            DimTolerance tol{};
+            std::string dprefix;
+            std::string dsuffix;
+            if (has_decor) {
+                std::uint64_t mode = 0;
+                if (!to_uint(tok[31], mode) || !to_double(tok[32], tol.upper) ||
+                    !to_double(tok[33], tol.lower)) {
+                    return fail("DIM decoration malformed");
+                }
+                tol.mode = static_cast<TolMode>(std::min<std::uint64_t>(mode, 4));
+                // The two raw strings follow on their own lines (they may be empty and
+                // may contain spaces, so they cannot be tokens).
+                if (!read_line(dprefix) || !read_line(dsuffix)) {
+                    return fail("DIM missing prefix/suffix line");
+                }
+            }
             doc.dims.push_back(DocDim{static_cast<std::uint8_t>(dtype),
                                       {vals[0], vals[1]},
                                       {vals[2], vals[3]},
                                       {vals[4], vals[5]},
                                       static_cast<std::uint16_t>(style),
                                       props,
-                                      ov});
+                                      ov,
+                                      dprefix,
+                                      dsuffix,
+                                      tol});
         } else if (key == "LEADER") {
             // LEADER tipx tipy kneex kneey height style <props7> [<override15>]; content next line.
             vals.clear();

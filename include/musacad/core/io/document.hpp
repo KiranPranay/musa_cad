@@ -35,7 +35,10 @@ namespace musacad::core::io {
 /// override block dimensions use; detected by token count, older files => ByStyle).
 /// v14: HATCH entities (boundary loops + pattern name/scale/angle/origin). Older files
 /// simply have no HATCH records.
-inline constexpr std::uint32_t kFormatVersion = 14;
+/// v15: dimension text decoration -- three trailing fields on the DIM record (tolerance
+/// mode, upper, lower) plus a prefix line and a suffix line after it. Detected by token
+/// count (34 vs the v8 31 vs the pre-v8 16); v1-v14 dimensions load undecorated.
+inline constexpr std::uint32_t kFormatVersion = 15;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -99,6 +102,12 @@ struct DocDim {
     std::uint16_t style = 0;
     EntityProps props{};
     DimOverrides overrides{}; ///< per-dimension style overrides (v8+)
+    // v15 text decoration: raw prefix/suffix (codes unexpanded) + the tolerance mode
+    // and deviations. The measured VALUE is never serialised -- it is recomputed from
+    // the def points on load, so a .musa can never carry a value that lies.
+    std::string prefix;
+    std::string suffix;
+    DimTolerance tol{};
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {

@@ -73,8 +73,15 @@ EntityHandle GeometryStore::add_text(Vec2 pos, double height, double rotation, s
 
 EntityHandle GeometryStore::add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt,
                                           std::uint16_t style, EntityProps props,
-                                          DimOverrides overrides) {
-    const auto slot = dims_.insert(DimData{type, a, b, line_pt, style, props, overrides});
+                                          DimOverrides overrides, std::string_view prefix,
+                                          std::string_view suffix, DimTolerance tol) {
+    const auto poff = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), prefix.begin(), prefix.end());
+    const auto soff = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), suffix.begin(), suffix.end());
+    const auto slot = dims_.insert(DimData{type, a, b, line_pt, style, props, overrides, tol, poff,
+                                           static_cast<std::uint32_t>(prefix.size()), soff,
+                                           static_cast<std::uint32_t>(suffix.size())});
     return EntityHandle{slot.index, slot.generation, EntityKind::Dimension};
 }
 
@@ -288,6 +295,12 @@ std::string_view GeometryStore::string_of(const TextData& t) const noexcept {
 }
 std::string_view GeometryStore::string_of(const LeaderData& l) const noexcept {
     return std::string_view(string_pool_.data() + l.str_offset, l.str_len);
+}
+std::string_view GeometryStore::dim_prefix(const DimData& d) const noexcept {
+    return std::string_view(string_pool_.data() + d.prefix_offset, d.prefix_len);
+}
+std::string_view GeometryStore::dim_suffix(const DimData& d) const noexcept {
+    return std::string_view(string_pool_.data() + d.suffix_offset, d.suffix_len);
 }
 std::string_view GeometryStore::string_of(const MTextBlock& b) const noexcept {
     return std::string_view(string_pool_.data() + b.str_offset, b.str_len);

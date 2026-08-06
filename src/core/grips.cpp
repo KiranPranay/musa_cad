@@ -61,7 +61,10 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                    0,
                                    d->props,
                                    d->overrides,
-                                   st != nullptr ? *st : DimStyle{}};
+                                   st != nullptr ? *st : DimStyle{},
+                                   std::string(store.dim_prefix(*d)),
+                                   std::string(store.dim_suffix(*d)),
+                                   d->tol};
     }
     case EntityKind::Leader: {
         const LeaderData* l = store.leader(h);
@@ -142,7 +145,8 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                                         props_of(c.props), store.add_font(c.font));
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 handle = store.add_dimension(static_cast<DimType>(c.type), c.a, c.b, c.line_pt,
-                                             c.style, props_of(c.props), c.overrides);
+                                             c.style, props_of(c.props), c.overrides, c.prefix,
+                                             c.suffix, c.tol);
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
                                           props_of(c.props), store.add_font(c.font), c.overrides);
@@ -229,7 +233,8 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
     case EntityKind::Dimension: {
         const DimData* d = store.dimension(h);
         const DimStyle* s = store.dimstyle(d->style);
-        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{});
+        const DimGeometry g =
+            compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{}, store.dim_text_parts(*d));
         const auto t = d->type;
         if (t == DimType::Radius || t == DimType::Diameter) {
             push(out, d->a, GripKind::Move, 0);    // centre -> moves the dim

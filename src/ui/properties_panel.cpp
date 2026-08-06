@@ -362,6 +362,28 @@ void PropertiesPanel::rebuild() {
             current_form->addRow(label, e);
             break;
         }
+        case PropEditor::DimTolModeCombo: {
+            // Unlike the dimension combos above this has no "ByStyle" entry: a tolerance
+            // mode is the dimension's own content, not an override of a shared style, so
+            // index 0 is the real value TolMode::None.
+            auto* e = new QComboBox();
+            e->addItems({QStringLiteral("None"), QStringLiteral("Symmetric (±)"),
+                         QStringLiteral("Limits (stacked)"), QStringLiteral("Basic (boxed)"),
+                         QStringLiteral("Reference (parenthesised)")});
+            if (varies) {
+                e->addItem(QString::fromLatin1(kVaries));
+                e->setCurrentIndex(e->count() - 1);
+            } else {
+                e->setCurrentIndex(f.value.choice);
+            }
+            connect(e, &QComboBox::activated, this, [this, id](int index) {
+                PropertyValue pv;
+                pv.choice = index; // 0 = TolMode::None
+                emit_edit(id, pv);
+            });
+            current_form->addRow(label, e);
+            break;
+        }
         case PropEditor::LinetypeCombo: {
             auto* e = new QComboBox();
             e->addItems({QStringLiteral("ByLayer"), QStringLiteral("Continuous"),

@@ -127,3 +127,93 @@ TEST_CASE("DXF carries text + all dimension types + leader + a DIMSTYLE table") 
     }
     REQUIRE(has_arch);
 }
+
+// ---------------------------------------------------------------------------
+// Native v15: dimension text decoration (issue #7).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("v15 round-trips dimension decoration losslessly (store -> doc -> file -> doc -> store)") {
+    GeometryStore s;
+    // One of every tolerance mode, plus prefixes/suffixes with spaces and raw %%-codes.
+    s.add_dimension(DimType::Linear, {0, 0}, {50, 0}, {25, 10}, 0, {}, {}, "6X ", " TYP", {});
+    s.add_dimension(DimType::Linear, {0, 0}, {50, 0}, {25, 20}, 0, {}, {}, "%%c", " H7",
+                    DimTolerance{TolMode::Symmetric, 0.1, -0.1});
+    s.add_dimension(DimType::Aligned, {0, 0}, {30, 40}, {10, 30}, 0, {}, {}, "", "",
+                    DimTolerance{TolMode::Limits, 0.046, 0.0});
+    s.add_dimension(DimType::Linear, {0, 0}, {12, 0}, {6, 5}, 0, {}, {}, "", "",
+                    DimTolerance{TolMode::Basic, 0.0, 0.0});
+    s.add_dimension(DimType::Linear, {0, 0}, {12, 0}, {6, 8}, 0, {}, {}, "", "",
+                    DimTolerance{TolMode::Reference, 0.0, 0.0});
+
+    const Document a = document_from_store(s);
+    REQUIRE(a.format_version == kFormatVersion);
+    REQUIRE(a.dims.size() == 5);
+
+    const auto path = (std::filesystem::temp_directory_path() / "musacad_dimdecor.musa").string();
+    REQUIRE(save_native(a, path).ok);
+    Document b;
+    REQUIRE(load_native(path, b).ok);
+    GeometryStore restored;
+    populate_store(restored, b);
+    REQUIRE(document_from_store(restored) == a); // value-for-value, decoration included
+
+    // Spot-check the fields rather than trusting equality alone.
+    REQUIRE(b.dims[0].prefix == "6X ");
+    REQUIRE(b.dims[0].suffix == " TYP");
+    REQUIRE(b.dims[1].prefix == "%%c"); // stored RAW; codes expand at render time
+    REQUIRE(b.dims[2].tol.mode == TolMode::Limits);
+    REQUIRE(b.dims[2].tol.upper == 0.046);
+    REQUIRE(b.dims[3].tol.mode == TolMode::Basic);
+    REQUIRE(b.dims[4].tol.mode == TolMode::Reference);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("v14 dimensions still load, as undecorated (older-version compatibility)") {
+    // A real v14 DIM line: 16 base tokens + the 15-field v8 override block, no
+    // decoration fields and no prefix/suffix lines after it.
+    const std::string v14 =
+        "MUSACAD 14\nLAYER 255 255 255 0 25 1 0 0 0\n"
+        "DIMSTYLE 2.5 2.5 0 0.6 1.25 2 1 25 1 0 0 0 1 0 0 0 1 0 0 0 1 0 0 0 Standard\n"
+        "DIM 0 0 0 10 0 5 3 0 0 7 255 255 255 0 25 1 0 2 1 3.5 2.5 0 0 0 0 0 0 0 0 0\n"
+        "LINE 0 0 1 1 0 7 255 255 255 0 25\nEND\n";
+    Document doc;
+    REQUIRE(parse_native(v14, doc).ok);
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE(doc.dims[0].tol.mode == TolMode::None);
+    REQUIRE(doc.dims[0].prefix.empty());
+    REQUIRE(doc.dims[0].suffix.empty());
+    REQUIRE(doc.dims[0].overrides.has(DimOverrides::kTextHeight)); // the v8 block still parsed
+    REQUIRE(doc.dims[0].overrides.text_height == 3.5);
+    // The record AFTER the dimension must still be found -- i.e. the reader did not
+    // swallow the following line looking for a prefix.
+    REQUIRE(doc.lines.size() == 1);
+}
+
+TEST_CASE("DXF writes the decorated label into the DIMENSION text override (code 1)") {
+    Document a;
+    a.layers.push_back(Layer{"0", {255, 255, 255}, Linetype::Continuous, 25, true, false, false});
+    a.dimstyles.push_back(DimStyle{});
+    a.dimstyles[0].name = "Standard";
+    a.dimstyles[0].precision = 2;
+    DocDim d;
+    d.type = static_cast<std::uint8_t>(DimType::Linear);
+    d.a = {0, 0};
+    d.b = {50, 0};
+    d.line_pt = {25, 10};
+    d.prefix = "%%c";
+    d.suffix = " H7";
+    a.dims.push_back(d);
+
+    const std::string dxf = serialize_dxf(a);
+    // The composed, code-EXPANDED string, so another CAD shows what Musa CAD draws.
+    REQUIRE(dxf.find("\n1\n\xE2\x8C\x80" "50.00 H7\n") != std::string::npos);
+
+    // An undecorated dimension writes NO override, so a reader measures it itself --
+    // the correct default, and what every pre-#7 file already relied on. (Checked by
+    // the absence of the measured text: "\n1\n" alone also matches $ACADVER's value.)
+    Document plain = a;
+    plain.dims[0].prefix.clear();
+    plain.dims[0].suffix.clear();
+    const std::string dxf2 = serialize_dxf(plain);
+    REQUIRE(dxf2.find("50.00") == std::string::npos);
+}

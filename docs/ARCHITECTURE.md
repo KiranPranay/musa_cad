@@ -1725,6 +1725,77 @@ Lines rendered correctly on a normal monitor but ~2× too thin on a HiDPI laptop
   `QScreen`, so dragging the window between the laptop panel and an external monitor
   self-corrects on the next frame (no explicit screen-change signal needed).
 
+## Dimension text decoration — tolerances, fit classes, prefixes (issue #7)
+
+A dimension could display exactly the measured def-point distance and nothing else. That
+invariant is a genuine strength — a Musa CAD dimension cannot lie about the geometry —
+but a fabrication drawing has to *qualify* the value: a fit class (`⌀200 H7`), limit
+deviations, a bilateral tolerance, `6X` / `TYP` / `REF`, or the boxed basic dimension
+ASME Y14.5 requires wherever a feature is located by a position tolerance.
+
+**The invariant is kept exactly.** The value is still `dim_measure(def points)` and is
+still never serialised — a `.musa` cannot carry a number that disagrees with the
+geometry. Only the decoration *around* it became authorable. Moving a def point still
+moves the number, decorated or not (asserted).
+
+**Storage follows the existing shapes.** `DimData` gains a `DimTolerance` (mode + two
+deviations) and two `(offset, len)` ranges into the **shared char pool** — TextData's
+pattern, not a fat inline buffer, so a long fit-class note costs the cold arena a fixed
+16 bytes. `DimData` grows 112 → **152 B**, which is fine (few, cold, its own arena); the
+hot `LineData` 40 / `CircleData` 32 / `EntityProps` 8 are untouched and re-asserted.
+
+**One label definition.** `compose_dim_label()` builds the visible text from the measured
+value plus the decoration, and is called by **both** `compute_dim_geometry` (which lays
+it out) and the DXF exporter (which writes it as the text override) — so what a vendor's
+CAD shows can never disagree with what Musa CAD draws. Composition happens inside
+`compute_dim_geometry`, which is what makes the decorated text participate in the
+dimension's own layout, bounds and selection instead of floating beside it.
+
+Prefix and suffix are ordinary raw strings run through the **same**
+`substitute_text_codes` pass TEXT uses, so `%%c200` and `6X` work with no
+dimension-specific symbol handling and storage stays raw (derived-not-baked).
+
+The five modes: `Symmetric` → `value ± dev` on one line; `Limits` → the two **limit
+values** stacked (50.046 over 50.000 — what a machinist actually reads, not the
+deviations); `Basic` → the label boxed to ASME proportions; `Reference` → parenthesised;
+`None` → the value alone. `Limits` is the only mode that produces a second line, so
+`DimGeometry::label2` is empty everywhere else and consumers draw it unconditionally.
+
+**`dim_label_quad()` is new and is the reason three code paths did not diverge.** Bounds,
+pick and (next, #12) the ISO 129-1 fit test all need the label's world rectangle;
+pick already had an inline copy and bounds omitted the label entirely, which
+under-reported the AABB of any dimension whose text sticks out. One function now serves
+all three.
+
+**MATCHPROP: deliberately NOT matchable** (`MatchSlot::None`). A fit class, a limit pair
+or a `6X` prefix is *semantics about this feature*, not presentation — painting it onto
+another dimension would silently assert something untrue about a different feature. Same
+reasoning that already leaves `TextContent` unmatched. The presentation rows (arrow,
+colours, text height, precision) stay `MatchSlot::Dimension` as before.
+
+**Persistence.** Native **v15**: three trailing fields on the `DIM` record (mode, upper,
+lower) plus a prefix line and a suffix line after it — the strings need their own lines
+because they may contain spaces, exactly like TEXT's content line. Detected by **token
+count** (34 = v15, 31 = the v8 override block, 16 = pre-v8), the same discriminator the
+rest of the format uses; v1–v14 dimensions load undecorated, and the reader does not
+swallow the following record looking for a prefix (asserted).
+
+**DXF (honest gap).** The composed, code-expanded label is written into the `DIMENSION`
+**text override, group code 1**, so other CAD shows the right thing; a two-line limits
+label uses the stacked `\P` form. DXF has nowhere to put the tolerance *semantics*
+(mode + deviations), so a re-import returns a text override rather than an editable
+tolerance: **the decoration is native-only**, the same gap already documented for
+per-dimension overrides. An undecorated dimension writes no override at all, so
+pre-existing files export exactly as before.
+
+**Verification.** Numeric assertions on the composed label for every mode, on the
+stacked limit *values* (including reversed deviations), on the box enclosing the label
+quad with margin on all four sides, on the AABB widening for an overhanging label, and
+on decoration surviving capture → recreate (which is what makes undo, move, copy,
+grip-edit and the clipboard preserve it). Plus the v15 round-trip
+(store → doc → file → doc → store equality), a v14-still-loads case, and the DXF
+override. `artifacts/issue-7.pdf` plots one dimension per mode.
+
 ## Drafting symbols in the stroke font (issue #9)
 
 The stroke font covered ASCII plus exactly three symbols (`°` `±` `⌀`), so the standard

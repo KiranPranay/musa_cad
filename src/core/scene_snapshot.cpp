@@ -244,7 +244,8 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         }
         const Rgb base = entity_resolved(store, d->props).color;
         const DimStyle* style = store.dimstyle(d->style);
-        const DimGeometry g = compute_dim_geometry(*d, style != nullptr ? *style : DimStyle{}, base);
+        const DimGeometry g = compute_dim_geometry(*d, style != nullptr ? *style : DimStyle{}, base,
+                                                   store.dim_text_parts(*d));
         add_lines(g.ext_color, g.lineweight, g.ext_lines);
         add_lines(g.dim_color, g.lineweight, g.dim_lines);
         add_lines(g.arrow_color, g.lineweight, g.arrow_lines);
@@ -252,6 +253,12 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         tseg.clear();
         text::append_text_segments(g.label, g.text_pos, g.text_height, g.text_rotation,
                                    g.text_justify, tseg);
+        // The Limits tolerance mode stacks the lower limit under the upper; every other
+        // mode leaves label2 empty, so this is a no-op for them.
+        if (!g.label2.empty()) {
+            text::append_text_segments(g.label2, g.label2_pos, g.text_height, g.text_rotation,
+                                       g.text_justify, tseg);
+        }
         add_lines(g.text_color, 0, tseg, /*is_text=*/true, g.text_height);
     });
 

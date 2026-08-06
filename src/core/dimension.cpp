@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
+
+#include "musacad/core/text/text_codes.hpp"
 
 namespace musacad::core {
 
@@ -93,18 +96,109 @@ std::string format_measurement(double value, std::uint8_t precision) {
     return std::string(buf);
 }
 
+namespace {
+
+/// The type-specific decoration the measured value always carries (R, the diameter
+/// sign, the degree sign). Independent of the AUTHORED decoration below. `value` is
+/// passed in rather than measured here so the Limits mode can format its two limits
+/// through exactly the same per-type rule.
+std::string measured_text_for(DimType type, const DimStyle& style, double value) {
+    const std::string v = format_measurement(value, style.precision);
+    switch (type) {
+    case DimType::Radius:
+        return "R" + v;
+    case DimType::Diameter:
+        return "⌀" + v; // U+2300
+    case DimType::Angular:
+        return v + "°"; // U+00B0
+    case DimType::Linear:
+    case DimType::Aligned:
+        break;
+    }
+    return v;
+}
+
+std::string measured_text(const DimData& d, const DimStyle& style) {
+    return measured_text_for(d.type, style, dim_measure(d));
+}
+
+} // namespace
+
+bool dim_label_quad(const DimGeometry& g, bool second, Vec2 (&out)[4]) {
+    const std::string& s = second ? g.label2 : g.label;
+    if (s.empty()) {
+        return false;
+    }
+    const Vec2 at = second ? g.label2_pos : g.text_pos;
+    const double w = text::text_width(s, g.text_height);
+    const double x0 = g.text_justify == text::Justify::Center  ? -w * 0.5
+                      : g.text_justify == text::Justify::Right ? -w
+                                                               : 0.0;
+    const double cs = std::cos(g.text_rotation);
+    const double sn = std::sin(g.text_rotation);
+    const Vec2 ax{cs, sn};  // along the baseline
+    const Vec2 ay{-sn, cs}; // baseline -> cap
+    out[0] = at + ax * x0;
+    out[1] = at + ax * (x0 + w);
+    out[2] = at + ax * (x0 + w) + ay * g.text_height;
+    out[3] = at + ax * x0 + ay * g.text_height;
+    return true;
+}
+
+DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts parts) {
+    // Prefix/suffix are ordinary text: run them through the ONE control-code pass, so
+    // "%%c200" and "6X" work here exactly as they do in a TEXT entity, with no
+    // dimension-specific symbol handling. Storage stays raw (derived-not-baked).
+    const std::string pre = text::substitute_text(parts.prefix);
+    const std::string suf = text::substitute_text(parts.suffix);
+    const auto wrap = [&](const std::string& core) { return pre + core + suf; };
+
+    DimLabel out;
+    switch (d.tol.mode) {
+    case TolMode::Symmetric:
+        // One line: the value, then the deviation. ISO 129-1 writes a single
+        // deviation as value ± tol.
+        out.line1 = wrap(measured_text(d, style) + " ±" +
+                         format_measurement(std::abs(d.tol.upper), style.precision));
+        break;
+    case TolMode::Limits: {
+        // Two lines: the actual limit VALUES, upper over lower -- not the deviations.
+        // That is what a machinist reads off the drawing.
+        const double v = dim_measure(d);
+        const double hi = std::max(v + d.tol.upper, v + d.tol.lower);
+        const double lo = std::min(v + d.tol.upper, v + d.tol.lower);
+        out.line1 = wrap(measured_text_for(d.type, style, hi));
+        out.line2 = wrap(measured_text_for(d.type, style, lo));
+        break;
+    }
+    case TolMode::Basic:
+        out.line1 = wrap(measured_text(d, style));
+        out.boxed = true;
+        break;
+    case TolMode::Reference:
+        out.line1 = "(" + wrap(measured_text(d, style)) + ")";
+        break;
+    case TolMode::None:
+        out.line1 = wrap(measured_text(d, style));
+        break;
+    }
+    return out;
+}
+
 // Builds the geometry from an ALREADY-EFFECTIVE style (overrides applied).
 static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle& style,
-                                               Rgb base_color);
+                                               Rgb base_color, DimTextParts parts);
 
-DimGeometry compute_dim_geometry(const DimData& d, const DimStyle& style, Rgb base_color) {
+DimGeometry compute_dim_geometry(const DimData& d, const DimStyle& style, Rgb base_color,
+                                 DimTextParts parts) {
     // The single resolution point: per-dimension overrides win over the style
     // (the Ph12 ByLayer/override shape), then the body reads the effective style.
-    return compute_dim_geometry_styled(d, apply_dim_overrides(style, d.overrides), base_color);
+    return compute_dim_geometry_styled(d, apply_dim_overrides(style, d.overrides), base_color,
+                                       parts);
 }
 
 static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle& style,
-                                               Rgb base_color) {
+                                               Rgb base_color, DimTextParts parts) {
     DimGeometry g;
     g.text_height = style.text_height;
     g.lineweight = style.dim_lineweight;
@@ -113,7 +207,52 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     g.arrow_color = style.arrow_color.resolve(base_color);
     g.text_color = style.text_color.resolve(base_color);
     const auto atype = static_cast<ArrowType>(style.arrow_type);
-    const double value = dim_measure(d);
+    // The label is composed ONCE, here, for every dimension type -- the measured value
+    // (which is never authorable) plus its authored decoration. Placing it in the same
+    // function that builds the geometry is what makes the text participate in layout,
+    // bounds and selection instead of floating alongside them.
+    const DimLabel label = compose_dim_label(d, style, parts);
+    g.label = label.line1;
+    g.label2 = label.line2;
+
+    /// Finishes the label once text_pos / rotation / justify are final: places the
+    /// second line (Limits mode) and, for a basic dimension, draws the ASME Y14.5
+    /// frame around exactly what will be drawn. The frame is dimension-line geometry,
+    /// so it takes that colour and is picked and bounded with the dimension.
+    const auto finish_label = [&]() {
+        const double h = g.text_height;
+        const double cs = std::cos(g.text_rotation);
+        const double sn = std::sin(g.text_rotation);
+        const Vec2 ax{cs, sn};  // along the baseline
+        const Vec2 ay{-sn, cs}; // baseline -> cap
+        const double line_gap = h * 1.5;
+        const double pad = h * 0.4; // ASME draws the frame close around the text
+        // A boxed label needs the FRAME, not the text, to clear the dimension line --
+        // otherwise the box's lower edge lands exactly on it. Lift before placing the
+        // second line so both stay inside the frame.
+        if (label.boxed) {
+            g.text_pos = g.text_pos + ay * pad;
+        }
+        if (!g.label2.empty()) {
+            g.label2_pos = g.text_pos - ay * line_gap; // the lower limit sits under the upper
+        }
+        if (!label.boxed) {
+            return;
+        }
+        const double w = std::max(text::text_width(g.label, h), text::text_width(g.label2, h));
+        const double x0 = g.text_justify == text::Justify::Center  ? -w * 0.5
+                          : g.text_justify == text::Justify::Right ? -w
+                                                                   : 0.0;
+        const double y_bottom = g.label2.empty() ? 0.0 : -line_gap;
+        const Vec2 c0 = g.text_pos + ax * (x0 - pad) + ay * (y_bottom - pad);
+        const Vec2 c1 = g.text_pos + ax * (x0 + w + pad) + ay * (y_bottom - pad);
+        const Vec2 c2 = g.text_pos + ax * (x0 + w + pad) + ay * (h + pad);
+        const Vec2 c3 = g.text_pos + ax * (x0 - pad) + ay * (h + pad);
+        seg(g.dim_lines, c0, c1);
+        seg(g.dim_lines, c1, c2);
+        seg(g.dim_lines, c2, c3);
+        seg(g.dim_lines, c3, c0);
+    };
 
     if (d.type == DimType::Radius || d.type == DimType::Diameter) {
         const Vec2 center = d.a;
@@ -122,17 +261,16 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         if (d.type == DimType::Radius) {
             seg(g.dim_lines, center, edge);
             append_arrowhead(g.arrow_fills, g.arrow_lines, edge, u * -1.0, style.arrow_size, atype);
-            g.label = "R" + format_measurement(value, style.precision);
         } else {
             const Vec2 other = center - u * distance(center, edge);
             seg(g.dim_lines, other, edge);
             append_arrowhead(g.arrow_fills, g.arrow_lines, edge, u * -1.0, style.arrow_size, atype);
             append_arrowhead(g.arrow_fills, g.arrow_lines, other, u, style.arrow_size, atype);
-            g.label = "⌀" + format_measurement(value, style.precision); // diameter symbol
         }
         g.text_pos = edge + u * (style.text_height * 0.4);
         g.text_rotation = 0.0;
         g.text_justify = text::Justify::Left;
+        finish_label();
         return g;
     }
 
@@ -170,8 +308,8 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
                          Vec2{-std::sin(a1), std::cos(a1)} * s, style.arrow_size, atype);
         const double am = a0 + sweep * 0.5;
         g.text_pos = {v.x + r * std::cos(am), v.y + r * std::sin(am)};
-        g.label = format_measurement(value, style.precision) + "°"; // degree symbol
         g.text_rotation = 0.0;
+        finish_label();
         return g;
     }
 
@@ -214,7 +352,12 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     const Vec2 text_up{-sn, cs};
     const double off = style.text_above ? style.text_height * 0.4 : -style.text_height * 0.5;
     g.text_pos = mid + text_up * off;
-    g.label = format_measurement(value, style.precision);
+    // A two-line label (Limits) stacks DOWNWARD from text_pos, so lift the block by one
+    // line to keep it clear of the dimension line -- otherwise the lower limit lands on it.
+    if (!g.label2.empty()) {
+        g.text_pos = g.text_pos + text_up * (g.text_height * 1.5);
+    }
+    finish_label();
     return g;
 }
 

@@ -333,6 +333,13 @@ struct AddDimensionCommand {
     DimOverrides overrides = {}; ///< per-dimension style overrides (authoritative)
     DimStyle dim_style = {};      ///< resolved style snapshot for PR display only;
                                   ///< filled by capture_entity, ignored on recreate
+    /// Authorable text decoration around the MEASURED value (never replacing it):
+    /// raw prefix/suffix (control codes unexpanded) and the tolerance mode + deviations.
+    /// Carried here so undo, move, copy, grip-edit and the clipboard preserve it -- they
+    /// all round-trip through capture_entity / add_command_to_store.
+    std::string prefix = {};
+    std::string suffix = {};
+    DimTolerance tol = {};
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under

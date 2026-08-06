@@ -8,6 +8,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "musacad/core/command.hpp"
+#include "musacad/core/entity_bounds.hpp"
+#include "musacad/core/grips.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/geometry_engine.hpp"
 #include "musacad/core/geometry_store.hpp"
@@ -320,4 +322,200 @@ TEST_CASE("Dimension text placement is consistent for rotated (vertical) dimensi
     REQUIRE(vi < 0.0);  // Above: baseline on the offset side
     REQUIRE(vc > 0.0);  // Centered: baseline shifted +x so the leftward body straddles
     REQUIRE(((vi < 0.0) != (vc < 0.0))); // the two placements land on opposite sides
+}
+
+// ---------------------------------------------------------------------------
+// Text decoration: prefix / suffix / tolerance (issue #7). The measured VALUE is
+// still computed from the def points and can never be authored -- these cases pin
+// that invariant down as much as they pin the decoration.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// A 50-unit horizontal dimension with the given decoration, plus the store it
+/// lives in (the prefix/suffix are pool-backed, so the store must outlive the read).
+struct DecoratedDim {
+    GeometryStore store;
+    EntityHandle handle{};
+
+    DecoratedDim(std::string_view prefix, std::string_view suffix, DimTolerance tol) {
+        handle = store.add_dimension(DimType::Linear, {0, 0}, {50, 0}, {25, 10}, 0, {}, {}, prefix,
+                                     suffix, tol);
+    }
+    [[nodiscard]] DimGeometry geometry(std::uint8_t precision = 2) const {
+        DimStyle s;
+        s.precision = precision;
+        const DimData* d = store.dimension(handle);
+        return compute_dim_geometry(*d, s, Rgb{255, 255, 255}, store.dim_text_parts(*d));
+    }
+};
+
+} // namespace
+
+TEST_CASE("Dimension decoration: prefix and suffix wrap the measured value") {
+    const DecoratedDim d("6X ", " TYP", {});
+    const DimGeometry g = d.geometry();
+    REQUIRE(g.label == "6X 50.00 TYP");
+    REQUIRE(g.label2.empty());
+
+    // The value inside is still the MEASURED distance, not anything authored.
+    REQUIRE(dim_measure(*d.store.dimension(d.handle)) == Approx(50.0));
+}
+
+TEST_CASE("Dimension decoration: prefix/suffix run through the shared control codes") {
+    // "%%c200 H7" -- the headline fit-class case from the issue. No dimension-specific
+    // symbol handling: the same substitution pass TEXT uses.
+    const DecoratedDim d("%%c", " H7", {});
+    const DimGeometry g = d.geometry();
+    REQUIRE(g.label == "\xE2\x8C\x80" "50.00 H7"); // U+2300 diameter sign
+}
+
+TEST_CASE("Dimension decoration: symmetric tolerance is one line, value +/- dev") {
+    const DecoratedDim d("", "", DimTolerance{TolMode::Symmetric, 0.1, -0.1});
+    const DimGeometry g = d.geometry(1);
+    REQUIRE(g.label == "50.0 \xC2\xB1" "0.1"); // U+00B1
+    REQUIRE(g.label2.empty());
+}
+
+TEST_CASE("Dimension decoration: limits stack the two LIMIT VALUES, upper over lower") {
+    // +0.046 / 0 on a 50 unit feature -> 50.046 over 50.000. The deviations are stored;
+    // what is drawn is what a machinist reads, which is the limits themselves.
+    const DecoratedDim d("", "", DimTolerance{TolMode::Limits, 0.046, 0.0});
+    const DimGeometry g = d.geometry(3);
+    REQUIRE(g.label == "50.046");
+    REQUIRE(g.label2 == "50.000");
+
+    // The lower line sits BELOW the upper one, along the text's own up direction.
+    REQUIRE(g.label2_pos.y < g.text_pos.y);
+    REQUIRE(g.label2_pos.x == Approx(g.text_pos.x));
+
+    // Reversed deviations still print high-over-low (the author cannot invert them).
+    const DecoratedDim rev("", "", DimTolerance{TolMode::Limits, 0.0, -0.05});
+    const DimGeometry gr = rev.geometry(3);
+    REQUIRE(gr.label == "50.000");
+    REQUIRE(gr.label2 == "49.950");
+}
+
+TEST_CASE("Dimension decoration: basic boxes the label; reference parenthesises it") {
+    const DecoratedDim plain("", "", {});
+    const DecoratedDim basic("", "", DimTolerance{TolMode::Basic, 0.0, 0.0});
+    const DimGeometry gp = plain.geometry();
+    const DimGeometry gb = basic.geometry();
+
+    REQUIRE(gb.label == gp.label);                       // the value is untouched
+    REQUIRE(gb.dim_lines.size() == gp.dim_lines.size() + 8); // + 4 box segments
+
+    // The box encloses the label quad, with a real margin on every side.
+    Vec2 quad[4];
+    REQUIRE(dim_label_quad(gb, false, quad));
+    double bx0 = 1e9;
+    double by0 = 1e9;
+    double bx1 = -1e9;
+    double by1 = -1e9;
+    for (std::size_t i = gp.dim_lines.size(); i < gb.dim_lines.size(); ++i) {
+        bx0 = std::min(bx0, gb.dim_lines[i].x);
+        by0 = std::min(by0, gb.dim_lines[i].y);
+        bx1 = std::max(bx1, gb.dim_lines[i].x);
+        by1 = std::max(by1, gb.dim_lines[i].y);
+    }
+    for (const Vec2& p : quad) {
+        REQUIRE(p.x > bx0);
+        REQUIRE(p.x < bx1);
+        REQUIRE(p.y > by0);
+        REQUIRE(p.y < by1);
+    }
+
+    const DecoratedDim ref("", "", DimTolerance{TolMode::Reference, 0.0, 0.0});
+    REQUIRE(ref.geometry().label == "(50.00)");
+    REQUIRE(ref.geometry().dim_lines.size() == gp.dim_lines.size()); // no box
+}
+
+TEST_CASE("Dimension decoration: the value is still measured, never authored") {
+    // Whatever the decoration, moving a def point moves the number. This is the
+    // invariant the issue explicitly asks to keep.
+    GeometryStore store;
+    const EntityHandle h = store.add_dimension(DimType::Linear, {0, 0}, {50, 0}, {25, 10}, 0, {},
+                                               {}, "6X ", " TYP",
+                                               DimTolerance{TolMode::Symmetric, 0.2, -0.2});
+    DimStyle s;
+    s.precision = 1;
+    {
+        const DimData* d = store.dimension(h);
+        REQUIRE(compute_dim_geometry(*d, s, Rgb{}, store.dim_text_parts(*d)).label ==
+                "6X 50.0 \xC2\xB1" "0.2 TYP");
+    }
+    // Re-create at a different length: same decoration, different measured value.
+    const EntityHandle h2 = store.add_dimension(DimType::Linear, {0, 0}, {33, 0}, {16, 10}, 0, {},
+                                                {}, "6X ", " TYP",
+                                                DimTolerance{TolMode::Symmetric, 0.2, -0.2});
+    const DimData* d2 = store.dimension(h2);
+    REQUIRE(compute_dim_geometry(*d2, s, Rgb{}, store.dim_text_parts(*d2)).label ==
+            "6X 33.0 \xC2\xB1" "0.2 TYP");
+}
+
+TEST_CASE("Dimension decoration widens the entity AABB (the label is part of the dim)") {
+    GeometryStore store;
+    // A SHORT feature, where the label genuinely overhangs -- the case that matters.
+    const EntityHandle plain =
+        store.add_dimension(DimType::Linear, {0, 0}, {10, 0}, {5, 6}, 0, {}, {});
+    const EntityHandle wide = store.add_dimension(DimType::Linear, {0, 0}, {10, 0}, {5, 6}, 0, {},
+                                                  {}, "", " MAXIMUM MATERIAL CONDITION", {});
+    Vec2 pmin;
+    Vec2 pmax;
+    Vec2 wmin;
+    Vec2 wmax;
+    REQUIRE(entity_aabb(store, plain, pmin, pmax));
+    REQUIRE(entity_aabb(store, wide, wmin, wmax));
+    REQUIRE(wmax.x - wmin.x > pmax.x - pmin.x); // the long suffix widens the box
+}
+
+TEST_CASE("Dimension decoration survives capture -> recreate (undo / move / clipboard)") {
+    GeometryStore store;
+    const EntityHandle h =
+        store.add_dimension(DimType::Linear, {0, 0}, {50, 0}, {25, 10}, 0, {}, {}, "%%c", " H7",
+                            DimTolerance{TolMode::Limits, 0.046, 0.0});
+    const Command captured = capture_entity(store, h);
+    const auto* cmd = std::get_if<AddDimensionCommand>(&captured);
+    REQUIRE(cmd != nullptr);
+    REQUIRE(cmd->prefix == "%%c"); // RAW, codes unexpanded
+    REQUIRE(cmd->suffix == " H7");
+    REQUIRE(cmd->tol.mode == TolMode::Limits);
+    REQUIRE(cmd->tol.upper == Approx(0.046));
+
+    GeometryStore target;
+    const EntityHandle re = add_command_to_store(target, captured, EntityProps{});
+    const DimData* d = target.dimension(re);
+    REQUIRE(d != nullptr);
+    REQUIRE(target.dim_prefix(*d) == "%%c");
+    REQUIRE(target.dim_suffix(*d) == " H7");
+    REQUIRE(d->tol == cmd->tol);
+}
+
+TEST_CASE("Struct sizes: the decoration lands in the COLD dim arena only") {
+    // DimData is few-and-cold (one per dimension, never on an insert-rate path), so it
+    // may grow; the hot structs every entity pays for must not. These are the sizes the
+    // architecture doc quotes -- assert them so a future field cannot silently fatten
+    // the hot path the way the original 24-byte EntityProps regressed inserts.
+    static_assert(sizeof(LineData) == 40, "hot struct: LineData must stay 40 B");
+    static_assert(sizeof(CircleData) == 32, "hot struct: CircleData must stay 32 B");
+    static_assert(sizeof(EntityProps) == 8, "hot struct: EntityProps must stay 8 B");
+    // Cold, and now carrying the decoration (tolerance + two char-pool ranges).
+    static_assert(sizeof(DimData) == 152, "DimData size changed -- update the docs too");
+    // The strings live in the shared char pool, NOT inline: two (offset,len) pairs is
+    // 16 bytes whatever the text says, so a long fit-class note costs the arena nothing.
+    static_assert(sizeof(DimTolerance) == 24, "DimTolerance layout changed");
+    REQUIRE(sizeof(LineData) == 40); // a runtime assertion so the case is not empty
+}
+
+TEST_CASE("Basic-dimension frame clears the dimension line") {
+    // The frame, not the text, must sit above the dim line -- the box's lower edge
+    // landed exactly on it before the padding lift.
+    const DecoratedDim basic("", "", DimTolerance{TolMode::Basic, 0.0, 0.0});
+    const DimGeometry g = basic.geometry();
+    // The dimension line runs along y = 10 (the placement point's height).
+    double box_bottom = 1e9;
+    for (std::size_t i = 2; i < g.dim_lines.size(); ++i) { // skip the dim line itself
+        box_bottom = std::min(box_bottom, g.dim_lines[i].y);
+    }
+    REQUIRE(box_bottom > g.dim_lines[0].y);
 }

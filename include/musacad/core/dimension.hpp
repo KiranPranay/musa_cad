@@ -21,7 +21,7 @@ namespace musacad::core {
 /// caller to lay out with the stroke font.
 struct DimGeometry {
     std::vector<Vec2> ext_lines;   ///< extension lines
-    std::vector<Vec2> dim_lines;   ///< dimension line(s) / arc
+    std::vector<Vec2> dim_lines;   ///< dimension line(s) / arc (+ the basic-dimension box)
     std::vector<Vec2> arrow_lines; ///< open/tick arrowheads (segments)
     std::vector<Vec2> arrow_fills; ///< filled arrowheads (triangles, 3 Vec2 each)
 
@@ -31,12 +31,42 @@ struct DimGeometry {
     Rgb text_color;
     std::uint8_t lineweight = 25;
 
-    std::string label;
+    std::string label;   ///< first (usually only) label line, codes already expanded
     Vec2 text_pos{};
+    /// Second label line -- ONLY the `Limits` tolerance mode produces one, where the
+    /// upper limit stacks over the lower. Empty otherwise, so every consumer can draw
+    /// it unconditionally with `if (!label2.empty())`.
+    std::string label2;
+    Vec2 label2_pos{};
     double text_rotation = 0.0;
     double text_height = 2.5;
     text::Justify text_justify = text::Justify::Center;
 };
+
+/// The composed, code-expanded label of a dimension: one line, or two when the
+/// tolerance mode is `Limits`. `boxed` requests the ASME Y14.5 basic-dimension frame.
+struct DimLabel {
+    std::string line1;
+    std::string line2; ///< empty unless TolMode::Limits
+    bool boxed = false;
+};
+
+/// Builds a dimension's visible label from its MEASURED value plus its decoration.
+/// The single definition -- compute_dim_geometry calls it to lay the text out, and
+/// the DXF exporter calls it to fill the DIMENSION text override (group code 1), so
+/// what another CAD shows can never disagree with what Musa CAD draws.
+///
+/// `style` must already have the dimension's overrides applied (it is read only for
+/// `precision`). `parts` are the raw prefix/suffix; control codes are expanded here.
+[[nodiscard]] DimLabel compose_dim_label(const DimData& d, const DimStyle& style,
+                                         DimTextParts parts);
+
+/// The four world-space corners of a placed label line, in order (baseline-left,
+/// baseline-right, cap-right, cap-left), honouring justification and rotation.
+/// `second` selects the Limits mode's lower line. Returns false when that line is
+/// empty. THE definition of where a dimension's text sits: bounds, pick and the
+/// ISO 129-1 fit test all read it, so none of them can disagree with what is drawn.
+[[nodiscard]] bool dim_label_quad(const DimGeometry& g, bool second, Vec2 (&out)[4]);
 
 /// The measured value of a dimension (computed from def points -- never baked).
 [[nodiscard]] double dim_measure(const DimData& d);
@@ -47,8 +77,14 @@ struct DimGeometry {
 /// Computes a dimension's drawable geometry under a style. `base_color` is the
 /// entity's ByLayer-resolved colour, used for any element whose style colour is
 /// ByLayer. Linear/Aligned/Radius/Diameter/Angular are built.
+///
+/// `parts` carries the dimension's prefix/suffix, which live in the store's char pool
+/// and so cannot be read from `DimData` alone -- callers that have the store pass
+/// `store.dim_text_parts(d)`; the placement preview (which is decorating nothing yet)
+/// passes the default. Decoration is resolved HERE so it participates in the
+/// dimension's own layout, bounds and selection rather than floating beside it.
 [[nodiscard]] DimGeometry compute_dim_geometry(const DimData& d, const DimStyle& style,
-                                               Rgb base_color);
+                                               Rgb base_color, DimTextParts parts = {});
 
 /// Appends a filled (triangles) or stroked (segments) arrowhead at `tip` pointing
 /// back along `along` (unit), sized to `size`, of the given ArrowType. Shared with
