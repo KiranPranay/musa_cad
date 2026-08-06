@@ -170,3 +170,51 @@ noticed. Authored the missing 15 and the test now walks the whole printable rang
 **Gate: PASSED.** dev clean/0 warnings + **348/348**; release clean; tsan **348/348**.
 Artifact `artifacts/issue-9.pdf` (symbol sheet, every symbol via `\U+XXXX` from a plain
 TEXT). **Left:** nothing. Next: merge, then #7.
+
+---
+
+## 2026-08-06 02:40 — #7 DONE (branch `feat/issue-7-dim-tolerances`)
+
+Commit `03558bc`.
+
+**Decisions:**
+1. **`compose_dim_label()` as a separate function**, not inline in
+   `compute_dim_geometry`. Reason: the DXF exporter also needs the composed string for
+   the code-1 text override. One definition ⇒ what a vendor's CAD shows can never
+   disagree with what we draw.
+2. **`DimTextParts` parameter rather than passing the store.** `compute_dim_geometry`
+   takes `DimData`, which cannot resolve char-pool offsets. Rejected: (a) fat inline
+   buffers on `DimData` (the issue explicitly says char pool), (b) passing
+   `GeometryStore&` (would make the function untestable without a store, and it is the
+   core geometry primitive). Added `store.dim_text_parts(d)` so no consumer can forget.
+3. **`dim_label_quad()` extracted.** Three callers wanted the label rectangle; pick had
+   an inline copy and bounds had *none*. Writing it a third time for #12 was the "if you
+   find yourself writing the layout twice, stop" smell.
+4. **Limits stacks the limit VALUES, not the deviations** (50.046 over 50.000). ISO/ASME
+   practice and what a machinist reads.
+5. **MATCHPROP: `MatchSlot::None`** — agreeing with the operator's instinct. A fit class
+   is semantics about *this* feature; painting it onto another dimension would silently
+   assert something untrue. Precedent: `TextContent` is already unmatched.
+6. **v15 puts prefix/suffix on their own LINES**, three tolerance fields inline. The
+   strings can contain spaces so they cannot be tokens; TEXT's content line is the
+   precedent. Token count (34/31/16) stays the version discriminator.
+7. **Designated initialisers at the six `AddDimensionCommand{...}` sites.** Adding
+   fields broke every positional brace-init. Designated initialisers + `= {}` on the new
+   members means the next field addition won't.
+
+**Bugs the artifact and the release build forced out (neither was caught by the dev build
+or the unit tests):**
+* The **basic-dimension frame's lower edge landed exactly on the dimension line** — the
+  *frame*, not the text, has to clear it. Visible only in the plotted PDF. Fixed and now
+  asserted.
+* **`PropEditor::DimTolModeCombo` had no case in `properties_panel.cpp`.** That is not a
+  cosmetic warning: the new tolerance row would have been **invisible in the Properties
+  palette**. It surfaced only because `musacad_ui` builds with `-Wswitch` and I checked
+  the *release* log for warnings, not just errors. Lesson recorded: grep builds for
+  `warning`, not `error`.
+* Six `-Wmissing-field-initializers` from the struct growth.
+
+**Gate: PASSED.** dev clean/**0 warnings** + **361/361**; release clean/0 warnings; tsan
+**361/361**. Struct sizes asserted (`LineData` 40, `CircleData` 32, `EntityProps` 8,
+`DimData` **152**). Artifact `artifacts/issue-7.pdf` — one dimension per tolerance mode.
+**Format version is now v15.** **Left:** nothing. Next: merge, then #12.
