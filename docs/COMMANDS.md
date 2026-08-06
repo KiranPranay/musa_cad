@@ -134,6 +134,7 @@ commands (Ribbon Phase A):
 | **Font** dropdown (Standard stroke font + system TrueType/OpenType faces); switching re-renders the selected text as one undo group (varies/set-all) | PR Font | Implemented (Ph29) |
 | Imported text fonts: TTF-by-name resolves to the installed face (filled glyphs); single-stroke SHX fonts (romans/simplex/isocp/txt…) render with the built-in single-stroke font (faithful match); missing → stroke fallback (true SHX binary parsing staged) | — | Implemented (Ph29) |
 | PR deep **Dimension** group: per-dimension overrides — arrowhead type/size, dim-line & ext-line color, text height/color/placement, precision (each ByStyle or Overridden, with reset-to-style) | — | Implemented (Ph24) |
+| PR **Dimension** text decoration — text prefix / suffix (raw, so `%%c` and `6X` work) and a tolerance mode (none / symmetric / limits / basic / reference) with upper & lower deviations. The measured VALUE stays computed from the def points and is never authorable; only the decoration around it is. **Not** MATCHPROP-matchable by design — a fit class is semantics about THIS feature, not presentation | — | Implemented (issue #7) |
 | Per-dimension overrides: resolve override-first-else-style (the Ph12 pattern) in compute_dim_geometry; one undo group; native round-trip; DXF override-vs-style distinction is native-only (stated gap) | — | Implemented (Ph24) |
 | PR numeric **geometry editing** for line/circle/arc/polyline/leader | — | Planned (read-only display today) |
 | LEADER (simple arrow + line + single-line label, kept for compat) | LEADER | Implemented |
@@ -223,6 +224,7 @@ phase covers **import, display, and selection**; in-app authoring is staged.
 
 | Command | Alias | Status |
 |---|---|---|
+| Native format **v15** (adds dimension text decoration) | — | Implemented (v1–v14 load) |
 | Native format v5 (adds polyline arc bulges) | — | Implemented (v1–v4 load) |
 | DXF LWPOLYLINE bulges (code 42, read/write) | — | Implemented (LibreCAD-verified) |
 | DXF TEXT + DIMENSION (all subtypes) + LEADER + DIMSTYLE table | — | Implemented (leader label imports as separate TEXT) |

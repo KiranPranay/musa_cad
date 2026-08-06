@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace musacad::core {
 
@@ -46,6 +47,38 @@ enum class DimType : std::uint8_t {
     Radius = 2,
     Diameter = 3,
     Angular = 4,
+};
+
+/// How a dimension qualifies its measured value.
+///
+/// The VALUE is always the measured def-point distance and can never be authored --
+/// that is what makes a Musa CAD dimension trustworthy. Only the decoration AROUND
+/// it is authorable, which is what a fabrication drawing actually needs (a fit class,
+/// limit deviations, a bilateral tolerance, a basic-dimension box).
+enum class TolMode : std::uint8_t {
+    None = 0,      ///< the value alone
+    Symmetric = 1, ///< value ± upper, on one line (bilateral)
+    Limits = 2,    ///< value+upper stacked over value+lower (two lines)
+    Basic = 3,     ///< the value in a box (ASME Y14.5 theoretically-exact dimension)
+    Reference = 4, ///< the value in parentheses
+};
+
+/// A dimension's tolerance decoration. `lower` is the (usually negative) deviation;
+/// Symmetric uses `upper` only.
+struct DimTolerance {
+    TolMode mode = TolMode::None;
+    double upper = 0.0;
+    double lower = 0.0;
+    friend bool operator==(const DimTolerance&, const DimTolerance&) = default;
+};
+
+/// A dimension's authorable text decoration, as views into the store's char pool.
+/// The strings are RAW (control codes unexpanded) -- expansion happens once, inside
+/// compose_dim_label, at layout time (derived-not-baked). Declared here rather than
+/// in dimension.hpp so both the store and the geometry builder can name it.
+struct DimTextParts {
+    std::string_view prefix;
+    std::string_view suffix;
 };
 
 /// Arrowhead style for dimensions and leaders.

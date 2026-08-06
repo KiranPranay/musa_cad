@@ -90,6 +90,12 @@ struct TextData {
 /// points (a, b) -- never baked -- so editing them updates the dimension. `line_pt`
 /// positions the dimension line; `style` indexes the dimstyle table. DimType lives
 /// in properties.hpp.
+///
+/// Text decoration (prefix / suffix / tolerance) qualifies the value without ever
+/// replacing it: a dimension still cannot lie about the geometry. The two strings
+/// live in the shared char pool as (offset, len) -- TextData's pattern, no fat inline
+/// buffer -- and are expanded through substitute_text_codes at layout time, so
+/// "%%c200 H7" and "6X" work with no dimension-specific code.
 struct DimData {
     DimType type = DimType::Linear;
     Vec2 a;       ///< first definition point
@@ -98,6 +104,11 @@ struct DimData {
     std::uint16_t style = 0;
     EntityProps props{};
     DimOverrides overrides{}; ///< per-dimension style overrides (ByStyle by default)
+    DimTolerance tol{};       ///< tolerance mode + deviations (None by default)
+    std::uint32_t prefix_offset = 0; ///< prefix string in the shared char pool
+    std::uint32_t prefix_len = 0;
+    std::uint32_t suffix_offset = 0; ///< suffix string in the shared char pool
+    std::uint32_t suffix_len = 0;
 };
 
 /// A quick leader: an arrowhead at `tip`, a leader line to `knee`, and a text
@@ -238,8 +249,12 @@ public:
                             EntityProps props = {});
     EntityHandle add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
                           std::string_view content, EntityProps props = {}, std::uint16_t font = 0);
+    /// `prefix`/`suffix` are copied into the shared char pool; they and `tol` decorate
+    /// the MEASURED value, never replace it.
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
-                               EntityProps props = {}, DimOverrides overrides = {});
+                               EntityProps props = {}, DimOverrides overrides = {},
+                               std::string_view prefix = {}, std::string_view suffix = {},
+                               DimTolerance tol = {});
     EntityHandle add_leader(Vec2 tip, Vec2 knee, double text_height, std::uint16_t style,
                             std::string_view content, EntityProps props = {},
                             std::uint16_t font = 0, DimOverrides overrides = {});
@@ -285,6 +300,15 @@ public:
     /// The string content of a text entity.
     [[nodiscard]] std::string_view string_of(const TextData& t) const noexcept;
     [[nodiscard]] std::string_view string_of(const LeaderData& l) const noexcept;
+    /// A dimension's raw (unexpanded) prefix / suffix strings.
+    [[nodiscard]] std::string_view dim_prefix(const DimData& d) const noexcept;
+    [[nodiscard]] std::string_view dim_suffix(const DimData& d) const noexcept;
+    /// Both at once, in the shape compute_dim_geometry takes. Every consumer of a
+    /// dimension's geometry goes through this, so none of them can render an
+    /// undecorated label by forgetting a parameter.
+    [[nodiscard]] DimTextParts dim_text_parts(const DimData& d) const noexcept {
+        return DimTextParts{dim_prefix(d), dim_suffix(d)};
+    }
     /// Content of a paragraph-text block (MTEXT entity or QLEADER label).
     [[nodiscard]] std::string_view string_of(const MTextBlock& b) const noexcept;
     /// Leader-polyline vertices of an MLeader.

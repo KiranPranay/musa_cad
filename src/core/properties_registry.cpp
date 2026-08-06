@@ -85,6 +85,71 @@ void with_dim_ov(Command& c, const std::function<void(DimOverrides&)>& fn) {
         c);
 }
 
+// --- dimension text decoration (issue #7) --------------------------------------
+// Only AddDimensionCommand carries .prefix / .suffix / .tol, so the same
+// requires-expression trick applies: the property "applies to whichever command
+// exposes the member", with no per-type enumeration.
+std::string get_dim_decor_prefix(const Command& c) {
+    std::string s;
+    std::visit(
+        [&](const auto& x) {
+            if constexpr (requires { x.prefix; }) {
+                s = x.prefix;
+            }
+        },
+        c);
+    return s;
+}
+std::string get_dim_decor_suffix(const Command& c) {
+    std::string s;
+    std::visit(
+        [&](const auto& x) {
+            if constexpr (requires { x.suffix; }) {
+                s = x.suffix;
+            }
+        },
+        c);
+    return s;
+}
+void set_dim_decor_prefix(Command& c, const std::string& value) {
+    std::visit(
+        [&](auto& x) {
+            if constexpr (requires { x.prefix; }) {
+                x.prefix = value;
+            }
+        },
+        c);
+}
+void set_dim_decor_suffix(Command& c, const std::string& value) {
+    std::visit(
+        [&](auto& x) {
+            if constexpr (requires { x.suffix; }) {
+                x.suffix = value;
+            }
+        },
+        c);
+}
+DimTolerance get_dim_tol(const Command& c) {
+    DimTolerance t{};
+    std::visit(
+        [&](const auto& x) {
+            if constexpr (requires { x.tol; }) {
+                t = x.tol;
+            }
+        },
+        c);
+    return t;
+}
+void with_dim_tol(Command& c, const std::function<void(DimTolerance&)>& fn) {
+    std::visit(
+        [&](auto& x) {
+            if constexpr (requires { x.tol; }) {
+                fn(x.tol);
+            }
+        },
+        c);
+}
+
 // CELTSCALE rides as a top-level field on the linetype-dashing Add*Commands (not in
 // props -- the store holds it sparsely). Commands without the field read 1.0 / no-op.
 double get_celtscale(const Command& c) {
@@ -715,6 +780,52 @@ const Desc kDescs[] = {
              }
          });
      }},
+    // -- Dimension text decoration (issue #7). Unlike the rows above these are NOT
+    // ByStyle overrides: prefix/suffix/tolerance are the dimension's own content, so
+    // they are plain values with no style to fall back to.
+    {PropertyId::DimPrefix, "Dimension", "Text prefix", PropEditor::Text, is_dimension,
+     [](const Command& c) {
+         PropertyValue v;
+         v.text = get_dim_decor_prefix(c);
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) { set_dim_decor_prefix(c, v.text); }},
+    {PropertyId::DimSuffix, "Dimension", "Text suffix", PropEditor::Text, is_dimension,
+     [](const Command& c) {
+         PropertyValue v;
+         v.text = get_dim_decor_suffix(c);
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) { set_dim_decor_suffix(c, v.text); }},
+    {PropertyId::DimTolMode, "Dimension", "Tolerance", PropEditor::DimTolModeCombo, is_dimension,
+     [](const Command& c) {
+         PropertyValue v;
+         v.choice = static_cast<int>(get_dim_tol(c).mode);
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_tol(c, [&](DimTolerance& t) {
+             t.mode = static_cast<TolMode>(std::clamp(v.choice, 0, 4));
+         });
+     }},
+    {PropertyId::DimTolUpper, "Dimension", "Upper deviation", PropEditor::Number, is_dimension,
+     [](const Command& c) {
+         PropertyValue v;
+         v.num = get_dim_tol(c).upper;
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_tol(c, [&](DimTolerance& t) { t.upper = v.num; });
+     }},
+    {PropertyId::DimTolLower, "Dimension", "Lower deviation", PropEditor::Number, is_dimension,
+     [](const Command& c) {
+         PropertyValue v;
+         v.num = get_dim_tol(c).lower;
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_tol(c, [&](DimTolerance& t) { t.lower = v.num; });
+     }},
     {PropertyId::DimPrecision, "Dimension", "Precision", PropEditor::NumberOverride, is_dimension,
      [](const Command& c) {
          return read_dim_num(c, DimOverrides::kPrecision,
@@ -934,6 +1045,15 @@ MatchSlot match_slot_for(PropertyId id) noexcept {
     case PropertyId::DimTextPlacement:
     case PropertyId::DimPrecision:
         return MatchSlot::Dimension;
+    // Text decoration is SEMANTICS, not presentation: a fit class, a limit pair or a
+    // "6X" prefix describes THIS feature, and painting it onto another dimension with
+    // MATCHPROP would silently assert something untrue about a different feature. Same
+    // reasoning that makes TextContent unmatched. Deliberately MatchSlot::None.
+    case PropertyId::DimPrefix:
+    case PropertyId::DimSuffix:
+    case PropertyId::DimTolMode:
+    case PropertyId::DimTolUpper:
+    case PropertyId::DimTolLower:
     case PropertyId::HatchPattern:
     case PropertyId::HatchScale:
     case PropertyId::HatchAngle:

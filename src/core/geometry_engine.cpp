@@ -1339,7 +1339,14 @@ void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 
         report("Could not dimension that object -- select a line, circle, or arc.");
         return;
     }
-    const Command add = AddDimensionCommand{type, d.a, d.b, d.line_pt, style, group, {}};
+    AddDimensionCommand dim;
+    dim.type = type;
+    dim.a = d.a;
+    dim.b = d.b;
+    dim.line_pt = d.line_pt;
+    dim.style = style;
+    dim.group = group;
+    const Command add = dim;
     const EntityHandle nh = create_indexed(add);
     push_create_item(group, nh, add);
     redo_.clear();

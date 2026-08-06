@@ -1415,8 +1415,12 @@ void LinearDimensionCommand::input(CommandContext& ctx, const std::string& text)
         ctx.set_prompt("Specify dimension line location: ");
         return;
     case State::Place:
-        ctx.submit(core::AddDimensionCommand{static_cast<std::uint8_t>(type_), a_, b_, *p, 0,
-                                             ctx.group_id()});
+        ctx.submit(core::AddDimensionCommand{.type = static_cast<std::uint8_t>(type_),
+                                             .a = a_,
+                                             .b = b_,
+                                             .line_pt = *p,
+                                             .style = 0,
+                                             .group = ctx.group_id()});
         ctx.echo("Dimension placed.");
         done_ = true;
         return;

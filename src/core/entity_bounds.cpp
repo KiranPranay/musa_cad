@@ -116,7 +116,8 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
     case EntityKind::Dimension: {
         const DimData* d = store.dimension(h);
         const DimStyle* s = store.dimstyle(d->style);
-        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{});
+        const DimGeometry g =
+            compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{}, store.dim_text_parts(*d));
         bool first = true;
         const auto extend = [&](Vec2 p) {
             if (first) {
@@ -130,6 +131,17 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
         for (const auto* list : {&g.ext_lines, &g.dim_lines, &g.arrow_lines, &g.arrow_fills}) {
             for (const Vec2& p : *list) {
                 extend(p);
+            }
+        }
+        // The label is part of the dimension, so its box belongs in the AABB. It used to
+        // be omitted, which under-reported the extents of any dim whose text sticks out
+        // (a two-line Limits label, or an outside-placed value).
+        Vec2 quad[4];
+        for (const bool second : {false, true}) {
+            if (dim_label_quad(g, second, quad)) {
+                for (const Vec2& p : quad) {
+                    extend(p);
+                }
             }
         }
         extend(d->a);

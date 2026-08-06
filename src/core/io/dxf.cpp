@@ -3,6 +3,8 @@
 
 #include "musacad/core/io/dxf.hpp"
 
+#include "musacad/core/dimension.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -434,6 +436,29 @@ std::string serialize_dxf(const Document& doc) {
         code_d(s, 15, d.line_pt.x); // radius/diameter "edge" def point reuse
         code_d(s, 25, d.line_pt.y);
         code_d(s, 35, 0.0);
+        // Text decoration -> the DIMENSION text OVERRIDE (group code 1), so other CAD
+        // shows the decorated value instead of a bare measurement. The string is built
+        // by the SAME compose_dim_label the renderer uses, so what a vendor sees can
+        // never disagree with what Musa CAD draws.
+        //
+        // Honest gap: DXF has no place for the tolerance SEMANTICS (mode + deviations)
+        // that Musa CAD stores, so a re-import returns the composed string as a text
+        // override, not as an editable tolerance. The decoration is native-only --
+        // exactly the gap already documented for per-dimension overrides. The measured
+        // value itself is unaffected: it is recomputed from the def points as always.
+        if (d.tol.mode != TolMode::None || !d.prefix.empty() || !d.suffix.empty()) {
+            DimData dd;
+            dd.type = static_cast<DimType>(d.type);
+            dd.a = d.a;
+            dd.b = d.b;
+            dd.line_pt = d.line_pt;
+            dd.tol = d.tol;
+            const DimStyle ds = d.style < doc.dimstyles.size() ? doc.dimstyles[d.style] : DimStyle{};
+            const DimLabel lbl =
+                compose_dim_label(dd, apply_dim_overrides(ds, d.overrides), {d.prefix, d.suffix});
+            // A two-line (limits) label becomes AutoCAD's stacked-text form.
+            code(s, 1, lbl.line2.empty() ? lbl.line1 : lbl.line1 + "\\P" + lbl.line2);
+        }
     }
     // Leaders: exported as a DXF LEADER (vertices) plus a TEXT label so any reader
     // shows them. Import reconstructs them as line + text (see docs); Musa keeps

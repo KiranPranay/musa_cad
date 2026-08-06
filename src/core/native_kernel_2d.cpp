@@ -335,7 +335,8 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         // The dimension line(s) are the selectable span.
         const DimData* d = store.dimension(entity);
         const DimStyle* s = store.dimstyle(d->style);
-        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{});
+        const DimGeometry g =
+            compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{}, store.dim_text_parts(*d));
         out.assign(g.dim_lines.begin(), g.dim_lines.end());
         break;
     }
@@ -455,7 +456,8 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
     case EntityKind::Dimension: {
         const DimData* d = store.dimension(entity);
         const DimStyle* s = store.dimstyle(d->style);
-        const DimGeometry g = compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{});
+        const DimGeometry g =
+            compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{}, store.dim_text_parts(*d));
         bool found = false;
         double best_d2 = 0.0;
         const auto consider = [&](Vec2 cp) {
@@ -477,20 +479,26 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         // The measured TEXT label is part of the dimension (not a separate entity), so a
         // click on the text must pick the dim -- match the Text bbox test, honouring the
         // label's justification (offset of the run relative to text_pos) and rotation.
-        if (!g.label.empty()) {
-            const double w = text::text_width(g.label, g.text_height);
+        // Both label lines: a Limits dimension's lower limit is as clickable as its upper.
+        const auto consider_label = [&](const std::string& line, Vec2 at) {
+            if (line.empty()) {
+                return;
+            }
+            const double w = text::text_width(line, g.text_height);
             const double off = g.text_justify == text::Justify::Center  ? -w / 2.0
                                : g.text_justify == text::Justify::Right ? -w
                                                                         : 0.0;
             const double cs = std::cos(g.text_rotation);
             const double sn = std::sin(g.text_rotation);
-            const Vec2 q = query - g.text_pos;
+            const Vec2 q = query - at;
             const double lx = q.x * cs + q.y * sn;
             const double ly = -q.x * sn + q.y * cs;
             const double cx = std::clamp(lx, off, off + w);
             const double cy = std::clamp(ly, 0.0, g.text_height);
-            consider({g.text_pos.x + cx * cs - cy * sn, g.text_pos.y + cx * sn + cy * cs});
-        }
+            consider({at.x + cx * cs - cy * sn, at.y + cx * sn + cy * cs});
+        };
+        consider_label(g.label, g.text_pos);
+        consider_label(g.label2, g.label2_pos);
         return found;
     }
     case EntityKind::Leader: {
