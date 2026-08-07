@@ -316,3 +316,53 @@ Artifact `artifacts/issue-8.pdf`.
 
 **Left:** DXF TOLERANCE interop, the ParameterDialog surface, and cell-list editing in the
 PR — all three written into `docs/TODO.md`.
+
+---
+
+## 2026-08-08 02:30 — #10 PARTIAL, merged (branch `feat/issue-10-image`)
+
+Commit `0f2d63a`. Native format is now **v18**. **PR #18 explicitly says not to close the
+issue.**
+
+**The call:** the brief's own time-box named "entity + native format + plot, with the
+viewport path deferred" as a legitimate slice. I took exactly that, because the GPU half
+(`GpuTexture` + DSA + shaders + a texture cache) is the part that would have been rushed,
+and it is also the part that **raises the documented draw-call bound** — a change that
+deserves its own proof in `render_offscreen` rather than being smuggled in at the end of a
+long run.
+
+**Decisions:**
+1. **Clip stored as FRACTIONS, not pixels.** Survives a resize or a definition re-pointed
+   at a different-resolution file.
+2. **`ImageDef` dedups by payload identity.** Ten placements of one logo = one definition,
+   one copy of the bytes.
+3. **A null decoder is not an error.** The quad still resolves, so bounds/pick/grips/
+   persistence all work with no decoder injected — asserted, because that is what the
+   core-stays-Qt-free seam is *for*.
+4. **Images plot UNDER the vector geometry.** An image is a backdrop; it must never hide a
+   dimension.
+5. **`resolve_image_path` is a security boundary.** Containment checked *after*
+   `weakly_canonical`, so it tests the resolved path rather than string-matching `..`.
+   Absolute paths refused outright.
+6. **Base64 chunked at 76 chars**, and a corrupt payload **fails the load** rather than
+   producing a garbled image.
+
+**The constraint I was most careful about:** pixels never enter the snapshot.
+`ImageInstance` is transform + clip UVs + def index + def *version*, with a
+`static_assert` pinning its size and the reason in the message.
+
+**Gate: PASSED.** dev clean/0 warnings **402/402**; release clean/0 warnings; tsan
+**402/402**. Artifact `artifacts/issue-10.pdf` — embedded, external, rotated, clipped, and
+a title-block logo, all plotted headlessly. `tests/fixtures/assets/mark.png` is a small
+hand-generated PNG so the fixture is self-contained.
+
+**Left:** viewport display, `IMAGEATTACH`/`IMAGECLIP`, DXF `IMAGE`/`IMAGEDEF`, and an
+embedded-size cap — all four in `docs/TODO.md` with what done looks like.
+
+---
+
+## 2026-08-08 02:40 — Run complete
+
+Six issues touched, five closed, one honestly partial. `main` is green on all three
+presets. Six PRs open (#13–#18), stacked in dependency order. `NIGHT_REPORT.md` is the
+morning read.

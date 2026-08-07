@@ -1,7 +1,8 @@
 # Night report — 2026-08-05/08 unattended run
 
-**Five of six issues closed and merged to local `main`, each with a PR open. One issue
-(#10, the raster IMAGE entity) is deliberately parked — not started.**
+**All six issues have merged work on `main`, each with a PR open. Five are complete and
+close their issue; the sixth (#10, the raster IMAGE entity) landed as a deliberate
+partial slice and stays open.**
 
 Every merge passed the full gate: `dev` (ASan/UBSan) clean with **zero warnings** and all
 tests green, `release` clean with zero warnings, and `tsan` green. The tree on `main` is
@@ -18,14 +19,14 @@ green right now.
 | **#7** Dimension tolerances | **Merged** | `feat/issue-7-dim-tolerances` | [#15](https://github.com/MusaCAD/MusaCAD/pull/15) | v15 |
 | **#12** Narrow dimensions | **Merged** | `feat/issue-12-narrow-dims` | [#16](https://github.com/MusaCAD/MusaCAD/pull/16) | v16 |
 | **#8** GD&T entities | **Merged** | `feat/issue-8-gdt` | [#17](https://github.com/MusaCAD/MusaCAD/pull/17) | v17 |
-| **#10** Raster IMAGE | **Parked — not started** | — | — | (would be v18) |
+| **#10** Raster IMAGE | **Partial — issue stays open** | `feat/issue-10-image` | [#18](https://github.com/MusaCAD/MusaCAD/pull/18) | v18 |
 
 The PRs **stack**: each branch was cut from `main` after the previous one merged, exactly
 as the brief's work order requires, so each PR's diff against `origin/main` includes its
-predecessors. Merge them in issue order **#13 → #14 → #15 → #16 → #17** and each collapses
+predecessors. Merge them in issue order **#13 → #14 → #15 → #16 → #17 → #18** and each collapses
 to its own commits. Every PR body names its stack parent.
 
-Artifacts for coffee: `artifacts/issue-{7,8,9,11,12}.pdf`. **If you only look at one, make
+Artifacts for coffee: `artifacts/issue-{7,8,9,10,11,12}.pdf`. **If you only look at one, make
 it `issue-12.pdf`** — the 21-rung ladder shows the whole narrow-dimension behaviour at a
 glance.
 
@@ -122,39 +123,44 @@ faked); the Ph11 `ParameterDialog` surface (the command-line Q&A **is** implemen
 landed one surface properly rather than two badly); editing an existing frame's cell list
 from the PR.
 
-### #10 — Raster IMAGE (parked, not started)
+### #10 — Raster IMAGE (**partial**, PR #18, native v18) — the issue stays open
 
-**Nothing was started, so there is no half-finished code to clean up.** This was the planned
-park: it is the largest and riskiest of the six (new GPU texture type, a decoder seam, an
-image-definition table, base64 embedding with path-traversal safety, a plot path and DXF),
-and it is the only one with no dependents.
+I landed the slice the issue's own time-box names, and stopped there rather than rushing
+the GPU work:
 
-**What I would do, in order** (the brief's own slicing is right):
+| Landed | Deferred |
+|---|---|
+| `ImageDef` table + placement entity (position, size, rotation, clip) | Viewport display (`GpuTexture` + shaders + texture cache) |
+| `IImageDecoder` in core, `QtImageDecoder` above it | `IMAGEATTACH` / `IMAGECLIP` commands + ribbon |
+| Native v18: external path **and** base64-embedded | DXF `IMAGE`/`IMAGEDEF` (nothing written) |
+| Plot at output resolution | A cap on embedded payload size |
+| Bounds, pick (clip-aware), grips | |
 
-1. `ImageDef` table on the store, parallel to layers/dimstyles/block defs — `{source, pixel
-   w/h, format}` — plus an `ImageData` entity holding a def index, insertion point, size,
-   rotation and an optional clip rect. This mirrors BLOCKDEF/INSERT and gives dedup for free.
-2. `IImageDecoder` in core + `QtImageDecoder` in the UI layer, injected via the store —
-   precisely the `IFontEngine`/`QtFontEngine` seam. Core stays Qt-free,
-   `test_header_hygiene` stays green, and the headless CLI injects the same decoder. **Do
-   not vendor `stb_image`.**
-3. Native v18 with base64 chunked across lines (the format is line-oriented) plus an
-   external-path form resolved relative to the drawing, refusing traversal outside it.
-   Round-trip proof + older-version load, as every format bump here has.
-4. **Plot path first, viewport second.** The QPainter route draws the image with its
-   transform and clip; that alone delivers the headline use case (a logo in a title block
-   that actually plots) and needs no GPU work. This is the coherent slice to land if time
-   runs short again.
-5. Only then `GpuTexture` in `render/gpu/` with a GL 4.6 DSA implementation and an image
-   shader pair, plus a renderer-side texture cache keyed by def index and invalidated on
-   version change.
+**An image therefore plots but does not yet display in the viewport.** That is the honest
+state, and it is the reason PR #18 says "do not close the issue on merge".
 
-**The architectural point not to lose:** do **not** put pixels in the snapshot. It is copied
-through the triple buffer on every publish; carry a small `ImageInstance` (transform, def
-index, clip, def version) and let the renderer hold the texture cache. That constraint is
-why step 5 is last, not first.
+The three constraints you called out are all held:
 
----
+- **Core stays Qt-free.** `IImageDecoder` speaks only our own RGBA8 type;
+  `test_header_hygiene` is green. **No decoder is vendored** — Qt already decodes
+  PNG/JPEG/BMP/GIF.
+- **Pixels never enter the snapshot.** `ImageInstance` carries the transform, clip UVs, def
+  index and the def's `version` (the cache key), with a `static_assert` pinning its size and
+  the reason in the message.
+- **External paths cannot escape the drawing's directory**, checked after
+  `weakly_canonical` so it is a containment test on the resolved path, not a string test for
+  `..`. Absolute paths are refused outright.
+
+**Draw-call bound is unchanged at 4 (6 with aids)** because nothing image-related reaches
+the GL renderer yet. Landing the viewport path *will* raise it — which is precisely why I
+made it a separate step rather than a side effect.
+
+**What I would do next**, in order: `GpuTexture` in `render/gpu/` with a GL 4.6 DSA
+implementation and an image shader pair, plus a renderer-side cache keyed by def index and
+invalidated on `version` change — then re-prove the new draw-call bound and the "pan/zoom
+uploads 0 scene bytes" constraint in `render_offscreen`. Then `IMAGEATTACH`/`IMAGECLIP`.
+DXF last; it needs the OBJECTS section, which is more DXF structure than any existing
+entity uses.
 
 ## Things that surprised me about the codebase
 
@@ -232,19 +238,19 @@ constructor. The product was correct throughout.
 
 | | |
 |---|---|
-| `dev` (ASan/UBSan) | build clean, **zero warnings**, **388/388 tests pass** |
+| `dev` (ASan/UBSan) | build clean, **zero warnings**, **402/402 tests pass** |
 | `release` | build clean, **zero warnings** |
-| `tsan` | **388/388 pass** (run under `setarch -R`) |
-| Native format | **v17** (was v14); v1–v16 all still load, each with an explicit test |
-| Tests | 333 at baseline → **388** (+55) |
+| `tsan` | **402/402 pass** (run under `setarch -R`) |
+| Native format | **v18** (was v14); v1–v17 all still load, each with an explicit test |
+| Tests | 333 at baseline → **402** (+69) |
 
 **Struct sizes** (all `static_assert`ed): hot path **unchanged** — `LineData` 40 B,
 `CircleData` 32 B, `EntityProps` 8 B. Cold arenas: `DimData` 112 → **152 B** (#7),
-`FcfData` **88 B**, `DatumData` **104 B**, `FcfCell` **8 B** (#8).
+`FcfData` **88 B**, `DatumData` **104 B**, `FcfCell` **8 B** (#8), `ImageData` **96 B** (#10).
 
 **Draw-call bounds unchanged:** 4 for the scene, 6 with aids. GD&T adds no channel — frame
 borders go into the existing line batches and the datum triangle into the existing fill
-channel.
+channel — and #10 adds none either, because the viewport texture path is the deferred half.
 
 **Insert benchmark:** **57–61 ns/line** (release, three runs). My baseline measurement at the
 *start* of the night on this machine was **56–67 ns/line**, so there is no regression from
@@ -257,8 +263,11 @@ idle box.
 
 ## What I would do next, in priority order
 
-1. **Merge the five PRs in stack order** (#13 → #14 → #15 → #16 → #17).
-2. **#10, in the five steps above**, landing the plot path before the viewport path.
+1. **Merge the six PRs in stack order** (#13 → #14 → #15 → #16 → #17 → #18). **#18 does not
+   close #10** — it is the partial slice.
+2. **Finish #10's viewport path**: `GpuTexture` (GL 4.6 DSA) + an image shader pair + a
+   texture cache keyed by def index, then re-prove the raised draw-call bound and the
+   zero-byte pan/zoom constraint in `render_offscreen`. Then `IMAGEATTACH`/`IMAGECLIP`.
 3. **Audit for more hand-maintained arena lists** like `all_live()`. That bug class cost
    hatches their pickability after a reload; a helper that iterates every arena once would
    make it structurally impossible.
