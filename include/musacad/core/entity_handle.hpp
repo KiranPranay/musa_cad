@@ -24,6 +24,8 @@ enum class EntityKind : std::uint16_t {
     MLeader,
     Insert,
     Hatch,
+    Fcf,   ///< GD&T feature control frame
+    Datum, ///< GD&T datum feature symbol
 };
 
 /// Coarse classification of an EntityKind, used by MATCHPROP to decide when
@@ -48,7 +50,15 @@ enum class EntityFamily : std::uint8_t {
     case EntityKind::Leader:
     case EntityKind::MLeader:
         return EntityFamily::Text;
+    // GD&T shares DIMSTYLE + DimOverrides with dimensions, so it is deliberately in the
+    // DIMENSION family rather than a new one: that is what lets MATCHPROP carry text
+    // height and the element colours from a dimension onto a feature control frame,
+    // which is precisely the "GD&T annotation matches the drawing's dimensions
+    // automatically" the issue asks for. A separate GdtFamily would have blocked it.
+    // (Same reasoning that kept Leader/MLeader in the Text family rather than forking.)
     case EntityKind::Dimension:
+    case EntityKind::Fcf:
+    case EntityKind::Datum:
         return EntityFamily::Dimension;
     case EntityKind::Polyline:
         return EntityFamily::Polyline;

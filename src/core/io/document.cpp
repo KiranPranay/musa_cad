@@ -137,6 +137,27 @@ Document document_from_store(const GeometryStore& store) {
                                            h.props});
         }
     }
+    const auto& fcf_arena = store.fcfs();
+    for (std::uint32_t i = 0; i < fcf_arena.slot_count(); ++i) {
+        if (fcf_arena.alive(i)) {
+            const FcfData& f = fcf_arena.data()[i];
+            std::vector<std::string> cells;
+            cells.reserve(f.cell_count);
+            for (const std::string_view c : store.fcf_cell_text(f)) {
+                cells.emplace_back(c);
+            }
+            doc.fcfs.push_back(
+                DocFcf{std::move(cells), f.pos, f.rotation, f.style, f.props, f.overrides});
+        }
+    }
+    const auto& datum_arena = store.datums();
+    for (std::uint32_t i = 0; i < datum_arena.slot_count(); ++i) {
+        if (datum_arena.alive(i)) {
+            const DatumData& d = datum_arena.data()[i];
+            doc.datums.push_back(DocDatum{std::string(store.string_of(d)), d.tip, d.pos, d.rotation,
+                                          d.style, d.props, d.overrides});
+        }
+    }
     // Block definitions (by name) + their self-contained content.
     for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store.block_count()); ++bi) {
         const BlockDef* b = store.block(bi);
@@ -258,6 +279,12 @@ void populate_store(GeometryStore& store, const Document& doc) {
     for (const DocHatch& h : doc.hatches) {
         store.add_hatch(h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle, h.pattern_origin,
                         h.props);
+    }
+    for (const DocFcf& f : doc.fcfs) {
+        store.add_fcf(f.cells, f.pos, f.rotation, f.style, f.props, f.overrides);
+    }
+    for (const DocDatum& d : doc.datums) {
+        store.add_datum(d.letter, d.tip, d.pos, d.rotation, d.style, d.props, d.overrides);
     }
     for (const DocPoint& p : doc.points) {
         store.add_point(p.p, p.props);

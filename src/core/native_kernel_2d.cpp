@@ -3,6 +3,8 @@
 
 #include "musacad/core/native_kernel_2d.hpp"
 
+#include "musacad/core/gdt.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -18,6 +20,42 @@
 namespace musacad::core {
 
 namespace {
+
+/// Point-in-convex-quad by consistent cross-product sign. The frame's cells and the
+/// datum box are convex by construction (they are rotated rectangles).
+bool point_in_quad(const std::array<Vec2, 4>& q, Vec2 p) {
+    bool pos = false;
+    bool neg = false;
+    for (int i = 0; i < 4; ++i) {
+        const Vec2 e = q[static_cast<std::size_t>((i + 1) % 4)] - q[static_cast<std::size_t>(i)];
+        const Vec2 r = p - q[static_cast<std::size_t>(i)];
+        const double c = e.x * r.y - e.y * r.x;
+        pos = pos || c > 1e-12;
+        neg = neg || c < -1e-12;
+    }
+    return !(pos && neg);
+}
+
+/// Closest point on a list of disjoint segment pairs (the shape every derived-geometry
+/// function emits). False when there are no segments.
+bool nearest_on_segments(const std::vector<Vec2>& segs, Vec2 query, Vec2& out_point) {
+    bool found = false;
+    double best = 0.0;
+    for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+        const Vec2 ab = segs[i + 1] - segs[i];
+        const double len2 = length_squared(ab);
+        const double t = len2 > 0.0 ? std::clamp(dot(query - segs[i], ab) / len2, 0.0, 1.0) : 0.0;
+        const Vec2 cp = segs[i] + ab * t;
+        const double d2 = length_squared(query - cp);
+        if (!found || d2 < best) {
+            found = true;
+            best = d2;
+            out_point = cp;
+        }
+    }
+    return found;
+}
+
 
 constexpr double kIntersectEps = 1e-9;
 
@@ -377,6 +415,24 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         }
         break;
     }
+    // GD&T: the drawn outline, straight from the shared geometry function, so hover,
+    // window-select and the highlight show exactly what the snapshot drew.
+    case EntityKind::Fcf: {
+        const FcfData* fd = store.fcf(entity);
+        const DimStyle* st = store.dimstyle(fd->style);
+        const FcfGeometry g = compute_fcf_geometry(*fd, store.fcf_cell_text(*fd),
+                                                   st != nullptr ? *st : DimStyle{}, Rgb{});
+        out = g.lines; // disjoint segment pairs, like a dimension's
+        break;
+    }
+    case EntityKind::Datum: {
+        const DatumData* dd = store.datum(entity);
+        const DimStyle* st = store.dimstyle(dd->style);
+        const DatumGeometry g = compute_datum_geometry(*dd, store.string_of(*dd),
+                                                       st != nullptr ? *st : DimStyle{}, Rgb{});
+        out = g.lines;
+        break;
+    }
     case EntityKind::Hatch: {
         // The outer boundary as a closed strip -- used for hover/selection highlight.
         const HatchData* hd = store.hatch(entity);
@@ -542,6 +598,34 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
             }
         }
         return found;
+    }
+    // GD&T: a click anywhere inside the frame (or the datum box) picks it, exactly as a
+    // click inside a hatch region does -- the frame reads as one solid object, which is
+    // the point of making it an entity instead of hand-composed line work. Otherwise
+    // fall back to the nearest drawn segment, so the leader is pickable too.
+    case EntityKind::Fcf: {
+        const FcfData* fd = store.fcf(entity);
+        const DimStyle* st = store.dimstyle(fd->style);
+        const FcfGeometry g = compute_fcf_geometry(*fd, store.fcf_cell_text(*fd),
+                                                   st != nullptr ? *st : DimStyle{}, Rgb{});
+        for (const std::array<Vec2, 4>& q : g.cell_quads) {
+            if (point_in_quad(q, query)) {
+                out_point = query;
+                return true;
+            }
+        }
+        return nearest_on_segments(g.lines, query, out_point);
+    }
+    case EntityKind::Datum: {
+        const DatumData* dd = store.datum(entity);
+        const DimStyle* st = store.dimstyle(dd->style);
+        const DatumGeometry g = compute_datum_geometry(*dd, store.string_of(*dd),
+                                                       st != nullptr ? *st : DimStyle{}, Rgb{});
+        if (point_in_quad(g.box, query)) {
+            out_point = query;
+            return true;
+        }
+        return nearest_on_segments(g.lines, query, out_point);
     }
     case EntityKind::Hatch: {
         // A click anywhere INSIDE the filled region (outside its islands) picks the hatch
@@ -793,6 +877,8 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::MLeader:
     case EntityKind::Insert: // offsetting a block reference is not defined
     case EntityKind::Hatch:  // offsetting a hatch is not defined
+    case EntityKind::Fcf:    // ... nor GD&T annotation
+    case EntityKind::Datum:
         break;
     }
     return false;

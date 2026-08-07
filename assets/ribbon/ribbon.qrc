@@ -6,6 +6,7 @@
     <file>chamfer.svg</file>
     <file>circle.svg</file>
     <file>color-swatch.svg</file>
+    <file>datum.svg</file>
     <file>copy.svg</file>
     <file>dim-aligned.svg</file>
     <file>dim-angular.svg</file>
@@ -51,5 +52,6 @@
     <file>zoom-extents.svg</file>
     <file>zoom.svg</file>
     <file>chevron-down.svg</file>
+    <file>tolerance.svg</file>
   </qresource>
 </RCC>

@@ -165,6 +165,50 @@ struct HatchData {
     EntityProps props{};
 };
 
+/// One cell of a feature control frame. A cell is TEXT -- the characteristic symbol,
+/// the tolerance value, or a datum reference -- held in the shared char pool exactly
+/// like every other string in the store. The GD&T *meaning* comes from the cell's
+/// position (cell 0 is the characteristic) and from the symbols the stroke font now
+/// carries (issue #9), so a cell needs no per-cell semantic tag and no second alphabet.
+struct FcfCell {
+    std::uint32_t str_offset = 0;
+    std::uint32_t str_len = 0;
+    friend bool operator==(const FcfCell&, const FcfCell&) = default;
+};
+
+/// A feature control frame (GD&T). An ordered, VARIABLE-LENGTH cell list held as an
+/// (offset, count) view into a shared cell pool -- the polyline/spline pattern -- plus
+/// an insertion point, rotation, a dimstyle index and per-entity overrides.
+///
+/// Borders, dividers, glyphs and cell rectangles are DERIVED from the text height by
+/// compute_fcf_geometry at snapshot time, never baked, so editing the dimstyle re-lays
+/// every frame out. Sharing DIMSTYLE + DimOverrides with dimensions and leaders is the
+/// point of the issue: GD&T annotation matches the drawing's dimensions automatically.
+struct FcfData {
+    std::uint32_t cell_offset = 0; ///< first cell in the shared FCF cell pool
+    std::uint32_t cell_count = 0;  ///< number of cells (>= 1)
+    Vec2 pos;                      ///< insertion point: left edge, on the frame's baseline
+    double rotation = 0.0;         ///< radians, CCW
+    std::uint16_t style = 0;       ///< dimstyle (text height, colours, lineweight)
+    EntityProps props{};
+    DimOverrides overrides{}; ///< per-frame overrides (the same machinery dimensions use)
+};
+
+/// A datum feature symbol: the boxed datum letter, a leader from the box to the
+/// feature, and the FILLED triangle that touches it. `tip` is the triangle point;
+/// `pos` anchors the box. Like the frame, all of its geometry is derived from the
+/// text height at snapshot time.
+struct DatumData {
+    Vec2 tip;                     ///< the point on the feature (triangle apex)
+    Vec2 pos;                     ///< box anchor (left edge, on the box's baseline)
+    double rotation = 0.0;        ///< radians, CCW (rotates the box, not the leader)
+    std::uint16_t style = 0;      ///< dimstyle
+    std::uint32_t str_offset = 0; ///< the datum letter(s), in the shared char pool
+    std::uint32_t str_len = 0;
+    EntityProps props{};
+    DimOverrides overrides{};
+};
+
 // ---------------------------------------------------------------------------
 // Blocks. A block DEFINITION is a named, self-contained collection of geometry
 // (kept in the block-definition table, parallel to the layer table -- NOT in the
@@ -270,6 +314,14 @@ public:
     /// a pattern name ("SOLID" = filled), and pattern scale/angle(radians)/origin.
     EntityHandle add_hatch(const std::vector<std::vector<Vec2>>& loops, std::string_view pattern,
                            double scale, double angle, Vec2 origin, EntityProps props = {});
+    /// A feature control frame. `cells` are the raw cell strings in order (cell 0 is the
+    /// characteristic symbol); they are copied into the shared char pool.
+    EntityHandle add_fcf(const std::vector<std::string>& cells, Vec2 pos, double rotation,
+                         std::uint16_t style, EntityProps props = {}, DimOverrides overrides = {});
+    /// A datum feature symbol (boxed letter + leader + filled triangle).
+    EntityHandle add_datum(std::string_view letter, Vec2 tip, Vec2 pos, double rotation,
+                           std::uint16_t style, EntityProps props = {},
+                           DimOverrides overrides = {});
     /// A model-space block reference into the block-definition table.
     EntityHandle add_insert(std::uint16_t block, Vec2 pos, double scale_x, double scale_y,
                             double rotation, EntityProps props = {});
@@ -297,6 +349,8 @@ public:
     [[nodiscard]] const MLeaderData* mleader(EntityHandle h) const noexcept;
     [[nodiscard]] const InsertData* insert(EntityHandle h) const noexcept;
     [[nodiscard]] const HatchData* hatch(EntityHandle h) const noexcept;
+    [[nodiscard]] const FcfData* fcf(EntityHandle h) const noexcept;
+    [[nodiscard]] const DatumData* datum(EntityHandle h) const noexcept;
     /// The string content of a text entity.
     [[nodiscard]] std::string_view string_of(const TextData& t) const noexcept;
     [[nodiscard]] std::string_view string_of(const LeaderData& l) const noexcept;
@@ -315,6 +369,13 @@ public:
     [[nodiscard]] std::span<const Vec2> vertices_of(const MLeaderData& m) const noexcept;
     /// A hatch's pattern name (in the string pool; "SOLID" = filled).
     [[nodiscard]] std::string_view string_of(const HatchData& h) const noexcept;
+    [[nodiscard]] std::string_view string_of(const FcfCell& c) const noexcept;
+    [[nodiscard]] std::string_view string_of(const DatumData& d) const noexcept;
+    /// The frame's cells as a contiguous span into the shared cell pool.
+    [[nodiscard]] std::span<const FcfCell> fcf_cells(const FcfData& f) const noexcept;
+    /// The frame's cell TEXT, code-substitution deferred to compute_fcf_geometry (the
+    /// store keeps the raw strings -- derived-not-baked, like every other text).
+    [[nodiscard]] std::vector<std::string_view> fcf_cell_text(const FcfData& f) const;
     /// A hatch's boundary loops, reconstructed (loop 0 = outer, the rest islands).
     [[nodiscard]] std::vector<std::vector<Vec2>> hatch_loops(const HatchData& h) const;
     /// All of a hatch's loop vertices, contiguous (all loops back-to-back) -- for bounds.
@@ -338,6 +399,8 @@ public:
     }
     [[nodiscard]] const GenerationalArena<InsertData>& inserts() const noexcept { return inserts_; }
     [[nodiscard]] const GenerationalArena<HatchData>& hatches() const noexcept { return hatches_; }
+    [[nodiscard]] const GenerationalArena<FcfData>& fcfs() const noexcept { return fcfs_; }
+    [[nodiscard]] const GenerationalArena<DatumData>& datums() const noexcept { return datums_; }
 
     // --- block-definition table (parallel to the layer table) ---------------
     // Definitions are referenced by INSERTs by index. Few in number; a vector is
@@ -482,6 +545,9 @@ private:
     GenerationalArena<MLeaderData> mleaders_;
     GenerationalArena<InsertData> inserts_;
     GenerationalArena<HatchData> hatches_;
+    GenerationalArena<FcfData> fcfs_;
+    GenerationalArena<DatumData> datums_;
+    std::vector<FcfCell> fcf_cell_pool_; ///< shared, like the polyline vertex pool
 
     std::vector<Vec2> polyline_pool_;
     std::vector<double> bulge_pool_; // per-vertex polyline arc bulges

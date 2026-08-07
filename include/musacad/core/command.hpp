@@ -473,6 +473,35 @@ struct AddHatchCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// Create a GD&T feature control frame. `cells` are the ordered cell strings (cell 0 is
+/// the characteristic symbol); they are RAW, so `\U+2316` and `%%c` expand at layout
+/// time like any other text. `overrides`/`dim_style` mirror AddDimensionCommand exactly:
+/// the overrides are authoritative and the style snapshot is for PR display only.
+struct AddFcfCommand {
+    std::vector<std::string> cells;
+    Vec2 pos;
+    double rotation = 0.0;
+    std::uint16_t style = 0;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+    DimOverrides overrides = {};
+    DimStyle dim_style = {};
+};
+
+/// Create a GD&T datum feature symbol: the boxed `letter`, a leader from `pos` to
+/// `tip`, and the filled triangle at the tip.
+struct AddDatumCommand {
+    std::string letter = "A";
+    Vec2 tip;
+    Vec2 pos;
+    double rotation = 0.0;
+    std::uint16_t style = 0;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+    DimOverrides overrides = {};
+    DimStyle dim_style = {};
+};
+
 /// HATCH "Select objects" mode: the engine reads the current selection, extracts the
 /// closed boundary of each selected closed polyline (UI never touches the store), and
 /// creates one hatch with the given pattern. Resolved geometry-side, like JOIN.
@@ -608,6 +637,7 @@ using Command =
                  CloseDocumentCommand, CopyClipboardCommand, CutClipboardCommand,
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
-                 HatchFromSelectionCommand, HatchPickPointCommand>;
+                 HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,
+                 AddDatumCommand>;
 
 } // namespace musacad::core

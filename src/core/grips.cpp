@@ -114,6 +114,32 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                0,
                                hd->props};
     }
+    // GD&T: capture is authoritative for the overrides and carries a style SNAPSHOT for
+    // PR's effective-value display (ignored on recreate) -- exactly AddDimensionCommand.
+    case EntityKind::Fcf: {
+        const FcfData* f = store.fcf(h);
+        std::vector<std::string> cells;
+        cells.reserve(f->cell_count);
+        for (const std::string_view c : store.fcf_cell_text(*f)) {
+            cells.emplace_back(c);
+        }
+        const DimStyle* st = store.dimstyle(f->style);
+        return AddFcfCommand{std::move(cells), f->pos,      f->rotation,   f->style, 0,
+                             f->props,         f->overrides, st != nullptr ? *st : DimStyle{}};
+    }
+    case EntityKind::Datum: {
+        const DatumData* d = store.datum(h);
+        const DimStyle* st = store.dimstyle(d->style);
+        return AddDatumCommand{std::string(store.string_of(*d)),
+                               d->tip,
+                               d->pos,
+                               d->rotation,
+                               d->style,
+                               0,
+                               d->props,
+                               d->overrides,
+                               st != nullptr ? *st : DimStyle{}};
+    }
     case EntityKind::Point:
     case EntityKind::Spline:
         break;
@@ -165,6 +191,12 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
             } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
                 handle = store.add_hatch(c.loops, c.pattern_name, c.pattern_scale, c.pattern_angle,
                                          c.pattern_origin, props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddFcfCommand>) {
+                handle = store.add_fcf(c.cells, c.pos, c.rotation, c.style, props_of(c.props),
+                                       c.overrides);
+            } else if constexpr (std::is_same_v<T, AddDatumCommand>) {
+                handle = store.add_datum(c.letter, c.tip, c.pos, c.rotation, c.style,
+                                         props_of(c.props), c.overrides);
             }
         },
         cmd);
@@ -296,6 +328,19 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
         push(out, in->pos, GripKind::Move, 0); // insertion point moves the instance
         break;
     }
+    case EntityKind::Fcf: {
+        // One grip: the insertion point moves the whole frame. The frame's SIZE is
+        // derived from the text height, so there is nothing else to drag -- resizing it
+        // would mean overriding the text height, which is the PR's job.
+        push(out, store.fcf(h)->pos, GripKind::Move, 0);
+        break;
+    }
+    case EntityKind::Datum: {
+        const DatumData* d = store.datum(h);
+        push(out, d->pos, GripKind::Move, 0); // the box
+        push(out, d->tip, GripKind::Endpoint, 1); // the triangle on the feature
+        break;
+    }
     case EntityKind::Hatch: {
         // A grip at every boundary-loop vertex (flat index across all loops, in order),
         // so the user can drag the boundary to reshape the hatch.
@@ -365,6 +410,14 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     x.b = newpos;
                 } else {
                     x.line_pt = newpos; // dim-line offset / placement
+                }
+            } else if constexpr (std::is_same_v<T, AddFcfCommand>) {
+                x.pos = newpos; // one grip: move the frame
+            } else if constexpr (std::is_same_v<T, AddDatumCommand>) {
+                if (grip_index == 0) {
+                    x.pos = newpos; // the box
+                } else {
+                    x.tip = newpos; // the triangle on the feature
                 }
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 if (grip_index == 0) {

@@ -105,3 +105,51 @@ TEST_CASE("Open is one undoable-clearing op: prior history does not resurrect ol
     engine.stop();
     std::filesystem::remove(path);
 }
+
+// ---------------------------------------------------------------------------
+// Regression: all_live() feeds the load-time spatial-index rebuild, SelectAll and
+// ERASE All. It listed only the arenas that existed when it was written, so a HATCH
+// loaded from a file was never indexed and could not be picked, hovered,
+// window-selected or erased. A hatch created in-session worked (create_indexed inserts
+// it directly), which is exactly why it went unnoticed. Found while adding the GD&T
+// arenas, which would have inherited the same gap.
+// ---------------------------------------------------------------------------
+TEST_CASE("Every entity kind is indexed after a load, so a loaded entity is pickable") {
+    const std::string path = temp_path("musacad_all_live.musa");
+
+    GeometryEngine engine;
+    engine.start();
+    // One entity per late-added arena, well separated so a pick is unambiguous.
+    engine.submit(AddHatchCommand{
+        {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}}, "SOLID", 1.0, 0.0, {0, 0}, 1});
+    engine.submit(AddFcfCommand{{"⌖", "0.1", "A"}, {100.0, 0.0}, 0.0, 0, 2});
+    engine.submit(AddDatumCommand{"A", {200.0, -10.0}, {200.0, 0.0}, 0.0, 0, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return !s.line_vertices.empty() && !s.fill_vertices.empty();
+    }));
+
+    engine.submit(SaveDocumentCommand{path, false});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.dirty; }));
+
+    // Reload into a clean document -- this is the path that used to lose the index.
+    engine.submit(NewDocumentCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.empty(); }));
+    engine.submit(OpenDocumentCommand{path, false});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+
+    // SelectAll is driven by the same all_live(), so it must reach all three kinds.
+    engine.submit(SelectAllCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 3; }));
+
+    // And the hatch is individually pickable, which REQUIRES a spatial-index entry --
+    // this is the assertion that fails without the all_live() fix.
+    engine.submit(ClearSelectionCommand{});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.empty(); }));
+    engine.submit(SelectPickCommand{{5.0, 5.0}, 1.0, false}); // inside the hatch
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.selection.size() == 1 && s.selection[0].kind == EntityKind::Hatch;
+    }));
+
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}

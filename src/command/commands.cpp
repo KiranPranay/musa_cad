@@ -1603,6 +1603,115 @@ void DimCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// TOLERANCE / TOL: cell list -> placement (GD&T feature control frame)
+// ---------------------------------------------------------------------------
+void ToleranceCommand::prompt_cell(CommandContext& ctx) {
+    if (cells_.empty()) {
+        // The characteristic. The symbols live in the stroke font (issue #9), so the
+        // author types the escape and gets the glyph -- no GD&T-specific input mode.
+        ctx.set_prompt("Characteristic (e.g. \\U+2316 position, \\U+27C2 perpendicularity): ");
+    } else if (cells_.size() == 1) {
+        ctx.set_prompt("Tolerance (e.g. %%c0.05 \\U+24C2), or Enter to finish: ");
+    } else {
+        ctx.set_prompt("Datum reference (e.g. A), or Enter to finish: ");
+    }
+}
+
+void ToleranceCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    cells_.clear();
+    mode_ = Mode::Cells;
+    prompt_cell(ctx);
+}
+
+void ToleranceCommand::input(CommandContext& ctx, const std::string& text) {
+    if (mode_ == Mode::Cells) {
+        const std::string t = trimmed(text);
+        if (t.empty()) {
+            if (cells_.empty()) {
+                ctx.echo("A feature control frame needs at least a characteristic symbol.");
+                prompt_cell(ctx);
+                return;
+            }
+            mode_ = Mode::Place;
+            ctx.set_prompt("Specify frame location: ");
+            return;
+        }
+        if (cells_.size() >= 5) { // characteristic + tolerance + up to three datums
+            ctx.echo("A feature control frame carries at most five cells.");
+            mode_ = Mode::Place;
+            ctx.set_prompt("Specify frame location: ");
+            return;
+        }
+        cells_.push_back(t); // stored RAW; codes expand at layout time
+        prompt_cell(ctx);
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        core::AddFcfCommand cmd;
+        cmd.cells = cells_;
+        cmd.pos = *p;
+        cmd.group = ctx.group_id();
+        ctx.submit(std::move(cmd));
+        ctx.echo("Feature control frame placed.");
+        done_ = true;
+    }
+}
+
+void ToleranceCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// DATUM: letter -> point on the feature -> box placement
+// ---------------------------------------------------------------------------
+void DatumCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    mode_ = Mode::Letter;
+    ctx.set_prompt("Datum identifier <A>: ");
+}
+
+void DatumCommand::input(CommandContext& ctx, const std::string& text) {
+    switch (mode_) {
+    case Mode::Letter: {
+        const std::string t = trimmed(text);
+        if (!t.empty()) {
+            letter_ = t;
+        }
+        mode_ = Mode::Tip;
+        ctx.set_prompt("Specify point on the feature: ");
+        return;
+    }
+    case Mode::Tip:
+        if (const auto p = read_point(ctx, text)) {
+            tip_ = *p;
+            ctx.set_last_point(*p);
+            mode_ = Mode::Place;
+            ctx.set_prompt("Specify datum symbol location: ");
+        }
+        return;
+    case Mode::Place:
+        if (const auto p = read_point(ctx, text)) {
+            core::AddDatumCommand cmd;
+            cmd.letter = letter_;
+            cmd.tip = tip_;
+            cmd.pos = *p;
+            cmd.group = ctx.group_id();
+            ctx.submit(std::move(cmd));
+            ctx.echo("Datum feature symbol placed.");
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void DatumCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // LEADER: arrow tip -> landing point -> text
 // ---------------------------------------------------------------------------
 void LeaderCommand::start(CommandContext& ctx) {

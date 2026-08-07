@@ -208,6 +208,8 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
         case EntityKind::MText:
         case EntityKind::MLeader:
         case EntityKind::Hatch:
+        case EntityKind::Fcf:
+        case EntityKind::Datum:
             break; // no object-snap points (nearest, if any, handled below)
         }
 

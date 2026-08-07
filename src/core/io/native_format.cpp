@@ -672,6 +672,43 @@ std::string serialize_native(const Document& doc) {
     for (std::size_t i = 0; i < doc.polylines.size(); ++i) {
         emit_celt(3, i, doc.polylines[i].celtscale);
     }
+    // v17: GD&T. FCF <cellcount> px py rot style <props7> <override16>; then one RAW cell
+    // string per following line (cells may contain spaces, so they cannot be tokens --
+    // the same reason TEXT puts its content on its own line).
+    for (const DocFcf& f : doc.fcfs) {
+        s += "FCF ";
+        append_uint(s, f.cells.size());
+        s += ' ';
+        append_vec(s, f.pos);
+        s += ' ';
+        append_double(s, f.rotation);
+        s += ' ';
+        append_uint(s, f.style);
+        append_props(s, f.props);
+        append_overrides(s, f.overrides);
+        s += '\n';
+        for (const std::string& c : f.cells) {
+            s += c;
+            s += '\n';
+        }
+    }
+    // DATUM tipx tipy px py rot style <props7> <override16>; the letter on the next line.
+    for (const DocDatum& d : doc.datums) {
+        s += "DATUM ";
+        append_vec(s, d.tip);
+        s += ' ';
+        append_vec(s, d.pos);
+        s += ' ';
+        append_double(s, d.rotation);
+        s += ' ';
+        append_uint(s, d.style);
+        append_props(s, d.props);
+        append_overrides(s, d.overrides);
+        s += '\n';
+        s += d.letter;
+        s += '\n';
+    }
+
     s += "END\n";
     return s;
 }
@@ -1030,6 +1067,61 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       dprefix,
                                       dsuffix,
                                       tol});
+        } else if (key == "FCF") {
+            // FCF <cellcount> px py rot style <props7> <override16>; cells on the
+            // following lines (raw, may contain spaces).
+            std::uint64_t ncell = 0;
+            vals.clear();
+            EntityProps props;
+            std::uint64_t style = 0;
+            if (tok.size() != 6 + 7 + 16 || !to_uint(tok[1], ncell) ||
+                !parse_doubles(tok, 2, 3, vals) || !to_uint(tok[5], style) ||
+                !parse_props(tok, 6, props)) {
+                return fail("FCF record malformed");
+            }
+            DimOverrides ov{};
+            if (!parse_overrides(tok, 13, ov, /*with_text_fit=*/true)) {
+                return fail("FCF override block malformed");
+            }
+            DocFcf f;
+            f.pos = {vals[0], vals[1]};
+            f.rotation = vals[2];
+            f.style = static_cast<std::uint16_t>(style);
+            f.props = props;
+            f.overrides = ov;
+            f.cells.reserve(ncell);
+            for (std::uint64_t k = 0; k < ncell; ++k) {
+                std::string cell;
+                if (!read_line(cell)) {
+                    return fail("FCF missing cell line");
+                }
+                f.cells.push_back(std::move(cell));
+            }
+            doc.fcfs.push_back(std::move(f));
+        } else if (key == "DATUM") {
+            // DATUM tipx tipy px py rot style <props7> <override16>; letter next line.
+            vals.clear();
+            EntityProps props;
+            std::uint64_t style = 0;
+            if (tok.size() != 7 + 7 + 16 || !parse_doubles(tok, 1, 5, vals) ||
+                !to_uint(tok[6], style) || !parse_props(tok, 7, props)) {
+                return fail("DATUM record malformed");
+            }
+            DimOverrides ov{};
+            if (!parse_overrides(tok, 14, ov, /*with_text_fit=*/true)) {
+                return fail("DATUM override block malformed");
+            }
+            DocDatum d;
+            d.tip = {vals[0], vals[1]};
+            d.pos = {vals[2], vals[3]};
+            d.rotation = vals[4];
+            d.style = static_cast<std::uint16_t>(style);
+            d.props = props;
+            d.overrides = ov;
+            if (!read_line(d.letter)) {
+                return fail("DATUM missing letter line");
+            }
+            doc.datums.push_back(std::move(d));
         } else if (key == "LEADER") {
             // LEADER tipx tipy kneex kneey height style <props7> [<override15>]; content next line.
             vals.clear();

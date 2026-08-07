@@ -16,6 +16,7 @@ add_library(musacad_core STATIC
     hatch.cpp
     hatch_pattern.cpp
     dimension.cpp
+    gdt.cpp
     block_resolve.cpp
     grips.cpp
     properties_registry.cpp
