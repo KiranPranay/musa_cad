@@ -218,3 +218,49 @@ or the unit tests):**
 **361/361**. Struct sizes asserted (`LineData` 40, `CircleData` 32, `EntityProps` 8,
 `DimData` **152**). Artifact `artifacts/issue-7.pdf` — one dimension per tolerance mode.
 **Format version is now v15.** **Left:** nothing. Next: merge, then #12.
+
+---
+
+## 2026-08-06 03:35 — #12 DONE (branch `feat/issue-12-narrow-dims`)
+
+Commit `e074085`.
+
+**Decisions:**
+1. **`text_fit` lives on `DimStyle` as well as `DimOverrides`.** `compute_dim_geometry_styled`
+   receives the *effective style*, not the overrides — putting text_fit only in
+   `DimOverrides` would have meant plumbing overrides in separately and forking the
+   single override-first-else-style resolution path. A style-level default with a
+   per-dimension override is also what AutoCAD does (DIMATFIT/DIMTMOVE).
+2. **Widen the SHARED override block for v16** (15 → 16 fields) rather than appending
+   text_fit to the DIM record alone. Keeps `append_overrides`/`parse_overrides` the one
+   definition of an override block; the cost is that LEADER/MLEADER records move too,
+   which the round-trip test covers explicitly (including a leader, where text_fit is
+   meaningless — that cost has to actually work).
+3. **DIMSTYLE's text_fit goes BEFORE the name, keyed to the file version.** The name
+   absorbs every remaining token, so a *trailing* field is unreadable. Asserted with a
+   multi-word style name.
+4. **text_fit IS MATCHPROP-matchable** (unlike #7's decoration) — placement is
+   presentation, not a claim about the feature.
+5. **Arrows-outside is the same `append_arrowhead` with `along` negated.** The operator
+   asked for "a direction parameter, not a second code path" — it already had one, so
+   this needed no signature change at all.
+
+**What the artifact proved that a binary test would have hidden.** At an 8 mm foot
+separation the arrows fit comfortably while the value does not. The plotted ladder shows
+the value stepping outside there with the arrows still inside, then the arrows flipping
+only at 6 mm. That is the "resolved independently" requirement made visible, and it is
+now asserted directly.
+
+**A test bug I caused and had to chase:** my hand-written v15 fixture put the custom
+dimstyle at index 0, but the parser force-names index 0 "Standard" (a long-standing
+invariant). The code was right; the fixture was wrong. Fixed by making it the second
+style, as a real file has it, with a comment so nobody re-learns it.
+
+**Gate: PASSED.** dev clean/0 warnings + **371/371**; release clean/0 warnings; tsan
+**371/371**. New: `tests/test_dim_fit.cpp` (7 cases incl. the ladder, with a
+separating-axis overlap test) + 3 persistence cases (v16 round-trip, multi-word name
+boundary, v15-loads-as-Auto). Artifact `artifacts/issue-12.pdf` — the 21-rung ladder.
+**Format version is now v16.**
+
+**Left:** short-leader outside text and the radial-form fit, both written into
+`docs/TODO.md`. Next: merge, then #8 (GD&T), then #10 (IMAGE).
