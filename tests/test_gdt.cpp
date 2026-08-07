@@ -364,3 +364,16 @@ TEST_CASE("An empty cell list draws nothing rather than a stray box") {
     REQUIRE(g.lines.empty());
     REQUIRE(g.cell_quads.empty());
 }
+
+TEST_CASE("GD&T struct sizes are asserted; the hot structs are untouched") {
+    // The GD&T entities live in their own COLD arenas, so their size is free -- but it
+    // is pinned so a future field is a deliberate change, not a silent one.
+    static_assert(sizeof(FcfCell) == 8, "FcfCell is an (offset,len) pair -- keep it small");
+    static_assert(sizeof(FcfData) == 88, "FcfData size changed -- update the docs too");
+    static_assert(sizeof(DatumData) == 104, "DatumData size changed -- update the docs too");
+    // The whole point of separate arenas: nothing on the hot path moved.
+    static_assert(sizeof(LineData) == 40, "hot struct: LineData must stay 40 B");
+    static_assert(sizeof(CircleData) == 32, "hot struct: CircleData must stay 32 B");
+    static_assert(sizeof(EntityProps) == 8, "hot struct: EntityProps must stay 8 B");
+    SUCCEED();
+}
