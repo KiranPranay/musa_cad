@@ -181,6 +181,14 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
     collect(store_.mtexts(), EntityKind::MText);
     collect(store_.mleaders(), EntityKind::MLeader);
     collect(store_.inserts(), EntityKind::Insert);
+    // Hatches were MISSING here. all_live() feeds the load-time spatial-index rebuild,
+    // SelectAll and ERASE All -- so a hatch loaded from a file was never indexed and
+    // could not be picked, hovered, window-selected or erased (one created in-session
+    // worked, because create_indexed inserts it directly, which is why it went unseen).
+    // Pre-existing; fixed here because the GD&T arenas would have inherited it exactly.
+    collect(store_.hatches(), EntityKind::Hatch);
+    collect(store_.fcfs(), EntityKind::Fcf);
+    collect(store_.datums(), EntityKind::Datum);
     return live;
 }
 
@@ -2259,7 +2267,8 @@ void GeometryEngine::apply(const Command& command) {
                           std::is_same_v<T, AddLeaderCommand> || std::is_same_v<T, AddMTextCommand> ||
                           std::is_same_v<T, AddMLeaderCommand> ||
                           std::is_same_v<T, AddInsertCommand> ||
-                          std::is_same_v<T, AddHatchCommand>) {
+                          std::is_same_v<T, AddHatchCommand> || std::is_same_v<T, AddFcfCommand> ||
+                          std::is_same_v<T, AddDatumCommand>) {
                 const EntityHandle h = create_indexed(command);
                 push_create_item(c.group, h, command);
                 redo_.clear();

@@ -3,6 +3,29 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## GD&T (issue #8 DONE; interop + input surface staged)
+
+* **DXF `TOLERANCE` export/import — staged.** GD&T is currently **native-only**: nothing is
+  written to DXF and nothing is read back. AutoCAD's `TOLERANCE` entity carries the frame as
+  a string with `%%v` field separators plus a dimstyle reference, which is a real interop
+  path. Writing a half-valid entity would be worse than writing none, so the gap is stated
+  rather than faked. **Done looks like:** `TOLERANCE` written with the composed cell string
+  + dimstyle ref, read back into cells by splitting on `%%v`; datum symbols exported as
+  leader + text + triangle geometry with the fidelity loss counted in the import result
+  string, the way every other gap is.
+* **ParameterDialog input surface for a feature control frame — staged.** A frame is
+  genuinely multi-parameter, which is the case the "dialogs when a dialog genuinely fits"
+  rule contemplates. The command-line Q&A (`TOLERANCE`/`TOL`) is implemented — the
+  scriptable half — but the ribbon button starts the same Q&A rather than opening a dialog.
+  **Done looks like:** a `DialogSpec` with a characteristic combo (the symbol set), tolerance
+  value + ⌀/material-modifier toggles, and three datum + modifier rows, submitting the same
+  `AddFcfCommand`.
+* **Editing an existing frame's cells — staged.** The PR exposes a frame's *styling* (text
+  height, colours) but not its variable-length cell list, so changing a tolerance value means
+  re-running `TOLERANCE`. **Done looks like:** a content editor for the cell list, most likely
+  the double-click gesture Ph21 gave text, reusing `EditTextContentCommand`'s
+  capture→change→recommit shape.
+
 ## Dimensions
 
 * **Short-leader variant for outside dimension text — deferred.** ISO 129-1 permits a

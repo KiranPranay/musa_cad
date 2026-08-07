@@ -12,6 +12,7 @@
 #include "musacad/core/block_resolve.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/font_engine.hpp"
+#include "musacad/core/gdt.hpp"
 #include "musacad/core/hatch.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/linetype.hpp"
@@ -259,6 +260,44 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             text::append_text_segments(g.label2, g.label2_pos, g.text_height, g.text_rotation,
                                        g.text_justify, tseg);
         }
+        add_lines(g.text_color, 0, tseg, /*is_text=*/true, g.text_height);
+    });
+
+    // GD&T: borders/dividers into the line batches, cell text through the SAME
+    // emit_text_run every other entity uses, and the datum triangle into the existing
+    // fill channel exactly as an arrowhead is. All geometry derived here, never baked.
+    for_each_live(store.fcfs(), EntityKind::Fcf, [&](EntityHandle h) {
+        const FcfData* f = store.fcf(h);
+        if (!visible(store, f->props)) {
+            return;
+        }
+        const Rgb base = entity_resolved(store, f->props).color;
+        const DimStyle* st = store.dimstyle(f->style);
+        const FcfGeometry g =
+            compute_fcf_geometry(*f, store.fcf_cell_text(*f), st != nullptr ? *st : DimStyle{}, base);
+        add_lines(g.line_color, g.lineweight, g.lines);
+        for (std::size_t i = 0; i < g.cell_text.size(); ++i) {
+            tseg.clear();
+            text::append_text_segments(g.cell_text[i], g.text_pos[i], g.text_height, g.rotation,
+                                       text::Justify::Left, tseg);
+            add_lines(g.text_color, 0, tseg, /*is_text=*/true, g.text_height);
+        }
+    });
+
+    for_each_live(store.datums(), EntityKind::Datum, [&](EntityHandle h) {
+        const DatumData* d = store.datum(h);
+        if (!visible(store, d->props)) {
+            return;
+        }
+        const Rgb base = entity_resolved(store, d->props).color;
+        const DimStyle* st = store.dimstyle(d->style);
+        const DatumGeometry g =
+            compute_datum_geometry(*d, store.string_of(*d), st != nullptr ? *st : DimStyle{}, base);
+        add_lines(g.line_color, g.lineweight, g.lines);
+        add_fills(g.line_color, g.fills); // the filled triangle, like an arrowhead
+        tseg.clear();
+        text::append_text_segments(g.text, g.text_pos, g.text_height, g.rotation,
+                                   text::Justify::Left, tseg);
         add_lines(g.text_color, 0, tseg, /*is_text=*/true, g.text_height);
     });
 

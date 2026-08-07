@@ -43,7 +43,9 @@ namespace musacad::core::io {
 /// gains text_fit BEFORE its name (the name absorbs the rest of the line, so a trailing
 /// field would be ambiguous) and is read by version, not token count. v1-v15 files load
 /// with text_fit = Auto, which is the default -- so older drawings simply stop colliding.
-inline constexpr std::uint32_t kFormatVersion = 16;
+/// v17: GD&T entities -- FCF records (cell count, then one cell string per following
+/// line) and DATUM records. Older files simply have no FCF/DATUM records.
+inline constexpr std::uint32_t kFormatVersion = 17;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -184,6 +186,29 @@ struct DocBlockDef {
     friend bool operator==(const DocBlockDef&, const DocBlockDef&) = default;
 };
 
+/// A GD&T feature control frame in the serializable IR: the cells inline (pool-free).
+struct DocFcf {
+    std::vector<std::string> cells;
+    Vec2 pos;
+    double rotation = 0.0;
+    std::uint16_t style = 0;
+    EntityProps props{};
+    DimOverrides overrides{};
+    friend bool operator==(const DocFcf&, const DocFcf&) = default;
+};
+
+/// A GD&T datum feature symbol in the serializable IR.
+struct DocDatum {
+    std::string letter;
+    Vec2 tip;
+    Vec2 pos;
+    double rotation = 0.0;
+    std::uint16_t style = 0;
+    EntityProps props{};
+    DimOverrides overrides{};
+    friend bool operator==(const DocDatum&, const DocDatum&) = default;
+};
+
 /// A complete, serializable 2D drawing: metadata, the layer table, and every
 /// entity family with its properties.
 struct Document {
@@ -207,14 +232,16 @@ struct Document {
     std::vector<DocLeader> leaders;
     std::vector<DocMText> mtexts;
     std::vector<DocMLeader> mleaders;
-    std::vector<DocHatch> hatches;         ///< filled / patterned regions (v14)
+    std::vector<DocHatch> hatches;        ///< filled / patterned regions (v14)
+    std::vector<DocFcf> fcfs;             ///< GD&T feature control frames (v17)
+    std::vector<DocDatum> datums;         ///< GD&T datum feature symbols (v17)
     std::vector<DocInsert> inserts;        ///< model-space block references
     std::vector<DocBlockDef> block_defs;   ///< block-definition table (not in entity_count)
 
     [[nodiscard]] std::size_t entity_count() const noexcept {
         return points.size() + lines.size() + circles.size() + arcs.size() + polylines.size() +
                splines.size() + texts.size() + dims.size() + leaders.size() + mtexts.size() +
-               mleaders.size() + hatches.size() + inserts.size();
+               mleaders.size() + hatches.size() + inserts.size() + fcfs.size() + datums.size();
     }
     [[nodiscard]] bool empty() const noexcept { return entity_count() == 0; }
 

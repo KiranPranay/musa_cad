@@ -1,0 +1,80 @@
+MUSACAD 17
+UNITS mm
+CURRENT 0
+LTSCALE 1
+LAYER 255 255 255 0 25 1 0 0 0
+DIMSTYLE 2.5 2.5 0 0.6 1.25 2 1 25 1 0 0 0 1 0 0 0 1 0 0 0 1 0 0 0 0 Standard
+TEXT 0 118 6 0 0 0 7 255 255 255 0 25
+GD&T - FEATURE CONTROL FRAMES + DATUM FEATURE SYMBOLS
+
+TEXT 0 110 3 0 0 0 7 255 255 255 0 25
+cells are text in the shared char pool; borders/dividers derived from the dimstyle text height
+
+FCF 5 6.0 98.0 0 0 0 7 255 255 255 0 25 0 0 2 1 2.5 2.5 0 0 0 0 0 0 0 0 0 0
+\U+2316
+\U+2300 0.05 \U+24C2
+A
+B
+C
+TEXT 88 100.0 2.6 0 0 0 7 255 255 255 0 25
+position, dia zone at MMC, 3 datums
+
+FCF 3 6.0 87.0 0 0 0 7 255 255 255 0 25 0 0 2 1 2.5 2.5 0 0 0 0 0 0 0 0 0 0
+\U+27C2
+0.05
+A
+TEXT 88 89.0 2.6 0 0 0 7 255 255 255 0 25
+perpendicularity to datum A
+
+FCF 2 6.0 76.0 0 0 0 7 255 255 255 0 25 0 0 2 1 2.5 2.5 0 0 0 0 0 0 0 0 0 0
+\U+23E5
+0.02
+TEXT 88 78.0 2.6 0 0 0 7 255 255 255 0 25
+flatness (no datum)
+
+FCF 2 6.0 65.0 0 0 0 7 255 255 255 0 25 0 0 2 1 2.5 2.5 0 0 0 0 0 0 0 0 0 0
+\U+25CB
+0.01
+TEXT 88 67.0 2.6 0 0 0 7 255 255 255 0 25
+circularity
+
+FCF 3 6.0 54.0 0 0 0 7 255 255 255 0 25 0 0 2 1 2.5 2.5 0 0 0 0 0 0 0 0 0 0
+\U+2225
+0.1
+A
+TEXT 88 56.0 2.6 0 0 0 7 255 255 255 0 25
+parallelism
+
+FCF 4 6.0 43.0 0 0 0 7 255 255 255 0 25 0 0 2 1 2.5 2.5 0 0 0 0 0 0 0 0 0 0
+\U+2313
+0.4
+A
+B
+TEXT 88 45.0 2.6 0 0 0 7 255 255 255 0 25
+profile of a surface
+
+FCF 4 6.0 32.0 0 0 0 7 255 255 255 0 25 0 0 2 1 2.5 2.5 0 0 0 0 0 0 0 0 0 0
+\U+2330
+0.05
+A
+B
+TEXT 88 34.0 2.6 0 0 0 7 255 255 255 0 25
+total runout
+
+FCF 3 6.0 21.0 0 0 0 7 255 255 255 0 25 0 0 2 1 2.5 2.5 0 0 0 0 0 0 0 0 0 0
+\U+232F
+0.08 \U+24C2
+A
+TEXT 88 23.0 2.6 0 0 0 7 255 255 255 0 25
+symmetry at MMC
+
+LINE 6 4.0 120 4.0 0 7 255 255 255 0 25
+LINE 6 4.0 6 -24.0 0 7 255 255 255 0 25
+DATUM 40.0 4.0 34.0 -10.0 0 0 0 7 255 255 255 0 25 0 0 2 1 2.5 2.5 0 0 0 0 0 0 0 0 0 0
+A
+DATUM 6.0 -14.0 14.0 -22.0 0 0 0 7 255 255 255 0 25 0 0 2 1 2.5 2.5 0 0 0 0 0 0 0 0 0 0
+B
+TEXT 60 -16.0 2.6 0 0 0 7 255 255 255 0 25
+datum symbols: boxed letter + leader + FILLED triangle
+
+END

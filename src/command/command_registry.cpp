@@ -174,6 +174,12 @@ CommandRegistry CommandRegistry::make_default() {
         "Create a dimension suited to the selected object.");
     reg({"LEADER"}, [] { return std::make_unique<LeaderCommand>(); }, "assets/ribbon/leader.svg",
         "Draw a leader line with an arrowhead and annotation.");
+    // --- GD&T (issue #8) ---
+    reg({"TOL", "TOLERANCE"}, [] { return std::make_unique<ToleranceCommand>(); },
+        "assets/ribbon/tolerance.svg",
+        "Create a feature control frame with geometric tolerance symbols.");
+    reg({"DATUM", "DIMDATUM"}, [] { return std::make_unique<DatumCommand>(); },
+        "assets/ribbon/datum.svg", "Place a datum feature symbol with its leader triangle.");
     reg({"MT", "MTEXT", "T"}, [] { return std::make_unique<MTextCommand>(); },
         "assets/ribbon/mtext.svg", "Create a multiline (paragraph) text object.");
     reg({"LE", "QLEADER", "QL"}, [] { return std::make_unique<QLeaderCommand>(); },

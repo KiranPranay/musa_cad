@@ -248,6 +248,45 @@ private:
     double angle_ = 0.0; // radians (pattern rotation)
 };
 
+/// TOLERANCE / TOL -- a GD&T feature control frame. Command-line Q&A: the cells are
+/// typed one at a time (the characteristic first), Enter on an empty line finishes the
+/// list, then a pick places the frame. The ribbon button opens the Ph11 ParameterDialog
+/// instead, which is the case the "dialogs when a dialog genuinely fits" rule
+/// contemplates -- an FCF is genuinely multi-parameter. Both end at AddFcfCommand.
+class ToleranceCommand final : public ICommand {
+public:
+    std::string name() const override { return "TOLERANCE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Mode { Cells, Place };
+    void prompt_cell(CommandContext& ctx);
+    bool done_ = false;
+    Mode mode_ = Mode::Cells;
+    std::vector<std::string> cells_;
+};
+
+/// DATUM / DIMDATUM -- a datum feature symbol: the letter, the point on the feature,
+/// then the box placement.
+class DatumCommand final : public ICommand {
+public:
+    std::string name() const override { return "DATUM"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Mode { Letter, Tip, Place };
+    bool done_ = false;
+    Mode mode_ = Mode::Letter;
+    std::string letter_ = "A";
+    core::Vec2 tip_{};
+};
+
 class TrimCommand final : public ICommand {
 public:
     std::string name() const override { return "TRIM"; }

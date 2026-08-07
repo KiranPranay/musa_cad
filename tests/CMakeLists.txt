@@ -112,6 +112,7 @@ add_executable(musacad_tests
     test_mtext.cpp
     test_text_codes.cpp
     test_hatch.cpp
+    test_gdt.cpp
     test_blocks.cpp
     test_fonts.cpp
     test_properties.cpp

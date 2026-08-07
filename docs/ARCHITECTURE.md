@@ -1856,6 +1856,93 @@ from `tests/fixtures/symbol_sheet.musa`, where every symbol is reached from a **
 single-line TEXT** through `\U+XXXX` — so the sheet proves the escape's new reach as well
 as the glyphs.
 
+## GD&T: feature control frames + datum feature symbols (issue #8)
+
+The native entity set had no geometric-tolerancing entity, so a frame had to be
+hand-composed from LINE + MTEXT: cell borders, the characteristic symbol drawn stroke by
+stroke, divider positions and text centring all computed by the author. The result
+carried no semantics — it could not be selected, edited or re-laid-out as a unit, and
+cell proportions drifted between frames.
+
+Two new entity kinds, each following the pattern INSERT/Ph28 and Hatch established rather
+than inventing one: its own generational arena, `EntityProps`, and **exactly one geometry
+function** feeding every consumer.
+
+### The cell list is text, and that is the point
+
+`FcfData` holds an `(offset, count)` view into a shared **cell pool** (the polyline/spline
+pattern), and each `FcfCell` is an `(offset, len)` into the **shared char pool** (the
+TextData pattern). A cell is therefore just *text*.
+
+**Rejected: per-cell semantic tags** (`Characteristic` / `Tolerance` / `DatumRef` enums
+with typed fields). The GD&T *meaning* already comes from two places that exist — the
+cell's position (cell 0 is the characteristic) and the symbols the stroke font carries
+after issue #9. Adding a parallel type system would have bought validation we were not
+asked for, at the cost of a second way to say "⌀" and a much larger format record. An
+author types `\U+2316` and gets the position symbol through the *same*
+`substitute_text_codes` pass every other text entity uses — no GD&T-specific input mode.
+
+`compute_fcf_geometry` derives borders, dividers, cell rectangles and text positions from
+the **effective text height** at snapshot time — cell height `2h`, padding `0.5h` each side
+(ASME Y14.5), text centred. Nothing is baked, so a DIMSTYLE edit re-lays out every frame
+on the next snapshot and proportions cannot drift. `compute_datum_geometry` likewise
+derives the boxed letter, the leader, and the **filled** triangle — which is routed into
+the existing fill channel exactly as an arrowhead is, not a new channel.
+
+### Family: folded into Dimension, deliberately
+
+`family_of(Fcf) == family_of(Datum) == EntityFamily::Dimension`.
+
+GD&T shares DIMSTYLE and `DimOverrides` with dimensions, resolved through the same
+`apply_dim_overrides` call. Putting it in the Dimension family is what lets MATCHPROP
+carry text height and the element colours from a dimension onto a feature control frame —
+which is precisely the "GD&T annotation matches the drawing's dimensions automatically"
+the issue asks for. **A separate `GdtFamily` was rejected** because it would have blocked
+exactly that; this is the same reasoning that kept Leader/MLeader in the Text family.
+
+Family membership does not leak dimension-only rows: the PR descriptors gate on `applies`,
+so text height / text colour / line colour broaden to `is_dim_or_gdt`, arrow size to
+`is_dim_or_datum` (a frame has no arrowhead), and tolerance mode / text fit stay
+dimension-only. Asserted both ways.
+
+### Persistence
+
+**Native v17.** `FCF <cellcount> …` with one **raw** cell string per following line (cells
+may contain spaces, so they cannot be tokens — the reason TEXT puts its content on its own
+line), and `DATUM …` with the letter on the next line. Both carry the shared 16-field
+override block. v1–v16 files simply have no FCF/DATUM records.
+
+**DXF: nothing is written — a stated gap.** AutoCAD's `TOLERANCE` entity carries the frame
+as a string with `%%v` field separators plus a dimstyle reference, and that is a real
+interop path, but it did not fit this issue's budget. Writing a half-valid TOLERANCE would
+be worse than writing none, so GD&T is **native-only** for now and the gap is recorded in
+`docs/TODO.md` rather than papered over.
+
+### A pre-existing bug this surfaced
+
+`GeometryEngine::all_live()` listed only the arenas that existed when it was written — it
+**omitted hatches**. It feeds the load-time spatial-index rebuild, `SelectAll` and
+`ERASE All`, so a hatch **loaded from a file was never indexed** and could not be picked,
+hovered, window-selected or erased. A hatch created in-session worked (`create_indexed`
+inserts it directly), which is exactly why it went unnoticed. Fixed here, with a
+regression test, because the GD&T arenas would have inherited it identically.
+
+### Verification
+
+`tests/test_gdt.cpp` asserts the derived numbers directly: uniform `2h` cell height,
+cells abutting exactly, width tracking the text plus padding, geometry scaling *exactly*
+with the text height (nothing baked), one divider per interior boundary, rigid rotation,
+code substitution reaching the font's GD&T glyphs, the datum triangle being filled and
+squat rather than arrowhead-shaped, override-vs-style resolution, the family/`applies`
+matrix, point-in-cell pick, bounds enclosing every drawn point, capture→recreate
+round-trip (undo/copy/clipboard), grips, and the v17 round-trip plus a v16 older-version
+load.
+
+**Deferred, stated:** DXF TOLERANCE export/import; the Ph11 `ParameterDialog` input
+surface for the frame (command-line Q&A is implemented, which is the scriptable half);
+editing an existing frame's cell list from the Properties palette (the PR exposes styling,
+not the variable-length cell list). All in `docs/TODO.md`.
+
 ## ISO 129-1 narrow-dimension fit (issue #12)
 
 A linear dimension used to place its value unconditionally at the midpoint of the

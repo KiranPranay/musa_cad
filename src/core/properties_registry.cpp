@@ -365,6 +365,17 @@ bool is_leader_arrow(EntityKind k) {
 }
 bool is_hatch(EntityKind k) { return k == EntityKind::Hatch; }
 bool is_dimension(EntityKind k) { return k == EntityKind::Dimension; }
+/// Dimensions AND GD&T. These three properties are what "GD&T annotation matches the
+/// drawing's dimensions automatically" actually means: a frame's whole size derives
+/// from its text height, and its border/text colours resolve like a dimension's.
+bool is_dim_or_gdt(EntityKind k) {
+    return k == EntityKind::Dimension || k == EntityKind::Fcf || k == EntityKind::Datum;
+}
+/// The datum symbol has a filled triangle sized by the style's arrow size; a feature
+/// control frame has no arrowhead at all, so it is deliberately excluded.
+bool is_dim_or_datum(EntityKind k) {
+    return k == EntityKind::Dimension || k == EntityKind::Datum;
+}
 // Entities whose linetype actually dashes (so a per-entity linetype scale matters). These
 // are the kinds whose Add*Command carries a celtscale field + go through dash_polyline.
 bool is_linetypeable(EntityKind k) {
@@ -699,7 +710,7 @@ const Desc kDescs[] = {
              }
          });
      }},
-    {PropertyId::DimArrowSize, "Dimension", "Arrow size", PropEditor::NumberOverride, is_dimension,
+    {PropertyId::DimArrowSize, "Dimension", "Arrow size", PropEditor::NumberOverride, is_dim_or_datum,
      [](const Command& c) {
          return read_dim_num(c, DimOverrides::kArrowSize, get_dim_ov(c).arrow_size,
                              get_dim_style(c).arrow_size);
@@ -712,7 +723,7 @@ const Desc kDescs[] = {
              }
          });
      }},
-    {PropertyId::DimDimColor, "Dimension", "Dim line color", PropEditor::ColorOverride, is_dimension,
+    {PropertyId::DimDimColor, "Dimension", "Line color", PropEditor::ColorOverride, is_dim_or_gdt,
      [](const Command& c) {
          return read_dim_color(c, DimOverrides::kDimColor, get_dim_ov(c).dim_color,
                                get_dim_style(c).dim_color);
@@ -738,7 +749,7 @@ const Desc kDescs[] = {
              }
          });
      }},
-    {PropertyId::DimTextHeight, "Dimension", "Text height", PropEditor::NumberOverride, is_dimension,
+    {PropertyId::DimTextHeight, "Dimension", "Text height", PropEditor::NumberOverride, is_dim_or_gdt,
      [](const Command& c) {
          return read_dim_num(c, DimOverrides::kTextHeight, get_dim_ov(c).text_height,
                              get_dim_style(c).text_height);
@@ -751,7 +762,7 @@ const Desc kDescs[] = {
              }
          });
      }},
-    {PropertyId::DimTextColor, "Dimension", "Text color", PropEditor::ColorOverride, is_dimension,
+    {PropertyId::DimTextColor, "Dimension", "Text color", PropEditor::ColorOverride, is_dim_or_gdt,
      [](const Command& c) {
          return read_dim_color(c, DimOverrides::kTextColor, get_dim_ov(c).text_color,
                                get_dim_style(c).text_color);
@@ -962,6 +973,10 @@ const char* kind_name(EntityKind k) {
         return "Spline";
     case EntityKind::Text:
         return "Text";
+    case EntityKind::Fcf:
+        return "Feature control frame";
+    case EntityKind::Datum:
+        return "Datum feature";
     case EntityKind::Dimension:
         return "Dimension";
     case EntityKind::Leader:
@@ -1007,6 +1022,10 @@ EntityKind kind_of(const Command& c) noexcept {
                 k = EntityKind::Insert;
             } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
                 k = EntityKind::Hatch;
+            } else if constexpr (std::is_same_v<T, AddFcfCommand>) {
+                k = EntityKind::Fcf;
+            } else if constexpr (std::is_same_v<T, AddDatumCommand>) {
+                k = EntityKind::Datum;
             }
         },
         c);

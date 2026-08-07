@@ -96,6 +96,34 @@ EntityHandle GeometryStore::add_leader(Vec2 tip, Vec2 knee, double text_height, 
     return EntityHandle{slot.index, slot.generation, EntityKind::Leader};
 }
 
+EntityHandle GeometryStore::add_fcf(const std::vector<std::string>& cells, Vec2 pos,
+                                    double rotation, std::uint16_t style, EntityProps props,
+                                    DimOverrides overrides) {
+    // Cells are variable-length, so they live in a shared pool as an (offset, count)
+    // view -- the polyline/spline pattern -- and each cell's text goes in the shared
+    // char pool like every other string in the store.
+    const auto cell_offset = static_cast<std::uint32_t>(fcf_cell_pool_.size());
+    for (const std::string& c : cells) {
+        const auto off = static_cast<std::uint32_t>(string_pool_.size());
+        string_pool_.insert(string_pool_.end(), c.begin(), c.end());
+        fcf_cell_pool_.push_back(FcfCell{off, static_cast<std::uint32_t>(c.size())});
+    }
+    const auto slot = fcfs_.insert(FcfData{cell_offset, static_cast<std::uint32_t>(cells.size()),
+                                           pos, rotation, style, props, overrides});
+    return EntityHandle{slot.index, slot.generation, EntityKind::Fcf};
+}
+
+EntityHandle GeometryStore::add_datum(std::string_view letter, Vec2 tip, Vec2 pos, double rotation,
+                                      std::uint16_t style, EntityProps props,
+                                      DimOverrides overrides) {
+    const auto offset = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), letter.begin(), letter.end());
+    const auto slot = datums_.insert(DatumData{tip, pos, rotation, style, offset,
+                                               static_cast<std::uint32_t>(letter.size()), props,
+                                               overrides});
+    return EntityHandle{slot.index, slot.generation, EntityKind::Datum};
+}
+
 EntityHandle GeometryStore::add_mtext(const MTextBlock& block, std::string_view content,
                                       EntityProps props) {
     MTextBlock b = block;
@@ -178,6 +206,10 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return inserts_.erase(h.index, h.generation);
     case EntityKind::Hatch:
         return hatches_.erase(h.index, h.generation);
+    case EntityKind::Fcf:
+        return fcfs_.erase(h.index, h.generation);
+    case EntityKind::Datum:
+        return datums_.erase(h.index, h.generation);
     }
     return false;
 }
@@ -210,6 +242,10 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return inserts_.is_valid(h.index, h.generation);
     case EntityKind::Hatch:
         return hatches_.is_valid(h.index, h.generation);
+    case EntityKind::Fcf:
+        return fcfs_.is_valid(h.index, h.generation);
+    case EntityKind::Datum:
+        return datums_.is_valid(h.index, h.generation);
     }
     return false;
 }
@@ -219,7 +255,7 @@ std::size_t GeometryStore::live_count() const noexcept {
            circles_.live_count() + arcs_.live_count() + splines_.live_count() +
            texts_.live_count() + dims_.live_count() + leaders_.live_count() +
            mtexts_.live_count() + mleaders_.live_count() + inserts_.live_count() +
-           hatches_.live_count();
+           hatches_.live_count() + fcfs_.live_count() + datums_.live_count();
 }
 
 void GeometryStore::clear() noexcept {
@@ -236,6 +272,9 @@ void GeometryStore::clear() noexcept {
     mleaders_.clear();
     inserts_.clear();
     hatches_.clear();
+    fcfs_.clear();
+    datums_.clear();
+    fcf_cell_pool_.clear();
     polyline_pool_.clear();
     bulge_pool_.clear();
     spline_pool_.clear();
@@ -290,6 +329,14 @@ const InsertData* GeometryStore::insert(EntityHandle h) const noexcept {
 const HatchData* GeometryStore::hatch(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Hatch ? hatches_.get(h.index, h.generation) : nullptr;
 }
+
+const FcfData* GeometryStore::fcf(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Fcf ? fcfs_.get(h.index, h.generation) : nullptr;
+}
+
+const DatumData* GeometryStore::datum(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Datum ? datums_.get(h.index, h.generation) : nullptr;
+}
 std::string_view GeometryStore::string_of(const TextData& t) const noexcept {
     return std::string_view(string_pool_.data() + t.str_offset, t.str_len);
 }
@@ -310,6 +357,27 @@ std::span<const Vec2> GeometryStore::vertices_of(const MLeaderData& m) const noe
 }
 std::string_view GeometryStore::string_of(const HatchData& h) const noexcept {
     return std::string_view(string_pool_.data() + h.str_offset, h.str_len);
+}
+
+std::string_view GeometryStore::string_of(const FcfCell& c) const noexcept {
+    return {string_pool_.data() + c.str_offset, c.str_len};
+}
+
+std::string_view GeometryStore::string_of(const DatumData& d) const noexcept {
+    return {string_pool_.data() + d.str_offset, d.str_len};
+}
+
+std::span<const FcfCell> GeometryStore::fcf_cells(const FcfData& f) const noexcept {
+    return {fcf_cell_pool_.data() + f.cell_offset, f.cell_count};
+}
+
+std::vector<std::string_view> GeometryStore::fcf_cell_text(const FcfData& f) const {
+    std::vector<std::string_view> out;
+    out.reserve(f.cell_count);
+    for (const FcfCell& c : fcf_cells(f)) {
+        out.push_back(string_of(c));
+    }
+    return out;
 }
 std::vector<std::vector<Vec2>> GeometryStore::hatch_loops(const HatchData& h) const {
     std::vector<std::vector<Vec2>> loops;
@@ -440,6 +508,16 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::Fcf:
+        if (const FcfData* d = fcf(h)) {
+            return &d->props;
+        }
+        break;
+    case EntityKind::Datum:
+        if (const DatumData* d = datum(h)) {
+            return &d->props;
+        }
+        break;
     }
     return nullptr;
 }
@@ -520,6 +598,18 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
         break;
     case EntityKind::Hatch:
         if (HatchData* d = hatches_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Fcf:
+        if (FcfData* d = fcfs_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Datum:
+        if (DatumData* d = datums_.get(h.index, h.generation)) {
             d->props = p;
             return true;
         }
@@ -647,6 +737,8 @@ bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
     for_each_live_const(mtexts_, check);
     for_each_live_const(mleaders_, check);
     for_each_live_const(hatches_, check);
+    for_each_live_const(fcfs_, check);
+    for_each_live_const(datums_, check);
     return used;
 }
 
@@ -668,6 +760,8 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
     for_each_live_mut(mtexts_, fix);
     for_each_live_mut(mleaders_, fix);
     for_each_live_mut(hatches_, fix);
+    for_each_live_mut(fcfs_, fix);
+    for_each_live_mut(datums_, fix);
 }
 
 bool GeometryStore::remove_layer(std::uint16_t index) {

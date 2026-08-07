@@ -8,11 +8,27 @@
 
 #include "musacad/core/block_resolve.hpp"
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/gdt.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
 namespace musacad::core {
+
+namespace {
+/// AABB of a point list; false when the list is empty (nothing to bound).
+bool bounds_of_points(const std::vector<Vec2>& pts, Vec2& out_min, Vec2& out_max) {
+    if (pts.empty()) {
+        return false;
+    }
+    out_min = out_max = pts[0];
+    for (const Vec2& p : pts) {
+        out_min = {std::min(out_min.x, p.x), std::min(out_min.y, p.y)};
+        out_max = {std::max(out_max.x, p.x), std::max(out_max.y, p.y)};
+    }
+    return true;
+}
+} // namespace
 
 bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2& out_max) {
     if (!store.is_valid(h)) {
@@ -204,6 +220,31 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
             extend(s.b);
         }
         return true;
+    }
+    // GD&T: the AABB encloses exactly the geometry compute_*_geometry emits -- the
+    // borders, the leader and the filled triangle -- so bounds can never disagree with
+    // what is drawn (the same rule dimensions follow).
+    case EntityKind::Fcf: {
+        const FcfData* fd = store.fcf(h);
+        if (fd == nullptr) {
+            return false;
+        }
+        const DimStyle* st = store.dimstyle(fd->style);
+        const FcfGeometry g = compute_fcf_geometry(*fd, store.fcf_cell_text(*fd),
+                                                   st != nullptr ? *st : DimStyle{}, Rgb{});
+        return bounds_of_points(g.lines, out_min, out_max);
+    }
+    case EntityKind::Datum: {
+        const DatumData* dd = store.datum(h);
+        if (dd == nullptr) {
+            return false;
+        }
+        const DimStyle* st = store.dimstyle(dd->style);
+        const DatumGeometry g = compute_datum_geometry(*dd, store.string_of(*dd),
+                                                       st != nullptr ? *st : DimStyle{}, Rgb{});
+        std::vector<Vec2> pts = g.lines;
+        pts.insert(pts.end(), g.fills.begin(), g.fills.end());
+        return bounds_of_points(pts, out_min, out_max);
     }
     case EntityKind::Hatch: {
         const HatchData* hd = store.hatch(h);
