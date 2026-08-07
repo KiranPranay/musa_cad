@@ -13,6 +13,7 @@
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/font_engine.hpp"
 #include "musacad/core/gdt.hpp"
+#include "musacad/core/image.hpp"
 #include "musacad/core/hatch.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/linetype.hpp"
@@ -263,6 +264,27 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         add_lines(g.text_color, 0, tseg, /*is_text=*/true, g.text_height);
     });
 
+    // Raster images: publish the TRANSFORM only. Decoded pixels never enter the
+    // snapshot -- it is copied through the triple buffer on every publish, so the
+    // renderer/plotter caches textures by definition index instead (see ImageInstance).
+    for_each_live(store.images(), EntityKind::Image, [&](EntityHandle h) {
+        const ImageData* im = store.image(h);
+        if (!visible(store, im->props)) {
+            return;
+        }
+        const ImageDef* def = store.image_def(im->def);
+        const ImageQuad q = resolve_image_quad(*im);
+        const std::array<double, 4> uv = resolve_image_uv(*im);
+        ImageInstance inst;
+        inst.quad = q;
+        inst.uv = {static_cast<float>(uv[0]), static_cast<float>(uv[1]),
+                   static_cast<float>(uv[2]), static_cast<float>(uv[3])};
+        inst.def = im->def;
+        inst.def_version = def != nullptr ? def->version : 0;
+        inst.handle = h;
+        out.images.push_back(inst);
+    });
+
     // GD&T: borders/dividers into the line batches, cell text through the SAME
     // emit_text_run every other entity uses, and the datum triangle into the existing
     // fill channel exactly as an arrowhead is. All geometry derived here, never baked.
@@ -468,6 +490,14 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     }
     for (const Vec2& p : out.line_vertices) {
         extend(p);
+    }
+    // Images contribute no line/fill vertices, so their corners must be folded in
+    // explicitly -- otherwise an image-only drawing has NO bounds and both ZOOM extents
+    // and `--plot --extents` would report nothing to draw.
+    for (const ImageInstance& im : out.images) {
+        for (const Vec2& c : im.quad) {
+            extend(c);
+        }
     }
     for (const Vec2& p : out.fill_vertices) {
         extend(p);

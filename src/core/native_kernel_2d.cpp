@@ -4,6 +4,7 @@
 #include "musacad/core/native_kernel_2d.hpp"
 
 #include "musacad/core/gdt.hpp"
+#include "musacad/core/image.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -433,6 +434,15 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         out = g.lines;
         break;
     }
+    case EntityKind::Image: {
+        // The placed quad as a closed strip -- hover/selection highlight outlines
+        // exactly the region that is drawn.
+        const ImageData* im = store.image(entity);
+        const ImageQuad q = resolve_image_quad(*im);
+        out.assign(q.begin(), q.end());
+        out.push_back(q[0]);
+        break;
+    }
     case EntityKind::Hatch: {
         // The outer boundary as a closed strip -- used for hover/selection highlight.
         const HatchData* hd = store.hatch(entity);
@@ -626,6 +636,22 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
             return true;
         }
         return nearest_on_segments(g.lines, query, out_point);
+    }
+    case EntityKind::Image: {
+        // A click anywhere on the (clipped) image picks it, like a filled hatch region;
+        // otherwise snap to the nearest edge of the quad.
+        const ImageData* im = store.image(entity);
+        if (point_in_image(*im, query)) {
+            out_point = query;
+            return true;
+        }
+        const ImageQuad q = resolve_image_quad(*im);
+        std::vector<Vec2> edges;
+        for (int i = 0; i < 4; ++i) {
+            edges.push_back(q[static_cast<std::size_t>(i)]);
+            edges.push_back(q[static_cast<std::size_t>((i + 1) % 4)]);
+        }
+        return nearest_on_segments(edges, query, out_point);
     }
     case EntityKind::Hatch: {
         // A click anywhere INSIDE the filled region (outside its islands) picks the hatch
@@ -879,6 +905,7 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::Hatch:  // offsetting a hatch is not defined
     case EntityKind::Fcf:    // ... nor GD&T annotation
     case EntityKind::Datum:
+    case EntityKind::Image:  // ... nor a raster image
         break;
     }
     return false;

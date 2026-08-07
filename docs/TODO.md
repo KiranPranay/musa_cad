@@ -3,6 +3,30 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## Raster images (issue #10 — model/seam/persistence/plot DONE; viewport + DXF staged)
+
+* **Viewport rendering — staged.** An image currently **plots** but does not **display in
+  the viewport**: the GPU abstraction has no texture type. **Done looks like:** `GpuTexture`
+  in the public `render/gpu/` headers with a GL 4.6 DSA implementation
+  (`glCreateTextures`/`glTextureStorage2D`/`glTextureSubImage2D`), an image shader pair, and
+  a renderer-side texture cache keyed by definition index, invalidated when
+  `ImageInstance::def_version` changes. Images are few, so a draw call per image is fine —
+  but the **documented draw-call bound must be raised and re-proven** in
+  `render_offscreen`, along with the "pan/zoom uploads 0 scene bytes" constraint. The
+  snapshot side is already done and deliberately carries no pixels.
+* **DXF `IMAGE` / `IMAGEDEF` — staged.** Nothing is written today. It needs the OBJECTS
+  section plus an IMAGEDEF dictionary, which is more DXF structure than any existing
+  entity uses. **Done looks like:** `IMAGE` entities referencing `IMAGEDEF` objects, with
+  the fidelity loss counted in the import result string like every other gap.
+* **IMAGEATTACH / IMAGECLIP commands + ribbon — staged.** The entity, its persistence and
+  its plot path exist; there is no interactive command to place or clip one yet (fixtures
+  and the format are the current route in). **Done looks like:** `IMAGEATTACH` picking a
+  file and two corners, `IMAGECLIP` picking a rectangle, both submitting the existing
+  `AddImageCommand`, with ribbon icons in the established style.
+* **Embedded-payload size cap — staged.** Base64 embedding has no size limit or warning
+  today. **Done looks like:** a cap (a few MB) above which the writer warns and suggests
+  the external-path form.
+
 ## GD&T (issue #8 DONE; interop + input surface staged)
 
 * **DXF `TOLERANCE` export/import — staged.** GD&T is currently **native-only**: nothing is

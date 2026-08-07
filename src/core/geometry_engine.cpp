@@ -189,6 +189,7 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
     collect(store_.hatches(), EntityKind::Hatch);
     collect(store_.fcfs(), EntityKind::Fcf);
     collect(store_.datums(), EntityKind::Datum);
+    collect(store_.images(), EntityKind::Image);
     return live;
 }
 
@@ -2268,7 +2269,8 @@ void GeometryEngine::apply(const Command& command) {
                           std::is_same_v<T, AddMLeaderCommand> ||
                           std::is_same_v<T, AddInsertCommand> ||
                           std::is_same_v<T, AddHatchCommand> || std::is_same_v<T, AddFcfCommand> ||
-                          std::is_same_v<T, AddDatumCommand>) {
+                          std::is_same_v<T, AddDatumCommand> ||
+                          std::is_same_v<T, AddImageCommand>) {
                 const EntityHandle h = create_indexed(command);
                 push_create_item(c.group, h, command);
                 redo_.clear();

@@ -9,6 +9,7 @@
 #include "musacad/core/block_resolve.hpp"
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/gdt.hpp"
+#include "musacad/core/image.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
@@ -245,6 +246,16 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
         std::vector<Vec2> pts = g.lines;
         pts.insert(pts.end(), g.fills.begin(), g.fills.end());
         return bounds_of_points(pts, out_min, out_max);
+    }
+    case EntityKind::Image: {
+        const ImageData* im = store.image(h);
+        if (im == nullptr) {
+            return false;
+        }
+        // The CLIPPED quad, straight from the shared resolver -- so the AABB of a
+        // clipped image covers only what is actually drawn.
+        const ImageQuad q = resolve_image_quad(*im);
+        return bounds_of_points({q.begin(), q.end()}, out_min, out_max);
     }
     case EntityKind::Hatch: {
         const HatchData* hd = store.hatch(h);

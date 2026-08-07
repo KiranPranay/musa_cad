@@ -124,6 +124,36 @@ EntityHandle GeometryStore::add_datum(std::string_view letter, Vec2 tip, Vec2 po
     return EntityHandle{slot.index, slot.generation, EntityKind::Datum};
 }
 
+EntityHandle GeometryStore::add_image(std::uint16_t def, Vec2 pos, double width, double height,
+                                     double rotation, EntityProps props) {
+    ImageData d;
+    d.def = def;
+    d.pos = pos;
+    d.width = width;
+    d.height = height;
+    d.rotation = rotation;
+    d.props = props;
+    const auto slot = images_.insert(d);
+    return EntityHandle{slot.index, slot.generation, EntityKind::Image};
+}
+
+std::uint16_t GeometryStore::add_image_def(const ImageDef& def) {
+    // Get-or-add by payload identity (the add_layer/add_dimstyle/add_block shape), so
+    // placing one logo ten times holds ONE definition and one copy of the bytes.
+    for (std::size_t i = 0; i < image_defs_.size(); ++i) {
+        const ImageDef& e = image_defs_[i];
+        if (e.source == def.source && e.bytes == def.bytes) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    image_defs_.push_back(def);
+    return static_cast<std::uint16_t>(image_defs_.size() - 1);
+}
+
+void GeometryStore::set_image_def_table(std::vector<ImageDef> defs) {
+    image_defs_ = std::move(defs);
+}
+
 EntityHandle GeometryStore::add_mtext(const MTextBlock& block, std::string_view content,
                                       EntityProps props) {
     MTextBlock b = block;
@@ -210,6 +240,8 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return fcfs_.erase(h.index, h.generation);
     case EntityKind::Datum:
         return datums_.erase(h.index, h.generation);
+    case EntityKind::Image:
+        return images_.erase(h.index, h.generation);
     }
     return false;
 }
@@ -246,6 +278,8 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return fcfs_.is_valid(h.index, h.generation);
     case EntityKind::Datum:
         return datums_.is_valid(h.index, h.generation);
+    case EntityKind::Image:
+        return images_.is_valid(h.index, h.generation);
     }
     return false;
 }
@@ -255,7 +289,8 @@ std::size_t GeometryStore::live_count() const noexcept {
            circles_.live_count() + arcs_.live_count() + splines_.live_count() +
            texts_.live_count() + dims_.live_count() + leaders_.live_count() +
            mtexts_.live_count() + mleaders_.live_count() + inserts_.live_count() +
-           hatches_.live_count() + fcfs_.live_count() + datums_.live_count();
+           hatches_.live_count() + fcfs_.live_count() + datums_.live_count() +
+           images_.live_count();
 }
 
 void GeometryStore::clear() noexcept {
@@ -274,6 +309,8 @@ void GeometryStore::clear() noexcept {
     hatches_.clear();
     fcfs_.clear();
     datums_.clear();
+    images_.clear();
+    image_defs_.clear();
     fcf_cell_pool_.clear();
     polyline_pool_.clear();
     bulge_pool_.clear();
@@ -336,6 +373,14 @@ const FcfData* GeometryStore::fcf(EntityHandle h) const noexcept {
 
 const DatumData* GeometryStore::datum(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Datum ? datums_.get(h.index, h.generation) : nullptr;
+}
+
+ImageData* GeometryStore::mutable_image(EntityHandle h) noexcept {
+    return h.kind == EntityKind::Image ? images_.get(h.index, h.generation) : nullptr;
+}
+
+const ImageData* GeometryStore::image(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Image ? images_.get(h.index, h.generation) : nullptr;
 }
 std::string_view GeometryStore::string_of(const TextData& t) const noexcept {
     return std::string_view(string_pool_.data() + t.str_offset, t.str_len);
@@ -518,6 +563,11 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::Image:
+        if (const ImageData* d = image(h)) {
+            return &d->props;
+        }
+        break;
     }
     return nullptr;
 }
@@ -610,6 +660,12 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
         break;
     case EntityKind::Datum:
         if (DatumData* d = datums_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Image:
+        if (ImageData* d = images_.get(h.index, h.generation)) {
             d->props = p;
             return true;
         }
@@ -739,6 +795,7 @@ bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
     for_each_live_const(hatches_, check);
     for_each_live_const(fcfs_, check);
     for_each_live_const(datums_, check);
+    for_each_live_const(images_, check);
     return used;
 }
 
@@ -762,6 +819,7 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
     for_each_live_mut(hatches_, fix);
     for_each_live_mut(fcfs_, fix);
     for_each_live_mut(datums_, fix);
+    for_each_live_mut(images_, fix);
 }
 
 bool GeometryStore::remove_layer(std::uint16_t index) {

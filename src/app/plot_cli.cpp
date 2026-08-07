@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
+#include <memory>
 
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/io/document.hpp"
@@ -16,6 +18,7 @@
 #include "musacad/core/scene_snapshot.hpp"
 #include "musacad/ui/plot.hpp"
 #include "musacad/ui/qt_font_engine.hpp"
+#include "musacad/ui/qt_image_decoder.hpp"
 
 namespace musacad::app {
 
@@ -34,6 +37,10 @@ int run_plot(const CliOptions& o, std::string& error) {
     core::GeometryStore store;
     const ui::QtFontEngine fonts;
     store.set_font_engine(&fonts);
+    // The same raster decoder the GUI injects, through the same IImageDecoder seam --
+    // so an embedded logo or an external pictorial reaches paper headlessly.
+    const ui::QtImageDecoder decoder;
+    store.set_image_decoder(&decoder);
     core::io::populate_store(store, doc);
 
     // 3. The sheet.
@@ -79,7 +86,13 @@ int run_plot(const CliOptions& o, std::string& error) {
     //    (~0.3 px at 300 DPI over the plotted region), then the shared PDF writer.
     const double tol = ui::plot_tolerance(amin, amax, spec.paper_w_mm, spec.paper_h_mm);
     core::build_render_snapshot(store, kernel, snap, tol, store.ltscale());
-    if (!ui::write_plot_pdf(o.plot.output, snap, spec, amin, amax, error)) {
+    // External image sources resolve relative to the DRAWING's directory (and may not
+    // escape it), so a .musa that references ./logo.png works wherever it is opened from.
+    const std::filesystem::path drawing_dir =
+        std::filesystem::absolute(std::filesystem::path(o.input)).parent_path();
+    const std::unique_ptr<ui::ImageSource> images =
+        ui::make_store_image_source(store, &decoder, drawing_dir.string());
+    if (!ui::write_plot_pdf(o.plot.output, snap, spec, amin, amax, error, images.get())) {
         return kExitOutput;
     }
     std::printf("%s -> %s (%s %s, %s, %zu line vertices)\n", o.input.c_str(),

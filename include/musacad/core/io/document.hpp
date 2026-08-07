@@ -43,9 +43,13 @@ namespace musacad::core::io {
 /// gains text_fit BEFORE its name (the name absorbs the rest of the line, so a trailing
 /// field would be ambiguous) and is read by version, not token count. v1-v15 files load
 /// with text_fit = Auto, which is the default -- so older drawings simply stop colliding.
+/// v18: raster IMAGE entities. IMAGEDEF records carry the payload (an external source
+/// path relative to the drawing, or base64 chunked across following lines because the
+/// format is line-oriented); IMAGE records place a definition with a transform + clip.
+/// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 17;
+inline constexpr std::uint32_t kFormatVersion = 18;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -209,6 +213,31 @@ struct DocDatum {
     friend bool operator==(const DocDatum&, const DocDatum&) = default;
 };
 
+/// A raster image definition in the serializable IR (the payload lives here, once).
+struct DocImageDef {
+    std::string source;
+    std::vector<std::uint8_t> bytes;
+    std::uint32_t pixel_w = 0;
+    std::uint32_t pixel_h = 0;
+    friend bool operator==(const DocImageDef&, const DocImageDef&) = default;
+};
+
+/// A placed raster image in the serializable IR.
+struct DocImage {
+    std::uint16_t def = 0;
+    Vec2 pos;
+    double width = 1.0;
+    double height = 1.0;
+    double rotation = 0.0;
+    bool clipped = false;
+    double clip_u0 = 0.0;
+    double clip_v0 = 0.0;
+    double clip_u1 = 1.0;
+    double clip_v1 = 1.0;
+    EntityProps props{};
+    friend bool operator==(const DocImage&, const DocImage&) = default;
+};
+
 /// A complete, serializable 2D drawing: metadata, the layer table, and every
 /// entity family with its properties.
 struct Document {
@@ -235,13 +264,16 @@ struct Document {
     std::vector<DocHatch> hatches;        ///< filled / patterned regions (v14)
     std::vector<DocFcf> fcfs;             ///< GD&T feature control frames (v17)
     std::vector<DocDatum> datums;         ///< GD&T datum feature symbols (v17)
+    std::vector<DocImage> images;         ///< placed raster images (v18)
+    std::vector<DocImageDef> image_defs;  ///< image-definition table (not in entity_count)
     std::vector<DocInsert> inserts;        ///< model-space block references
     std::vector<DocBlockDef> block_defs;   ///< block-definition table (not in entity_count)
 
     [[nodiscard]] std::size_t entity_count() const noexcept {
         return points.size() + lines.size() + circles.size() + arcs.size() + polylines.size() +
                splines.size() + texts.size() + dims.size() + leaders.size() + mtexts.size() +
-               mleaders.size() + hatches.size() + inserts.size() + fcfs.size() + datums.size();
+               mleaders.size() + hatches.size() + inserts.size() + fcfs.size() + datums.size() +
+               images.size();
     }
     [[nodiscard]] bool empty() const noexcept { return entity_count() == 0; }
 

@@ -9,6 +9,7 @@
 #include <variant>
 
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/image.hpp"
 #include "musacad/core/text/mtext.hpp"
 
 namespace musacad::core {
@@ -140,6 +141,12 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                d->overrides,
                                st != nullptr ? *st : DimStyle{}};
     }
+    case EntityKind::Image: {
+        const ImageData* im = store.image(h);
+        return AddImageCommand{im->def,     im->pos,     im->width,   im->height,
+                               im->rotation, im->clipped, im->clip_u0, im->clip_v0,
+                               im->clip_u1,  im->clip_v1, 0,           im->props};
+    }
     case EntityKind::Point:
     case EntityKind::Spline:
         break;
@@ -197,6 +204,16 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
             } else if constexpr (std::is_same_v<T, AddDatumCommand>) {
                 handle = store.add_datum(c.letter, c.tip, c.pos, c.rotation, c.style,
                                          props_of(c.props), c.overrides);
+            } else if constexpr (std::is_same_v<T, AddImageCommand>) {
+                handle = store.add_image(c.def, c.pos, c.width, c.height, c.rotation,
+                                         props_of(c.props));
+                if (ImageData* d = store.mutable_image(handle)) {
+                    d->clipped = c.clipped;
+                    d->clip_u0 = c.clip_u0;
+                    d->clip_v0 = c.clip_v0;
+                    d->clip_u1 = c.clip_u1;
+                    d->clip_v1 = c.clip_v1;
+                }
             }
         },
         cmd);
@@ -328,6 +345,15 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
         push(out, in->pos, GripKind::Move, 0); // insertion point moves the instance
         break;
     }
+    case EntityKind::Image: {
+        // Insertion point moves; the opposite corner scales. Both are parameters of the
+        // placement, so the quad stays derived rather than becoming a stored polygon.
+        const ImageData* im = store.image(h);
+        const ImageQuad q = resolve_image_quad(*im);
+        push(out, q[0], GripKind::Move, 0);
+        push(out, q[2], GripKind::Vertex, 1);
+        break;
+    }
     case EntityKind::Fcf: {
         // One grip: the insertion point moves the whole frame. The frame's SIZE is
         // derived from the text height, so there is nothing else to drag -- resizing it
@@ -410,6 +436,24 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     x.b = newpos;
                 } else {
                     x.line_pt = newpos; // dim-line offset / placement
+                }
+            } else if constexpr (std::is_same_v<T, AddImageCommand>) {
+                if (grip_index == 0) {
+                    x.pos = newpos;
+                } else {
+                    // Opposite corner -> resize, measured in the image's own frame so a
+                    // rotated image scales along its own axes.
+                    const double cs = std::cos(x.rotation);
+                    const double sn = std::sin(x.rotation);
+                    const Vec2 d = newpos - x.pos;
+                    const double lx = d.x * cs + d.y * sn;
+                    const double ly = -d.x * sn + d.y * cs;
+                    if (lx > 1e-9) {
+                        x.width = lx;
+                    }
+                    if (ly > 1e-9) {
+                        x.height = ly;
+                    }
                 }
             } else if constexpr (std::is_same_v<T, AddFcfCommand>) {
                 x.pos = newpos; // one grip: move the frame
