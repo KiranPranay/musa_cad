@@ -328,14 +328,51 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     };
     ext(d.a, fa);
     ext(d.b, fb);
-    seg(g.dim_lines, fa, fb);
 
+    // ---------------------------------------------------------------------------
+    // ISO 129-1 narrow-dimension fit. This is a RENDERER decision because only the
+    // renderer knows the glyph advance: a 15 mm feature at 1:5 leaves 3.0 mm between
+    // the extension lines, and "15" at the ISO-recommended 2.5 mm text height is
+    // exactly 2 x 1.5 = 3.0 mm wide with this font's 0.6h advance -- the text cell
+    // exactly fills the gap and the first glyph renders in ink contact with the line.
+    //
+    // Text and arrows are tested SEPARATELY, giving the four states the standard
+    // recognises (both inside / arrows out / text out / both out). One binary test
+    // would push arrows outside on a dimension whose arrows fit perfectly well.
+    // ---------------------------------------------------------------------------
     const double span = distance(fa, fb);
+    const Vec2 u = span > 1e-9 ? (fb - fa) / span : Vec2{1, 0};
+    const double gap = style.text_height * 0.4; // clear space text <-> extension line
+
+    // Measure the FULLY DECORATED, code-substituted label with the same function that
+    // emits it (text::text_width), using the widest line when Limits stacks two.
+    const double label_w =
+        std::max(text::text_width(g.label, style.text_height),
+                 text::text_width(g.label2, style.text_height));
+    const bool text_fits = label_w + 2.0 * gap <= span;
+    // Arrows need room for both heads plus a minimum clear span between their bases.
+    const bool arrows_fit = 2.0 * style.arrow_size + style.arrow_size * 0.6 <= span;
+
+    const auto fit_mode = static_cast<TextFit>(style.text_fit);
+    const bool text_inside = fit_mode == TextFit::Inside    ? true
+                             : fit_mode == TextFit::Outside ? false
+                                                            : text_fits;
+    const bool arrows_inside = arrows_fit;
+
+    // Arrows outside: the SAME append_arrowhead call with the direction reversed, so
+    // each head sits beyond its extension line pointing back in. There is deliberately
+    // no second arrowhead code path -- `along` was already the direction parameter.
     if (span > 1e-9) {
-        const Vec2 u = (fb - fa) / span;
-        append_arrowhead(g.arrow_fills, g.arrow_lines, fa, u, style.arrow_size, atype);
-        append_arrowhead(g.arrow_fills, g.arrow_lines, fb, u * -1.0, style.arrow_size, atype);
+        const double s = arrows_inside ? 1.0 : -1.0;
+        append_arrowhead(g.arrow_fills, g.arrow_lines, fa, u * s, style.arrow_size, atype);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, fb, u * -s, style.arrow_size, atype);
     }
+
+    // The dimension line runs foot to foot, extended past each extension line by the
+    // arrow length plus a short stub when the arrows are outside, so each head has a
+    // line to sit on (ISO 129-1 fig. 8).
+    const double stub = arrows_inside ? 0.0 : style.arrow_size * 1.6;
+    seg(g.dim_lines, fa - u * stub, fb + u * stub);
 
     const Vec2 mid = (fa + fb) * 0.5;
     g.text_rotation = std::atan2(dir.y, dir.x);
@@ -351,7 +388,15 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
     const double sn = std::sin(g.text_rotation);
     const Vec2 text_up{-sn, cs};
     const double off = style.text_above ? style.text_height * 0.4 : -style.text_height * 0.5;
-    g.text_pos = mid + text_up * off;
+    if (text_inside) {
+        g.text_pos = mid + text_up * off;
+    } else {
+        // Outside: on the dimension line's own extension, past the second extension
+        // line, clearing the outside arrowhead + stub when there is one, then the gap.
+        // Left-justified from there, so the text reads away from the feature.
+        g.text_pos = fb + u * (stub + gap) + text_up * off;
+        g.text_justify = text::Justify::Left;
+    }
     // A two-line label (Limits) stacks DOWNWARD from text_pos, so lift the block by one
     // line to keep it clear of the dimension line -- otherwise the lower limit lands on it.
     if (!g.label2.empty()) {

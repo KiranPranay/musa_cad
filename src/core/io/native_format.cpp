@@ -35,8 +35,11 @@ void append_props(std::string& s, const EntityProps& p) {
     }
 }
 
-// The 15-field DimOverrides block (mask + all values => lossless). Appended to DIM and
-// (v13+) LEADER/MLEADER records; the reader detects its presence by token count.
+// The DimOverrides block (mask + all values => lossless). Appended to DIM and (v13+)
+// LEADER/MLEADER records. Its PRESENCE is detected by token count; its WIDTH is keyed
+// to the format version -- 15 fields through v15, 16 from v16 (text_fit). Widening the
+// shared block rather than bolting text_fit onto the DIM record alone keeps
+// append_overrides/parse_overrides the single definition of what an override block is.
 void append_overrides(std::string& s, const DimOverrides& o) {
     s += ' ';
     append_uint(s, o.mask);
@@ -58,6 +61,8 @@ void append_overrides(std::string& s, const DimOverrides& o) {
         s += ' ';
         append_uint(s, c.b);
     }
+    s += ' ';
+    append_uint(s, o.text_fit); // v16
 }
 
 std::vector<std::string_view> tokenize(std::string_view line) {
@@ -146,9 +151,13 @@ bool parse_props(const std::vector<std::string_view>& tok, std::size_t start, En
     return true;
 }
 
-// Parse the 15-field DimOverrides block written by append_overrides, starting at tok[base].
-bool parse_overrides(const std::vector<std::string_view>& tok, std::size_t base, DimOverrides& ov) {
-    if (base + 15 > tok.size()) {
+// Parse the DimOverrides block written by append_overrides, starting at tok[base].
+// `with_text_fit` selects the v16 16-field form; a v13-v15 file has 15 fields and its
+// text_fit stays ByStyle (which is Auto -- so older drawings simply start fitting).
+bool parse_overrides(const std::vector<std::string_view>& tok, std::size_t base, DimOverrides& ov,
+                     bool with_text_fit) {
+    const std::size_t width = with_text_fit ? 16u : 15u;
+    if (base + width > tok.size()) {
         return false;
     }
     std::uint64_t mask = 0, atype = 0, prec = 0, above = 0;
@@ -173,6 +182,13 @@ bool parse_overrides(const std::vector<std::string_view>& tok, std::size_t base,
     ov.dim_color = {b(0), b(1), b(2)};
     ov.ext_color = {b(3), b(4), b(5)};
     ov.text_color = {b(6), b(7), b(8)};
+    if (with_text_fit) {
+        std::uint64_t tf = 0;
+        if (!to_uint(tok[base + 15], tf)) {
+            return false;
+        }
+        ov.text_fit = static_cast<std::uint8_t>(std::min<std::uint64_t>(tf, 2));
+    }
     return true;
 }
 
@@ -248,6 +264,11 @@ std::string serialize_native(const Document& doc) {
         append_ecolor(s, ds.ext_color);
         append_ecolor(s, ds.text_color);
         append_ecolor(s, ds.arrow_color);
+        // v16: text_fit sits BEFORE the name, and its presence is keyed to the file
+        // version rather than to a token count -- the name absorbs every remaining
+        // token (it may contain spaces), so a trailing field would be unreadable.
+        append_uint(s, ds.text_fit);
+        s += ' ';
         s += ds.name;
         s += '\n';
     }
@@ -909,6 +930,14 @@ IoResult parse_native(std::string_view text, Document& out) {
                 read_ec(17, ds.text_color);
                 read_ec(21, ds.arrow_color);
                 name_at = 25;
+                // v16 inserts text_fit before the name (see the writer: a trailing field
+                // could not be told apart from the first word of a multi-word name).
+                if (version >= 16 && tok.size() >= 27) {
+                    std::uint64_t tf = 0;
+                    to_uint(tok[25], tf);
+                    ds.text_fit = static_cast<std::uint8_t>(std::min<std::uint64_t>(tf, 2));
+                    name_at = 26;
+                }
             }
             std::string name(tok[name_at]);
             for (std::size_t i = name_at + 1; i < tok.size(); ++i) {
@@ -948,13 +977,16 @@ IoResult parse_native(std::string_view text, Document& out) {
                                         props,
                                         std::move(tfont)});
         } else if (key == "DIM") {
-            // DIM type ax ay bx by lx ly style <props7> [override15] [tolmode up lo]
+            // DIM type ax ay bx by lx ly style <props7> [override] [tolmode up lo]
             // Token count is the version discriminator, as everywhere else in this
-            // format: 16 = pre-v8, 31 = v8 override block, 34 = v15 + decoration
-            // (which also brings a prefix line and a suffix line after the record).
+            // format:  16 = pre-v8 (no override block)
+            //          31 = v8   override block (15 fields)
+            //          34 = v15  + decoration (and a prefix + suffix line after the record)
+            //          35 = v16  the override block gained text_fit (16 fields)
             std::uint64_t dtype = 0;
             vals.clear();
-            const bool has_decor = tok.size() == 34;
+            const bool has_fit = tok.size() == 35;
+            const bool has_decor = tok.size() == 34 || has_fit;
             const bool has_ov = tok.size() == 31 || has_decor;
             if ((tok.size() != 16 && !has_ov) || !to_uint(tok[1], dtype) ||
                 !parse_doubles(tok, 2, 6, vals)) {
@@ -966,37 +998,19 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("DIM record malformed");
             }
             DimOverrides ov{};
-            if (has_ov) {
-                std::uint64_t mask = 0, atype = 0, prec = 0, above = 0;
-                double th = 0.0, as = 0.0;
-                std::array<std::uint64_t, 9> rgb{};
-                bool ok = to_uint(tok[16], mask) && to_uint(tok[17], atype) &&
-                          to_uint(tok[18], prec) && to_uint(tok[19], above) &&
-                          to_double(tok[20], th) && to_double(tok[21], as);
-                for (int k = 0; ok && k < 9; ++k) {
-                    ok = to_uint(tok[22 + static_cast<std::size_t>(k)], rgb[static_cast<std::size_t>(k)]);
-                }
-                if (!ok) {
-                    return fail("DIM override block malformed");
-                }
-                ov.mask = static_cast<std::uint16_t>(mask);
-                ov.arrow_type = static_cast<std::uint8_t>(atype);
-                ov.precision = static_cast<std::uint8_t>(prec);
-                ov.text_above = above != 0;
-                ov.text_height = th;
-                ov.arrow_size = as;
-                const auto b = [&](int i) { return static_cast<std::uint8_t>(rgb[static_cast<std::size_t>(i)]); };
-                ov.dim_color = {b(0), b(1), b(2)};
-                ov.ext_color = {b(3), b(4), b(5)};
-                ov.text_color = {b(6), b(7), b(8)};
+            if (has_ov && !parse_overrides(tok, 16, ov, has_fit)) {
+                return fail("DIM override block malformed");
             }
             DimTolerance tol{};
             std::string dprefix;
             std::string dsuffix;
             if (has_decor) {
+                // The decoration follows the override block, which is one field wider
+                // from v16 -- so its offset is keyed to the same discriminator.
+                const std::size_t db = has_fit ? 32u : 31u;
                 std::uint64_t mode = 0;
-                if (!to_uint(tok[31], mode) || !to_double(tok[32], tol.upper) ||
-                    !to_double(tok[33], tol.lower)) {
+                if (!to_uint(tok[db], mode) || !to_double(tok[db + 1], tol.upper) ||
+                    !to_double(tok[db + 2], tol.lower)) {
                     return fail("DIM decoration malformed");
                 }
                 tol.mode = static_cast<TolMode>(std::min<std::uint64_t>(mode, 4));
@@ -1021,13 +1035,15 @@ IoResult parse_native(std::string_view text, Document& out) {
             vals.clear();
             EntityProps props;
             std::uint64_t style = 0;
-            const bool l_has_ov = tok.size() == 29; // v13 appends the 15-field override block
+            // v13 appends the override block (15 fields); v16 widens it to 16 (text_fit).
+            const bool l_fit = tok.size() == 30;
+            const bool l_has_ov = tok.size() == 29 || l_fit;
             if ((tok.size() != 14 && !l_has_ov) || !parse_doubles(tok, 1, 5, vals) ||
                 !to_uint(tok[6], style) || !parse_props(tok, 7, props)) {
                 return fail("LEADER record malformed");
             }
             DimOverrides lov{};
-            if (l_has_ov && !parse_overrides(tok, 14, lov)) {
+            if (l_has_ov && !parse_overrides(tok, 14, lov, l_fit)) {
                 return fail("LEADER override block malformed");
             }
             std::string content;
@@ -1094,14 +1110,15 @@ IoResult parse_native(std::string_view text, Document& out) {
             vals.clear();
             std::vector<double> bvals;
             EntityProps props;
-            const bool m_has_ov = tok.size() == pbase + 7 + 15; // v13 appends the override block
+            const bool m_fit = tok.size() == pbase + 7 + 16; // v16 widened it (text_fit)
+            const bool m_has_ov = tok.size() == pbase + 7 + 15 || m_fit;
             if ((tok.size() != pbase + 7 && !m_has_ov) || !parse_doubles(tok, vbase, nv * 2, vals) ||
                 !parse_doubles(tok, bbase, 7, bvals) || !to_uint(tok[bbase + 7], attach) ||
                 !parse_props(tok, pbase, props)) {
                 return fail("MLEADER record malformed");
             }
             DimOverrides mov{};
-            if (m_has_ov && !parse_overrides(tok, pbase + 7, mov)) {
+            if (m_has_ov && !parse_overrides(tok, pbase + 7, mov, m_fit)) {
                 return fail("MLEADER override block malformed");
             }
             std::string content;

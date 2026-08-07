@@ -1856,6 +1856,73 @@ from `tests/fixtures/symbol_sheet.musa`, where every symbol is reached from a **
 single-line TEXT** through `\U+XXXX` — so the sheet proves the escape's new reach as well
 as the glyphs.
 
+## ISO 129-1 narrow-dimension fit (issue #12)
+
+A linear dimension used to place its value unconditionally at the midpoint of the
+extension-line feet and draw both arrowheads inside the span. That is routine on a real
+drawing: a 15 mm feature plotted at 1:5 leaves a 3.0 mm gap, and "15" at the 2.5 mm text
+height ISO 129-1 recommends is — with this font's 0.6 h advance — exactly 2 x 1.5 =
+3.0 mm wide. The text cell exactly fills the gap and the first glyph renders in ink
+contact with the extension line; every smaller feature on the sheet is worse.
+
+**It has to be a renderer decision, because only the renderer knows the glyph advance.**
+That is why it is unworkaroundable from outside the library, and why it belongs in
+`compute_dim_geometry` rather than in a command or the UI.
+
+### Two independent tests, four states
+
+The fit runs in `compute_dim_geometry` against the **fully decorated, code-substituted**
+label (issue #7's prefix/suffix/tolerance), measured with `text::text_width` — the same
+function that emits the glyphs — using the **widest line** when Limits stacks two:
+
+* text fits when `text_width + 2 x gap <= foot_separation`
+* arrows fit when `2 x arrow_size + minimum_gap <= foot_separation`
+
+They are resolved **separately**, giving the four states the standard recognises: both
+inside, arrows outside with text inside, text outside with arrows inside, both outside.
+Collapsing them into one binary would push arrows outside on a dimension whose arrows fit
+perfectly well — visible in `artifacts/issue-12.pdf`, where the 8 mm rung keeps its arrows
+inside while the value has already moved out.
+
+* **Arrows outside** reuse `append_arrowhead` with the direction **reversed**, so each
+  head sits beyond its extension line pointing back in. `along` was already the direction
+  parameter, so this needed no signature change and there is deliberately **no second
+  arrowhead code path**. The dimension line is extended past each foot by the arrow length
+  plus a short stub, so each head has a line to sit on.
+* **Text outside** is placed on the dimension line's own extension, past the second
+  extension line, clearing the outside arrowhead and stub, then the gap; justification
+  switches to Left so it reads away from the feature.
+
+### `text_fit`: style default + per-dimension override
+
+`DimStyle::text_fit` (`TextFit::Auto` / `Inside` / `Outside`) with a `DimOverrides::kTextFit`
+presence bit, resolved by the existing `apply_dim_overrides` — so it flows through the
+**one** override-first-else-style path with every other field, and reaches the PR as one
+more registry row. `Auto` is the default at both levels, so **existing drawings simply
+stop colliding** with no author action. It governs the TEXT only; the arrows always follow
+their own fit test.
+
+Unlike issue #7's decoration rows, `text_fit` **is** MATCHPROP-matchable
+(`MatchSlot::Dimension`): where a value sits when it will not fit is presentation, and
+copying it asserts nothing untrue about the target feature.
+
+### Verification
+
+`tests/test_dim_fit.cpp` is a **ladder**: text height fixed at 2.5 mm, foot separations
+from 100 mm down to 0.25 mm, and at every rung it asserts — via a separating-axis test on
+the convex shapes, which also catches the containment case a naive edge-crossing test
+misses — that the label quad intersects **neither extension line nor any arrowhead**, and
+that `dim_measure` is unchanged from the inside case. Further cases prove the four states
+are reachable independently, that forced `Inside`/`Outside` really do force (including
+that forced-`Inside` *does* collide, i.e. the override overrides), that a **vertical**
+dimension is fitted in its own frame rather than in world x, and that the fit measures the
+**decorated** label (a 14 mm dimension that fits bare goes outside once a fit class widens
+it — which is why #12 had to land after #7).
+
+**Deferred, stated:** the short-leader variant of outside text (ISO 129-1 permits the value
+on a leader instead of on the dimension line's extension). It did not fall out of this
+work cheaply; tracked in `docs/TODO.md`.
+
 ## The plot path, and the command line that rides it (Phase 30 + issue #11)
 
 The PLOT feature landed in Phase 30 but was never written up here; this section states

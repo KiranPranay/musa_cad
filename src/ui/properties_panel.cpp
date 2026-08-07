@@ -362,6 +362,27 @@ void PropertiesPanel::rebuild() {
             current_form->addRow(label, e);
             break;
         }
+        case PropEditor::DimTextFitCombo: {
+            // ByStyle at index 0 like the other dimension combos; then the three
+            // TextFit values. Auto is what the style itself defaults to, so a drawing
+            // that never touches this row simply stops colliding.
+            auto* e = new QComboBox();
+            e->addItems({QStringLiteral("ByStyle"), QStringLiteral("Auto (fit)"),
+                         QStringLiteral("Always inside"), QStringLiteral("Always outside")});
+            if (varies) {
+                e->addItem(QString::fromLatin1(kVaries));
+                e->setCurrentIndex(e->count() - 1);
+            } else {
+                e->setCurrentIndex(f.value.choice);
+            }
+            connect(e, &QComboBox::activated, this, [this, id](int index) {
+                PropertyValue pv;
+                pv.choice = index; // 0 = ByStyle
+                emit_edit(id, pv);
+            });
+            current_form->addRow(label, e);
+            break;
+        }
         case PropEditor::DimTolModeCombo: {
             // Unlike the dimension combos above this has no "ByStyle" entry: a tolerance
             // mode is the dimension's own content, not an override of a shared style, so
