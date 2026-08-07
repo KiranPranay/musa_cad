@@ -59,6 +59,7 @@ enum class PropertyId : std::uint16_t {
     DimPrefix,     ///< raw text before the value ("6X", "%%c")
     DimSuffix,     ///< raw text after the value ("TYP", "MAX", " H7")
     DimTolMode,    ///< TolMode: none / symmetric / limits / basic / reference
+    DimTextFit,    ///< TextFit: ByStyle / Auto / Inside / Outside (narrow-dimension fit)
     DimTolUpper,   ///< upper deviation
     DimTolLower,   ///< lower deviation
     // Leader / MLeader per-leader arrow overrides (ByStyle unless overridden) -- the same
@@ -94,6 +95,7 @@ enum class PropEditor : std::uint8_t {
     DimArrowTypeCombo, ///< value.choice: 0=ByStyle, 1..4 = ArrowType+1
     DimPlacementCombo, ///< value.choice: 0=ByStyle, 1=Above, 2=Centered
     DimTolModeCombo,   ///< value.choice = TolMode (0=None..4=Reference); NOT a ByStyle combo
+    DimTextFitCombo,   ///< value.choice: 0=ByStyle, 1=Auto, 2=Inside, 3=Outside
 };
 
 /// A typed value carried by a field / a SetPropertyCommand. Only the members

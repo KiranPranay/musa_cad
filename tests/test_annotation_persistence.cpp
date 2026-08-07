@@ -189,6 +189,109 @@ TEST_CASE("v14 dimensions still load, as undecorated (older-version compatibilit
     REQUIRE(doc.lines.size() == 1);
 }
 
+// ---------------------------------------------------------------------------
+// Native v16: the shared override block gains text_fit (issue #12).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("v16 round-trips text_fit on dimensions, leaders and the dimstyle") {
+    GeometryStore s;
+    // A style-level default plus a per-dimension override, so both halves of the
+    // override-first-else-style resolution are exercised through the file.
+    DimStyle ds;
+    ds.name = "Narrow";
+    ds.text_fit = static_cast<std::uint8_t>(TextFit::Outside);
+    s.add_dimstyle(ds);
+
+    DimOverrides ov;
+    ov.set(DimOverrides::kTextFit, true);
+    ov.text_fit = static_cast<std::uint8_t>(TextFit::Inside);
+    s.add_dimension(DimType::Linear, {0, 0}, {2, 0}, {1, 5}, 0, {}, ov, "", "", {});
+    // The block is SHARED, so a leader must round-trip the wider form too even though
+    // text_fit is meaningless for it -- that is the cost of one definition, and it has
+    // to actually work.
+    s.add_leader({0, 0}, {5, 5}, 2.5, 0, "note", {}, 0, ov);
+
+    const Document a = document_from_store(s);
+    REQUIRE(a.format_version == kFormatVersion);
+    const auto path = (std::filesystem::temp_directory_path() / "musacad_textfit.musa").string();
+    REQUIRE(save_native(a, path).ok);
+    Document b;
+    REQUIRE(load_native(path, b).ok);
+    GeometryStore restored;
+    populate_store(restored, b);
+    REQUIRE(document_from_store(restored) == a);
+
+    REQUIRE(b.dims[0].overrides.has(DimOverrides::kTextFit));
+    REQUIRE(b.dims[0].overrides.text_fit == static_cast<std::uint8_t>(TextFit::Inside));
+    REQUIRE(b.leaders[0].overrides.has(DimOverrides::kTextFit));
+    // The dimstyle's own default survives, including the multi-word-name boundary the
+    // writer has to protect (text_fit precedes the name).
+    bool found = false;
+    for (const DimStyle& x : b.dimstyles) {
+        if (x.name == "Narrow") {
+            REQUIRE(x.text_fit == static_cast<std::uint8_t>(TextFit::Outside));
+            found = true;
+        }
+    }
+    REQUIRE(found);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("A dimstyle name with spaces survives the v16 text_fit field") {
+    // text_fit had to go BEFORE the name because the name absorbs every remaining
+    // token. Prove the boundary holds for a multi-word name.
+    GeometryStore s;
+    DimStyle ds;
+    ds.name = "ISO 25 Narrow Text";
+    ds.text_fit = static_cast<std::uint8_t>(TextFit::Inside);
+    s.add_dimstyle(ds);
+    const Document a = document_from_store(s);
+    Document b;
+    REQUIRE(parse_native(serialize_native(a), b).ok);
+    bool found = false;
+    for (const DimStyle& x : b.dimstyles) {
+        if (x.name == "ISO 25 Narrow Text") {
+            REQUIRE(x.text_fit == static_cast<std::uint8_t>(TextFit::Inside));
+            found = true;
+        }
+    }
+    REQUIRE(found);
+}
+
+TEST_CASE("v15 files load with text_fit = Auto, so old drawings simply stop colliding") {
+    // A real v15 record set: DIM with the 15-field override block + the 3 decoration
+    // fields (34 tokens) and its prefix/suffix lines; LEADER with the 15-field block
+    // (29 tokens); DIMSTYLE with the name straight after the four element colours.
+    const std::string v15 =
+        "MUSACAD 15\nLAYER 255 255 255 0 25 1 0 0 0\n"
+        // Index 0 is force-named "Standard" after the parse (a long-standing invariant),
+        // so the style whose name boundary we are testing has to be the SECOND one --
+        // exactly as a real file has it.
+        "DIMSTYLE 2.5 2.5 0 0.6 1.25 2 1 25 1 0 0 0 1 0 0 0 1 0 0 0 1 0 0 0 Standard\n"
+        "DIMSTYLE 2.5 2.5 0 0.6 1.25 2 1 25 1 0 0 0 1 0 0 0 1 0 0 0 1 0 0 0 ISO 25 Narrow\n"
+        "DIM 0 0 0 10 0 5 3 0 0 7 255 255 255 0 25 1 0 2 1 3.5 2.5 0 0 0 0 0 0 0 0 0 0 0 0\n"
+        "6X \n TYP\n"
+        "LEADER 0 0 5 5 2.5 0 0 7 255 255 255 0 25 2 0 2 1 2.5 4.0 0 0 0 0 0 0 0 0 0\n"
+        "note\n\n"
+        "LINE 0 0 1 1 0 7 255 255 255 0 25\nEND\n";
+    Document doc;
+    REQUIRE(parse_native(v15, doc).ok);
+    REQUIRE(doc.dims.size() == 1);
+    REQUIRE_FALSE(doc.dims[0].overrides.has(DimOverrides::kTextFit)); // ByStyle
+    REQUIRE(doc.dims[0].overrides.text_height == 3.5);                // the v8 fields still parse
+    REQUIRE(doc.dims[0].prefix == "6X ");                             // the v15 fields still parse
+    REQUIRE(doc.dims[0].suffix == " TYP");
+    REQUIRE(doc.leaders.size() == 1);
+    REQUIRE(doc.leaders[0].overrides.arrow_size == 4.0);
+    // The style default is Auto, and its multi-word name did NOT swallow a text_fit
+    // token that a v15 file does not have.
+    REQUIRE(doc.dimstyles.size() == 2);
+    REQUIRE(doc.dimstyles[1].name == "ISO 25 Narrow");
+    REQUIRE(doc.dimstyles[1].text_fit == static_cast<std::uint8_t>(TextFit::Auto));
+    // The record AFTER everything is still found: no line was swallowed.
+    REQUIRE(doc.lines.size() == 1);
+}
+
 TEST_CASE("DXF writes the decorated label into the DIMENSION text override (code 1)") {
     Document a;
     a.layers.push_back(Layer{"0", {255, 255, 255}, Linetype::Continuous, 25, true, false, false});

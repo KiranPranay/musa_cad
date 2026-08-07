@@ -81,6 +81,21 @@ struct DimTextParts {
     std::string_view suffix;
 };
 
+/// Where a dimension's value is placed when it does not fit between the extension
+/// lines (ISO 129-1 / ASME Y14.5). `Auto` measures the label and decides -- which is
+/// the only correct default, because only the renderer knows the glyph advance.
+/// `Inside` / `Outside` force the treatment for one dimension.
+///
+/// This governs the TEXT only. The arrowheads are resolved independently by their own
+/// fit test, because the four combinations (both in, arrows out, text out, both out)
+/// are all legitimate drawings -- collapsing them into one binary would put arrows
+/// outside on a dimension whose arrows fit perfectly well.
+enum class TextFit : std::uint8_t {
+    Auto = 0,
+    Inside = 1,
+    Outside = 2,
+};
+
 /// Arrowhead style for dimensions and leaders.
 enum class ArrowType : std::uint8_t {
     Filled = 0, ///< solid filled triangle (closed)
@@ -109,6 +124,7 @@ struct DimStyle {
     std::uint8_t precision = 2;  ///< decimal places in the measured text
     bool text_above = true;      ///< text sits above the dim line (else centred)
     std::uint8_t dim_lineweight = 25; ///< dimension/extension line weight (hundredths mm)
+    std::uint8_t text_fit = 0;   ///< TextFit: narrow-dimension value placement (Auto)
 
     // Per-element colours (ByLayer by default, AutoCAD-style).
     ElementColor dim_color{};
@@ -134,10 +150,12 @@ struct DimOverrides {
         kDimColor = 1u << 5,
         kExtColor = 1u << 6,
         kTextColor = 1u << 7,
+        kTextFit = 1u << 8,
     };
     std::uint16_t mask = 0;
     std::uint8_t arrow_type = 0;
     std::uint8_t precision = 2;
+    std::uint8_t text_fit = 0; ///< TextFit
     bool text_above = true;
     double text_height = 2.5;
     double arrow_size = 2.5;
@@ -177,6 +195,9 @@ struct DimOverrides {
     }
     if (o.has(DimOverrides::kTextColor)) {
         s.text_color = ElementColor{false, o.text_color};
+    }
+    if (o.has(DimOverrides::kTextFit)) {
+        s.text_fit = o.text_fit;
     }
     return s;
 }

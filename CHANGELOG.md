@@ -24,6 +24,10 @@ multi-threaded, GPU-accelerated core — useful for real 2D work, but young. Not
   (linear, aligned, radius, diameter, angular, and a smart `DIM`) with editable dimension
   styles and per-dimension overrides; **TrueType/OpenType fonts** plus SHX-name → stroke/TTF
   substitution.
+- **Drafting symbols & GD&T glyphs:** the stroke font carries the hole-callout symbols (counterbore/spotface, depth, countersink), the GD&T characteristic set, the material-condition modifiers and the feature-form symbols, reachable from any text entity via `%%b`/`%%h`/`%%v` and the general `\U+XXXX` escape.
+- **Dimension tolerances:** prefix/suffix plus a tolerance mode (symmetric / limits / basic / reference) on the dimension itself, so a fit class or limit pair travels with the dimension it qualifies. The measured value is still computed from the definition points and can never be authored.
+- **ISO 129-1 narrow dimensions:** a value that will not fit between its extension lines is now placed outside and the arrowheads flip to point inward, instead of colliding with the extension line. Independently resolved for text and arrows; `Text fit` overrides it per dimension.
+- **Command line:** `musacad <drawing>` opens a file, `--check` validates one (non-zero exit on a parse error), and `--plot <drawing> <out.pdf>` plots headlessly with no display — same loaders, snapshot builder and plot renderer as the GUI. See [`docs/CLI.md`](docs/CLI.md).
 - **Blocks:** block definitions + `INSERT` references, including nested blocks.
 - **Files:** native `.musa` format (round-trips every entity family); **DXF import/export**;
   **DWG import/export** via an external converter (see below); **SPLINE** and **ELLIPSE** now

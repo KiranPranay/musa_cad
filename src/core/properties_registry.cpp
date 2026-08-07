@@ -780,6 +780,23 @@ const Desc kDescs[] = {
              }
          });
      }},
+    {PropertyId::DimTextFit, "Dimension", "Text fit", PropEditor::DimTextFitCombo, is_dimension,
+     [](const Command& c) {
+         PropertyValue v;
+         const DimOverrides o = get_dim_ov(c);
+         // 0 = ByStyle; otherwise TextFit + 1 (Auto/Inside/Outside), the same
+         // "index 0 means inherit" shape LinetypeCombo and DimPlacementCombo use.
+         v.choice = o.has(DimOverrides::kTextFit) ? static_cast<int>(o.text_fit) + 1 : 0;
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         with_dim_ov(c, [&](DimOverrides& o) {
+             o.set(DimOverrides::kTextFit, v.choice > 0);
+             if (v.choice > 0) {
+                 o.text_fit = static_cast<std::uint8_t>(v.choice - 1);
+             }
+         });
+     }},
     // -- Dimension text decoration (issue #7). Unlike the rows above these are NOT
     // ByStyle overrides: prefix/suffix/tolerance are the dimension's own content, so
     // they are plain values with no style to fall back to.
@@ -1044,6 +1061,10 @@ MatchSlot match_slot_for(PropertyId id) noexcept {
     case PropertyId::DimTextColor:
     case PropertyId::DimTextPlacement:
     case PropertyId::DimPrecision:
+    // Text FIT is presentation (where the value sits when it will not fit), not
+    // semantics, so unlike the decoration rows below it IS matchable -- copying it
+    // says nothing untrue about the target feature.
+    case PropertyId::DimTextFit:
         return MatchSlot::Dimension;
     // Text decoration is SEMANTICS, not presentation: a fit class, a limit pair or a
     // "6X" prefix describes THIS feature, and painting it onto another dimension with

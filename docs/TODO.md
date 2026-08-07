@@ -3,6 +3,23 @@
 Durable backlog of things intentionally deferred. Each item notes *why* it was
 parked and *what done looks like*, so it can be picked up cleanly later.
 
+## Dimensions
+
+* **Short-leader variant for outside dimension text — deferred.** ISO 129-1 permits a
+  narrow dimension's value to sit on a short leader instead of on the dimension line's
+  extension. Issue #12 implements the extension placement (which is the commoner form and
+  the one AutoCAD defaults to); the leader variant needs a stored leader direction/length
+  per dimension plus a format field, and did not fall out of the fit work cheaply.
+  **Done looks like:** a `TextFit::Leader` value drawing a landing line from the dimension
+  line to the text, with the leader side chosen from the placement point. See
+  `docs/ARCHITECTURE.md` ▸ "ISO 129-1 narrow-dimension fit".
+* **Narrow-dimension fit for radius/diameter/angular — deferred.** The ISO 129-1 fallback
+  in issue #12 covers **linear and aligned** dimensions, where "does the value fit between
+  the extension lines" is well defined. Radius/diameter place their text along the leader
+  from the centre and angular places it on the arc, so neither has the same collision; a
+  cramped radius on a tiny fillet is a different (rarer) problem. **Done looks like:** a
+  fit test for the radial forms, most likely reusing `dim_label_quad` against the arc.
+
 ## Release / packaging (v0.1.0 infra DONE 2026-06-23; items staged)
 
 * **DONE.** Linux **AppImage** (`packaging/linux/`, bundles Qt6 + qsvg, verified locally),

@@ -38,7 +38,12 @@ namespace musacad::core::io {
 /// v15: dimension text decoration -- three trailing fields on the DIM record (tolerance
 /// mode, upper, lower) plus a prefix line and a suffix line after it. Detected by token
 /// count (34 vs the v8 31 vs the pre-v8 16); v1-v14 dimensions load undecorated.
-inline constexpr std::uint32_t kFormatVersion = 15;
+/// v16: ISO 129-1 narrow-dimension fit. The shared DimOverrides block gains a 16th
+/// field (text_fit), so DIM goes 34 -> 35 tokens and LEADER/MLEADER 29 -> 30; DIMSTYLE
+/// gains text_fit BEFORE its name (the name absorbs the rest of the line, so a trailing
+/// field would be ambiguous) and is read by version, not token count. v1-v15 files load
+/// with text_fit = Auto, which is the default -- so older drawings simply stop colliding.
+inline constexpr std::uint32_t kFormatVersion = 16;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
