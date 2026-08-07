@@ -264,3 +264,55 @@ boundary, v15-loads-as-Auto). Artifact `artifacts/issue-12.pdf` — the 21-rung 
 
 **Left:** short-leader outside text and the radial-form fit, both written into
 `docs/TODO.md`. Next: merge, then #8 (GD&T), then #10 (IMAGE).
+
+---
+
+## 2026-08-08 01:10 — #8 DONE (branch `feat/issue-8-gdt`)
+
+Commit `eb89399`. Native format is now **v17**.
+
+**Decisions:**
+1. **A cell is TEXT, not a tagged union.** Rejected per-cell semantic enums with typed
+   fields. The meaning already comes from cell position + the font's symbols (#9), so a
+   parallel type system buys validation nobody asked for and a second way to say "⌀".
+   The author types `\U+2316`; the existing substitution pass does the rest — no
+   GD&T-specific input mode anywhere.
+2. **`EntityFamily::Dimension`, not a new `GdtFamily`.** This is the deliberate call the
+   brief asked for. Folding in is what makes MATCHPROP carry text height/colours from a
+   dimension to a frame — the literal ask in the issue. Leakage is prevented by the
+   `applies` predicates, not by the family, and both directions are asserted.
+3. **DXF writes nothing, stated.** TOLERANCE is a real interop path but did not fit the
+   budget; a half-valid entity is worse than none. `docs/TODO.md` records what done looks
+   like.
+4. **ParameterDialog deferred, Q&A implemented.** The issue wanted the Ph11 dialog. I
+   landed the command-line half (which is the scriptable one) and deferred the dialog
+   explicitly rather than doing both badly.
+
+**`-Werror=switch` is the hero of this issue.** Adding two `EntityKind` values produced a
+compiler-generated checklist of every site that must handle them (9 switches across 6
+files). Nothing was missed by accident.
+
+**Pre-existing bug found and fixed:** `GeometryEngine::all_live()` **omitted hatches**. It
+feeds the load-time spatial-index rebuild, `SelectAll` and `ERASE All` — so a hatch
+**loaded from a file was never indexed** and could not be picked, hovered, window-selected
+or erased. One created in-session worked (`create_indexed` inserts directly), which is why
+it hid. The GD&T arenas would have inherited it identically. Regression test added and
+**verified to fail without the fix**.
+
+**Time lost to a self-inflicted wound (worth recording).** My new engine test hung for
+~25 minutes of debugging: no snapshot ever published. I suspected dispatch, then the
+variant, then a hang in `apply()`. The actual cause was that **my test never called
+`engine.start()`** — the engine's worker is started explicitly, not by the constructor.
+The product was correct the whole time. Lesson: when a brand-new test fails against code
+whose neighbours pass, suspect the test's setup before the code.
+
+**Artifact caught (again):** the datum triangle at a dimension arrowhead's proportions
+reads as an *arrow*, not a datum. ASME draws it roughly equilateral. Fixed, and the
+proportion is now asserted.
+
+**Gate: PASSED.** dev clean/0 warnings **387/387**; release clean/0 warnings; tsan
+**387/387**. New: `tests/test_gdt.cpp` (16 cases) + the `all_live` regression test.
+Artifact `artifacts/issue-8.pdf`.
+
+**Left:** DXF TOLERANCE interop, the ParameterDialog surface, and cell-list editing in the
+PR — all three written into `docs/TODO.md`.
