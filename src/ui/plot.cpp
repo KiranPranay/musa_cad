@@ -20,10 +20,18 @@
 #include <QPen>
 #include <QPointF>
 #include <QPolygonF>
+#include <QImage>
 #include <QRectF>
+#include <QTransform>
 #include <QSizeF>
 #include <QString>
 
+#include <map>
+#include <memory>
+
+#include "musacad/core/geometry_store.hpp"
+#include "musacad/core/image.hpp"
+#include "musacad/core/image_decoder.hpp"
 #include "musacad/core/render_snapshot.hpp"
 
 namespace musacad::ui {
@@ -96,13 +104,14 @@ double plot_tolerance(core::Vec2 amin, core::Vec2 amax, double paper_w_mm, doubl
 }
 
 bool write_plot_pdf(const std::string& path, const core::RenderSnapshot& snap,
-                    const PlotSpec& spec, core::Vec2 amin, core::Vec2 amax, std::string& error) {
+                    const PlotSpec& spec, core::Vec2 amin, core::Vec2 amax, std::string& error,
+                    const ImageSource* images) {
     const QString qpath = QString::fromStdString(path);
     {
         QPdfWriter w(qpath);
         w.setPageSize(QPageSize(QSizeF(spec.paper_w_mm, spec.paper_h_mm), QPageSize::Millimeter));
         w.setResolution(kPlotDpi);
-        paint_plot(w, snap, spec, amin, amax);
+        paint_plot(w, snap, spec, amin, amax, images);
     } // the writer must be destroyed before the file is complete on disk
     const QFileInfo fi(qpath);
     if (!fi.exists() || fi.size() == 0) {
@@ -110,6 +119,57 @@ bool write_plot_pdf(const std::string& path, const core::RenderSnapshot& snap,
         return false;
     }
     return true;
+}
+
+namespace {
+/// Decodes on first use and caches by definition index, so N placements of one logo
+/// decode once. Deliberately NOT in the snapshot: pixels must never ride the triple
+/// buffer (see core::ImageInstance).
+class StoreImageSource final : public ImageSource {
+public:
+    StoreImageSource(const core::GeometryStore& store, const core::IImageDecoder* decoder,
+                     std::string_view drawing_dir)
+        : store_(store), decoder_(decoder), dir_(drawing_dir) {}
+
+    bool pixels(std::uint16_t def, std::uint32_t& width, std::uint32_t& height,
+                std::vector<std::uint8_t>& rgba) const override {
+        if (decoder_ == nullptr) {
+            return false; // no decoder injected: geometry still plots, pixels do not
+        }
+        if (const auto it = cache_.find(def); it != cache_.end()) {
+            width = it->second.width;
+            height = it->second.height;
+            rgba = it->second.rgba;
+            return it->second.valid();
+        }
+        core::DecodedImage img;
+        if (const core::ImageDef* d = store_.image_def(def)) {
+            if (!d->bytes.empty()) {
+                img = decoder_->decode_bytes(d->bytes); // embedded payload wins
+            } else if (std::string full; core::resolve_image_path(dir_, d->source, full)) {
+                img = decoder_->decode_file(full);
+            }
+        }
+        const bool ok = img.valid();
+        width = img.width;
+        height = img.height;
+        rgba = img.rgba;
+        cache_.emplace(def, std::move(img));
+        return ok;
+    }
+
+private:
+    const core::GeometryStore& store_;
+    const core::IImageDecoder* decoder_;
+    std::string dir_;
+    mutable std::map<std::uint16_t, core::DecodedImage> cache_;
+};
+} // namespace
+
+std::unique_ptr<ImageSource> make_store_image_source(const core::GeometryStore& store,
+                                                     const core::IImageDecoder* decoder,
+                                                     std::string_view drawing_dir) {
+    return std::make_unique<StoreImageSource>(store, decoder, drawing_dir);
 }
 
 core::Rgb plot_color(core::Rgb resolved, PlotSpec::Style style) {
@@ -132,7 +192,7 @@ core::Rgb plot_color(core::Rgb resolved, PlotSpec::Style style) {
 }
 
 void paint_plot(QPaintDevice& device, const core::RenderSnapshot& snap, const PlotSpec& spec,
-                core::Vec2 amin, core::Vec2 amax) {
+                core::Vec2 amin, core::Vec2 amax, const ImageSource* images) {
     const double dev_w = device.width();
     const double dev_h = device.height();
     const double dpx = device.logicalDpiX() > 0 ? device.logicalDpiX() : 96.0;
@@ -192,6 +252,41 @@ void paint_plot(QPaintDevice& device, const core::RenderSnapshot& snap, const Pl
         const QPointF tl = to_dev({amin.x, amax.y}); // world top-left -> device
         const QPointF br = to_dev({amax.x, amin.y});
         p.setClipRect(QRectF(tl, br).normalized());
+    }
+
+    // Raster images FIRST, so vector geometry always lands on top -- an image is a
+    // backdrop (a logo, a shaded pictorial), and it must never hide a dimension.
+    // Rasterised at the DEVICE's resolution, so a 300 DPI PDF gets 300 DPI pixels.
+    if (images != nullptr) {
+        std::uint32_t iw = 0;
+        std::uint32_t ih = 0;
+        std::vector<std::uint8_t> rgba;
+        for (const core::ImageInstance& inst : snap.images) {
+            if (!images->pixels(inst.def, iw, ih, rgba) || iw == 0 || ih == 0) {
+                continue; // a missing external file omits THAT image, not the plot
+            }
+            const QImage img(rgba.data(), static_cast<int>(iw), static_cast<int>(ih),
+                             static_cast<int>(iw) * 4, QImage::Format_RGBA8888);
+            // The instance's UV rect selects the (clipped) source region; the quad gives
+            // the destination. Both come from the shared resolver, so the plot shows
+            // exactly the region pick and bounds agree on.
+            const QRectF src(inst.uv[0] * iw, inst.uv[1] * ih,
+                             (inst.uv[2] - inst.uv[0]) * iw, (inst.uv[3] - inst.uv[1]) * ih);
+            // Map the quad through the world->device transform. The quad is a rotated
+            // rectangle, so an affine transform reproduces it exactly.
+            const QPointF p0 = to_dev(inst.quad[0]); // bottom-left
+            const QPointF p1 = to_dev(inst.quad[1]); // bottom-right
+            const QPointF p3 = to_dev(inst.quad[3]); // top-left
+            // Device space is y-down, so the image's TOP-left maps to quad corner 3.
+            QTransform t(( p1.x() - p0.x()) / src.width(), (p1.y() - p0.y()) / src.width(),
+                         ( p0.x() - p3.x()) / src.height(), (p0.y() - p3.y()) / src.height(),
+                         p3.x(), p3.y());
+            p.save();
+            p.setTransform(t, true);
+            p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+            p.drawImage(QRectF(0, 0, src.width(), src.height()), img, src);
+            p.restore();
+        }
     }
 
     // Filled triangles (outline-font glyphs, arrowheads): one brush per colour batch.

@@ -65,6 +65,58 @@ void append_overrides(std::string& s, const DimOverrides& o) {
     append_uint(s, o.text_fit); // v16
 }
 
+// Base64, for the embedded-image payload. The format is line-oriented, so the encoded
+// text is chunked across lines and reassembled on read.
+constexpr char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+std::string base64_encode(const std::vector<std::uint8_t>& in) {
+    std::string out;
+    out.reserve((in.size() + 2) / 3 * 4);
+    for (std::size_t i = 0; i < in.size(); i += 3) {
+        const unsigned b0 = in[i];
+        const unsigned b1 = i + 1 < in.size() ? in[i + 1] : 0u;
+        const unsigned b2 = i + 2 < in.size() ? in[i + 2] : 0u;
+        const unsigned v = (b0 << 16) | (b1 << 8) | b2;
+        out += kB64[(v >> 18) & 0x3F];
+        out += kB64[(v >> 12) & 0x3F];
+        out += i + 1 < in.size() ? kB64[(v >> 6) & 0x3F] : '=';
+        out += i + 2 < in.size() ? kB64[v & 0x3F] : '=';
+    }
+    return out;
+}
+
+int b64_value(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+/// Decodes base64, rejecting any stray character rather than silently skipping it --
+/// a corrupt payload must fail the load, not produce a garbled image.
+bool base64_decode(std::string_view in, std::vector<std::uint8_t>& out) {
+    unsigned acc = 0;
+    int bits = 0;
+    for (const char c : in) {
+        if (c == '=') {
+            break;
+        }
+        const int v = b64_value(c);
+        if (v < 0) {
+            return false;
+        }
+        acc = (acc << 6) | static_cast<unsigned>(v);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<std::uint8_t>((acc >> bits) & 0xFF));
+        }
+    }
+    return true;
+}
+
 std::vector<std::string_view> tokenize(std::string_view line) {
     std::vector<std::string_view> out;
     std::size_t i = 0;
@@ -672,6 +724,52 @@ std::string serialize_native(const Document& doc) {
     for (std::size_t i = 0; i < doc.polylines.size(); ++i) {
         emit_celt(3, i, doc.polylines[i].celtscale);
     }
+    // v18: raster images. IMAGEDEF <pixel_w> <pixel_h> <b64chunks> <sourcelen>; then the
+    // source line, then `b64chunks` lines of base64. Chunking is forced by the format
+    // being line-oriented -- an embedded PNG is far too long for one record.
+    for (const DocImageDef& d : doc.image_defs) {
+        const std::string b64 = base64_encode(d.bytes);
+        constexpr std::size_t kChunk = 76; // classic base64 line length
+        const std::size_t chunks = (b64.size() + kChunk - 1) / kChunk;
+        s += "IMAGEDEF ";
+        append_uint(s, d.pixel_w);
+        s += ' ';
+        append_uint(s, d.pixel_h);
+        s += ' ';
+        append_uint(s, chunks);
+        s += '\n';
+        s += d.source; // may be empty (embedded-only) and may contain spaces
+        s += '\n';
+        for (std::size_t k = 0; k < chunks; ++k) {
+            s += b64.substr(k * kChunk, kChunk);
+            s += '\n';
+        }
+    }
+    // IMAGE def px py w h rot clipped u0 v0 u1 v1 <props7>
+    for (const DocImage& im : doc.images) {
+        s += "IMAGE ";
+        append_uint(s, im.def);
+        s += ' ';
+        append_vec(s, im.pos);
+        s += ' ';
+        append_double(s, im.width);
+        s += ' ';
+        append_double(s, im.height);
+        s += ' ';
+        append_double(s, im.rotation);
+        s += ' ';
+        append_uint(s, im.clipped ? 1 : 0);
+        s += ' ';
+        append_double(s, im.clip_u0);
+        s += ' ';
+        append_double(s, im.clip_v0);
+        s += ' ';
+        append_double(s, im.clip_u1);
+        s += ' ';
+        append_double(s, im.clip_v1);
+        append_props(s, im.props);
+        s += '\n';
+    }
     // v17: GD&T. FCF <cellcount> px py rot style <props7> <override16>; then one RAW cell
     // string per following line (cells may contain spaces, so they cannot be tokens --
     // the same reason TEXT puts its content on its own line).
@@ -1067,6 +1165,56 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       dprefix,
                                       dsuffix,
                                       tol});
+        } else if (key == "IMAGEDEF") {
+            std::uint64_t pw = 0;
+            std::uint64_t ph = 0;
+            std::uint64_t chunks = 0;
+            if (tok.size() != 4 || !to_uint(tok[1], pw) || !to_uint(tok[2], ph) ||
+                !to_uint(tok[3], chunks)) {
+                return fail("IMAGEDEF record malformed");
+            }
+            DocImageDef d;
+            d.pixel_w = static_cast<std::uint32_t>(pw);
+            d.pixel_h = static_cast<std::uint32_t>(ph);
+            if (!read_line(d.source)) {
+                return fail("IMAGEDEF missing source line");
+            }
+            std::string b64;
+            for (std::uint64_t k = 0; k < chunks; ++k) {
+                std::string chunk;
+                if (!read_line(chunk)) {
+                    return fail("IMAGEDEF missing payload line");
+                }
+                b64 += chunk;
+            }
+            if (!base64_decode(b64, d.bytes)) {
+                return fail("IMAGEDEF payload is not valid base64");
+            }
+            doc.image_defs.push_back(std::move(d));
+        } else if (key == "IMAGE") {
+            // IMAGE def px py w h rot clipped u0 v0 u1 v1 <props7>
+            std::uint64_t def = 0;
+            std::uint64_t clipped = 0;
+            vals.clear();
+            EntityProps props;
+            if (tok.size() != 12 + 7 || !to_uint(tok[1], def) || !parse_doubles(tok, 2, 5, vals) ||
+                !to_uint(tok[7], clipped) || !parse_doubles(tok, 8, 4, vals) ||
+                !parse_props(tok, 12, props)) {
+                return fail("IMAGE record malformed");
+            }
+            DocImage im;
+            im.def = static_cast<std::uint16_t>(def);
+            im.pos = {vals[0], vals[1]};
+            im.width = vals[2];
+            im.height = vals[3];
+            im.rotation = vals[4];
+            im.clipped = clipped != 0;
+            im.clip_u0 = vals[5];
+            im.clip_v0 = vals[6];
+            im.clip_u1 = vals[7];
+            im.clip_v1 = vals[8];
+            im.props = props;
+            doc.images.push_back(im);
         } else if (key == "FCF") {
             // FCF <cellcount> px py rot style <props7> <override16>; cells on the
             // following lines (raw, may contain spaces).

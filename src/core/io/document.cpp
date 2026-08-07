@@ -158,6 +158,18 @@ Document document_from_store(const GeometryStore& store) {
                                           d.style, d.props, d.overrides});
         }
     }
+    for (const ImageDef& d : store.image_defs()) {
+        doc.image_defs.push_back(DocImageDef{d.source, d.bytes, d.pixel_w, d.pixel_h});
+    }
+    const auto& image_arena = store.images();
+    for (std::uint32_t i = 0; i < image_arena.slot_count(); ++i) {
+        if (image_arena.alive(i)) {
+            const ImageData& im = image_arena.data()[i];
+            doc.images.push_back(DocImage{im.def, im.pos, im.width, im.height, im.rotation,
+                                          im.clipped, im.clip_u0, im.clip_v0, im.clip_u1,
+                                          im.clip_v1, im.props});
+        }
+    }
     // Block definitions (by name) + their self-contained content.
     for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store.block_count()); ++bi) {
         const BlockDef* b = store.block(bi);
@@ -279,6 +291,25 @@ void populate_store(GeometryStore& store, const Document& doc) {
     for (const DocHatch& h : doc.hatches) {
         store.add_hatch(h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle, h.pattern_origin,
                         h.props);
+    }
+    {
+        std::vector<ImageDef> defs;
+        defs.reserve(doc.image_defs.size());
+        for (const DocImageDef& d : doc.image_defs) {
+            defs.push_back(ImageDef{d.source, d.bytes, d.pixel_w, d.pixel_h, 1});
+        }
+        store.set_image_def_table(std::move(defs));
+    }
+    for (const DocImage& im : doc.images) {
+        const EntityHandle h =
+            store.add_image(im.def, im.pos, im.width, im.height, im.rotation, im.props);
+        if (ImageData* d = store.mutable_image(h)) {
+            d->clipped = im.clipped;
+            d->clip_u0 = im.clip_u0;
+            d->clip_v0 = im.clip_v0;
+            d->clip_u1 = im.clip_u1;
+            d->clip_v1 = im.clip_v1;
+        }
     }
     for (const DocFcf& f : doc.fcfs) {
         store.add_fcf(f.cells, f.pos, f.rotation, f.style, f.props, f.overrides);

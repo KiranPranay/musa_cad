@@ -502,6 +502,23 @@ struct AddDatumCommand {
     DimStyle dim_style = {};
 };
 
+/// Place a raster image. `def` indexes the image-definition table, which the engine
+/// gets-or-adds from `def_source`/`def_bytes` so the UI never has to know the index.
+struct AddImageCommand {
+    std::uint16_t def = 0;
+    Vec2 pos;
+    double width = 1.0;
+    double height = 1.0;
+    double rotation = 0.0;
+    bool clipped = false;
+    double clip_u0 = 0.0;
+    double clip_v0 = 0.0;
+    double clip_u1 = 1.0;
+    double clip_v1 = 1.0;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
 /// HATCH "Select objects" mode: the engine reads the current selection, extracts the
 /// closed boundary of each selected closed polyline (UI never touches the store), and
 /// creates one hatch with the given pattern. Resolved geometry-side, like JOIN.
@@ -638,6 +655,6 @@ using Command =
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,
-                 AddDatumCommand>;
+                 AddDatumCommand, AddImageCommand>;
 
 } // namespace musacad::core

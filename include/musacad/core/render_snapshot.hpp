@@ -4,6 +4,7 @@
 #pragma once
 
 #include <bit>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -53,6 +54,20 @@ struct ColorBatch {
 /// `version` increases monotonically with each publish. `checksum` is computed
 /// over the version and payload so a consumer can assert it observed a complete,
 /// untorn snapshot (used by the concurrency test).
+/// A placed raster image, as the RENDERER sees it. Deliberately tiny: the transform,
+/// the definition index, the clip UVs and the definition's version -- and NOT the
+/// pixels. The snapshot is copied through the triple buffer on every publish, so
+/// megabytes of decoded raster here would wreck the geometry->render handoff. The
+/// renderer/plotter keeps a texture cache keyed by `def`, invalidated when `def_version`
+/// changes; this struct is only the instruction to draw one.
+struct ImageInstance {
+    std::array<Vec2, 4> quad{};  ///< world corners (already clipped), CCW from insertion
+    std::array<float, 4> uv{};   ///< u0, v0, u1, v1 in image fractions (v down)
+    std::uint16_t def = 0;
+    std::uint32_t def_version = 0;
+    EntityHandle handle;         ///< so pick/highlight can map back
+};
+
 /// A grip handle published for the selected set: its world position plus the
 /// (handle, index) the UI sends back to begin a drag, and its role for colouring.
 struct GripInfo {
@@ -158,6 +173,8 @@ struct RenderSnapshot {
     // hovered, index into `grips`, or -1), and the transient drag preview (the
     // edited entity computed on a temporary store -- the real store is untouched).
     // Interaction state, not part of the checksum.
+    /// Placed raster images (transform + def reference only -- never pixels).
+    std::vector<ImageInstance> images;
     std::vector<GripInfo> grips;
     int hot_grip = -1;
     std::vector<Vec2> grip_preview_segments;
@@ -208,6 +225,7 @@ struct RenderSnapshot {
         current_layer = 0;
         has_pending_dim = false;
         pending_dim_version = 0;
+        images.clear();
         grips.clear();
         hot_grip = -1;
         grip_preview_segments.clear();

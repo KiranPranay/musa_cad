@@ -1856,6 +1856,100 @@ from `tests/fixtures/symbol_sheet.musa`, where every symbol is reached from a **
 single-line TEXT** through `\U+XXXX` — so the sheet proves the escape's new reach as well
 as the glyphs.
 
+## Raster IMAGE entity (issue #10) — model, seam and plot; viewport deferred
+
+A `.musa` could not embed an image, so a logo in a title block or a shaded pictorial had
+to be composited onto the output *after* plotting — meaning it was not part of the
+drawing at all.
+
+**This landed as a deliberate slice: the model, the decoder seam, persistence and the
+plot path. The GPU/viewport path is deferred** (see below), so an image currently
+*plots* but does not yet *display in the viewport*.
+
+### Storage: a definition table, like BLOCKDEF/INSERT
+
+`ImageDef` lives in a table on the store parallel to the layer / dimstyle /
+block-definition tables — `{source, bytes, pixel_w, pixel_h, version}` — and `ImageData`
+entities hold a definition index plus a transform and an optional clip. Ten placements
+of one logo are ten small entities and **one** definition, with one copy of the payload;
+`add_image_def` gets-or-adds by payload identity, the same shape `add_layer`/`add_block`
+use.
+
+The payload is **either** an external path relative to the drawing **or** base64 bytes
+embedded in the file, because the two trade off differently for version control and for
+sharing. The format is line-oriented, so the base64 is **chunked across lines** (76
+characters, the classic length) and reassembled on read; a corrupt payload **fails the
+load** rather than yielding a garbled image.
+
+The clip is stored as **fractions of the image** (0..1, v measured down from the
+top-left), not pixels, so it survives the placement being resized or the definition being
+re-pointed at a different-resolution file.
+
+### Decoding without Qt in core
+
+`IImageDecoder` is declared in core and speaks only our own `DecodedImage` (RGBA8);
+`QtImageDecoder` implements it in the UI layer and is injected via the store. This is
+**precisely the `IFontEngine`/`QtFontEngine` seam** — core stays Qt-free,
+`test_header_hygiene` stays green, and the headless CLI injects the same decoder as the
+GUI. **No image library is vendored**: Qt is already a dependency and decodes
+PNG/JPEG/BMP/GIF, so `stb_image` and friends stay out of the build.
+
+A null decoder is **not an error**: the quad still resolves, so bounds, pick, grips and
+persistence all work with no decoder at all. Only the pixels are unavailable. That is
+asserted directly.
+
+### Pixels never enter the snapshot
+
+The snapshot is copied through the triple buffer on **every publish**, so putting
+megabytes of decoded raster in it would wreck the geometry→render handoff. `ImageInstance`
+carries only the transform, the clip UVs, the definition index and the definition's
+`version` — the version being the cache key that tells a renderer when to re-upload. A
+`static_assert` pins its size, with the comment saying why.
+
+Because images emit no line or fill vertices, their quad corners are folded into the
+snapshot's bounds explicitly — otherwise an image-only drawing would have **no** bounds
+and both ZOOM extents and `--plot --extents` would report nothing to draw.
+
+### One geometry function, as everywhere else
+
+`resolve_image_quad` derives the **clipped** world quad from position, size, rotation and
+clip; `resolve_image_uv` returns the matching source region. Snapshot, entity bounds, the
+kernel's pick (point-in-quad) and grips all read them, so what is drawn, picked and
+bounded cannot diverge.
+
+### External paths are a security boundary
+
+`resolve_image_path` resolves a source against the drawing's directory and **refuses
+anything that escapes it**, plus absolute paths outright. A `.musa` is a document that can
+be mailed around: a relative source of `../../../../etc/passwd` must not be read just
+because a drawing asked for it. The check runs *after* `weakly_canonical`, so it is a
+containment test on the resolved path rather than a string test for `..`.
+
+### Plot
+
+The QPainter route draws each image with its transform and clip, rasterised at the
+**device's** resolution (a 300 DPI PDF gets 300 DPI pixels). Images are drawn **first**, so
+vector geometry always lands on top — an image is a backdrop, and it must never hide a
+dimension. A missing external file omits *that image*, not the plot.
+
+Pixels are supplied at paint time through an `ImageSource`, because the snapshot
+deliberately does not carry them. `make_store_image_source` backs one with the store's
+definition table plus the injected decoder and **caches by definition index**, so plotting
+N placements of one logo decodes once.
+
+### Deferred: the viewport path
+
+`GpuTexture` in the public `render/gpu/` headers with a GL 4.6 DSA implementation
+(`glCreateTextures`/`glTextureStorage2D`/`glTextureSubImage2D`), an image shader pair, and
+a renderer-side texture cache keyed by definition index and invalidated on `version`
+change. Images are few, so a draw call per image is acceptable — but that **raises the
+documented draw-call bound**, which is why it is a deliberate step rather than a
+side-effect. Until it lands the scene bound is unchanged at **4 (6 with aids)**, because
+nothing image-related reaches the GL renderer yet.
+
+DXF `IMAGE`/`IMAGEDEF` + the OBJECTS section is likewise deferred; **nothing is written**,
+stated rather than half-implemented. Both are in `docs/TODO.md`.
+
 ## GD&T: feature control frames + datum feature symbols (issue #8)
 
 The native entity set had no geometric-tolerancing entity, so a frame had to be

@@ -20,6 +20,7 @@
 namespace musacad::core {
 
 class IFontEngine;
+class IImageDecoder;
 
 // ---------------------------------------------------------------------------
 // Per-primitive SoA records. Fixed-size primitives store their data inline;
@@ -209,6 +210,47 @@ struct DatumData {
     DimOverrides overrides{};
 };
 
+/// A raster image DEFINITION, held in a table on the store parallel to the layer /
+/// dimstyle / block-definition tables. N placements of one logo are N small entities
+/// plus ONE definition -- the BLOCKDEF/INSERT shape -- which gives dedup and one place
+/// for the payload.
+///
+/// The payload is either an external `source` path resolved RELATIVE TO THE DRAWING, or
+/// base64 bytes embedded in the file so a .musa stays self-contained. Both are supported
+/// because they trade off differently for version control and for sharing.
+///
+/// `version` bumps whenever the payload changes, so a renderer-side texture cache keyed
+/// by definition index knows when to re-upload. Decoded pixels are NOT stored here.
+struct ImageDef {
+    std::string source;              ///< external path (relative to the drawing) or ""
+    std::vector<std::uint8_t> bytes; ///< embedded ENCODED bytes (PNG/JPEG), or empty
+    std::uint32_t pixel_w = 0;       ///< as decoded; 0 until the decoder has run
+    std::uint32_t pixel_h = 0;
+    std::uint32_t version = 1;       ///< bumped on payload change (texture-cache key)
+    friend bool operator==(const ImageDef&, const ImageDef&) = default;
+};
+
+/// A placed raster image: a definition index plus a transform and an optional clip.
+/// Its quad is DERIVED from these by resolve_image_quad -- never baked -- so the same
+/// rule the rest of the model follows applies here too.
+///
+/// `clip_*` are FRACTIONS of the image (0..1, u right, v down from the top-left), so a
+/// clip survives the image being resized or its definition being re-pointed at a
+/// different-resolution file.
+struct ImageData {
+    std::uint16_t def = 0;   ///< index into the image-definition table
+    Vec2 pos;                ///< insertion point (bottom-left corner of the quad)
+    double width = 1.0;      ///< drawing units
+    double height = 1.0;     ///< drawing units
+    double rotation = 0.0;   ///< radians, CCW about `pos`
+    bool clipped = false;
+    double clip_u0 = 0.0;    ///< clip rectangle in image fractions
+    double clip_v0 = 0.0;
+    double clip_u1 = 1.0;
+    double clip_v1 = 1.0;
+    EntityProps props{};
+};
+
 // ---------------------------------------------------------------------------
 // Blocks. A block DEFINITION is a named, self-contained collection of geometry
 // (kept in the block-definition table, parallel to the layer table -- NOT in the
@@ -322,6 +364,9 @@ public:
     EntityHandle add_datum(std::string_view letter, Vec2 tip, Vec2 pos, double rotation,
                            std::uint16_t style, EntityProps props = {},
                            DimOverrides overrides = {});
+    /// A placed raster image referencing `def` in the image-definition table.
+    EntityHandle add_image(std::uint16_t def, Vec2 pos, double width, double height,
+                           double rotation, EntityProps props = {});
     /// A model-space block reference into the block-definition table.
     EntityHandle add_insert(std::uint16_t block, Vec2 pos, double scale_x, double scale_y,
                             double rotation, EntityProps props = {});
@@ -351,6 +396,10 @@ public:
     [[nodiscard]] const HatchData* hatch(EntityHandle h) const noexcept;
     [[nodiscard]] const FcfData* fcf(EntityHandle h) const noexcept;
     [[nodiscard]] const DatumData* datum(EntityHandle h) const noexcept;
+    [[nodiscard]] const ImageData* image(EntityHandle h) const noexcept;
+    /// Mutable access for the create path only (the clip fields are set right after
+    /// insertion); everything else reads through the const accessor.
+    [[nodiscard]] ImageData* mutable_image(EntityHandle h) noexcept;
     /// The string content of a text entity.
     [[nodiscard]] std::string_view string_of(const TextData& t) const noexcept;
     [[nodiscard]] std::string_view string_of(const LeaderData& l) const noexcept;
@@ -401,6 +450,7 @@ public:
     [[nodiscard]] const GenerationalArena<HatchData>& hatches() const noexcept { return hatches_; }
     [[nodiscard]] const GenerationalArena<FcfData>& fcfs() const noexcept { return fcfs_; }
     [[nodiscard]] const GenerationalArena<DatumData>& datums() const noexcept { return datums_; }
+    [[nodiscard]] const GenerationalArena<ImageData>& images() const noexcept { return images_; }
 
     // --- block-definition table (parallel to the layer table) ---------------
     // Definitions are referenced by INSERTs by index. Few in number; a vector is
@@ -438,6 +488,22 @@ public:
     bool set_dimstyle(std::uint16_t index, const DimStyle& style);
     /// Replaces the dimstyle table (Open/Import); ensures "Standard" at index 0.
     void set_dimstyle_table(std::vector<DimStyle> styles);
+
+    // --- image-definition table (parallel to the layer / dimstyle tables) ---
+    [[nodiscard]] const std::vector<ImageDef>& image_defs() const noexcept { return image_defs_; }
+    [[nodiscard]] const ImageDef* image_def(std::uint16_t i) const noexcept {
+        return i < image_defs_.size() ? &image_defs_[i] : nullptr;
+    }
+    /// Get-or-add by source path (the add_layer/add_dimstyle/add_block shape), so a
+    /// drawing that places one logo ten times holds one definition.
+    std::uint16_t add_image_def(const ImageDef& def);
+    void set_image_def_table(std::vector<ImageDef> defs);
+
+    /// The injected raster decoder (IImageDecoder), or null. Null is not an error: the
+    /// image's QUAD still resolves, so bounds, pick and grips work headlessly with no
+    /// decoder at all -- only the pixels are unavailable.
+    void set_image_decoder(const IImageDecoder* d) noexcept { image_decoder_ = d; }
+    [[nodiscard]] const IImageDecoder* image_decoder() const noexcept { return image_decoder_; }
 
     // --- vertex pools -------------------------------------------------------
     [[nodiscard]] std::span<const Vec2> polyline_vertices() const noexcept {
@@ -547,6 +613,9 @@ private:
     GenerationalArena<HatchData> hatches_;
     GenerationalArena<FcfData> fcfs_;
     GenerationalArena<DatumData> datums_;
+    GenerationalArena<ImageData> images_;
+    std::vector<ImageDef> image_defs_;                     // parallel to the layer table
+    const IImageDecoder* image_decoder_ = nullptr;         // non-owning; injected service
     std::vector<FcfCell> fcf_cell_pool_; ///< shared, like the polyline vertex pool
 
     std::vector<Vec2> polyline_pool_;

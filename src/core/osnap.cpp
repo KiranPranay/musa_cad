@@ -210,6 +210,7 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
         case EntityKind::Hatch:
         case EntityKind::Fcf:
         case EntityKind::Datum:
+        case EntityKind::Image:
             break; // no object-snap points (nearest, if any, handled below)
         }
 

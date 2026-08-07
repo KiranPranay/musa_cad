@@ -6,7 +6,9 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <memory>
 #include <string_view>
+#include <vector>
 
 #include "musacad/core/math/vec2.hpp"
 #include "musacad/core/page_setup.hpp"
@@ -16,9 +18,13 @@ class QPaintDevice;
 
 namespace musacad::core {
 struct RenderSnapshot;
+class GeometryStore;
+class IImageDecoder;
 }
 
 namespace musacad::ui {
+
+class ImageSource;
 
 /// A plot configuration (the PLOT dialog's fields). Independent of any Qt device so it
 /// can be persisted (as a core PageSetup) and reused for both PDF and printer targets.
@@ -62,7 +68,20 @@ struct PlotSpec {
 /// (QPdfWriter) and printer (QPrinter) targets call this -- only the device differs. The
 /// caller configures the device's page size/orientation/resolution first.
 void paint_plot(QPaintDevice& device, const core::RenderSnapshot& snap, const PlotSpec& spec,
-                core::Vec2 amin, core::Vec2 amax);
+                core::Vec2 amin, core::Vec2 amax, const ImageSource* images = nullptr);
+
+/// Supplies decoded pixels for the snapshot's ImageInstances at paint time. The snapshot
+/// deliberately carries only transforms (it is copied through the triple buffer on every
+/// publish), so whoever paints it provides the raster. Returning false simply omits that
+/// image -- a missing external file must not abort a plot of the rest of the drawing.
+class ImageSource {
+public:
+    virtual ~ImageSource() = default;
+    /// Fill `rgba` (width*height*4, top row first) for image definition `def`.
+    [[nodiscard]] virtual bool pixels(std::uint16_t def, std::uint32_t& width,
+                                      std::uint32_t& height,
+                                      std::vector<std::uint8_t>& rgba) const = 0;
+};
 
 /// Convert between the UI PlotSpec and the persisted core::PageSetup (one model, two
 /// faces). The copies field is UI-only (not saved) and the printer target is kept as-is.
@@ -104,6 +123,14 @@ struct PaperSize {
 /// Returns false with a reason in `error` if the file could not be written.
 [[nodiscard]] bool write_plot_pdf(const std::string& path, const core::RenderSnapshot& snap,
                                   const PlotSpec& spec, core::Vec2 amin, core::Vec2 amax,
-                                  std::string& error);
+                                  std::string& error, const ImageSource* images = nullptr);
+
+/// An ImageSource backed by the store's image-definition table and an IImageDecoder.
+/// Decodes on first use and caches by definition index, so plotting N placements of one
+/// logo decodes once. `drawing_dir` resolves external sources -- see resolve_image_path,
+/// which refuses anything outside that directory.
+[[nodiscard]] std::unique_ptr<ImageSource> make_store_image_source(
+    const core::GeometryStore& store, const core::IImageDecoder* decoder,
+    std::string_view drawing_dir);
 
 } // namespace musacad::ui

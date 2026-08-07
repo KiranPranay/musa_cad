@@ -8,6 +8,7 @@ add_library(musacad_ui STATIC
     dyn_input.cpp
     dwg_converter.cpp
     qt_font_engine.cpp
+    qt_image_decoder.cpp
     plot.cpp
     plot_dialog.cpp
     ribbon_bar.cpp
