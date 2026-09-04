@@ -27,6 +27,16 @@ parked and *what done looks like*, so it can be picked up cleanly later.
   today. **Done looks like:** a cap (a few MB) above which the writer warns and suggests
   the external-path form.
 
+## Dimensions — chaining (issue #28 partial)
+
+* **DIMDLI (baseline spacing) as a style variable — staged.** DIMBASELINE currently derives
+  its offset as 1.5 x the effective text height, which reproduces AutoCAD's ISO default
+  (3.75 mm at 2.5 mm text) without a format bump. **Done looks like:** a `baseline_spacing`
+  field on `DimStyle` with the usual override bit, and a version bump.
+* **DIMORDINATE / DIMJOGGED / DIMARC — staged.** The cheap half of #28 (the two chaining
+  helpers) is done; these three each need a new `DimType` and a branch in
+  `compute_dim_geometry`, plus native/DXF round-trip.
+
 ## Tables (issue #22 DONE; refinements staged)
 
 * **Cell editing — staged.** A table is placed with empty cells; there is no in-app way to

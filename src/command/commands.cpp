@@ -1603,6 +1603,37 @@ void DimCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// DIMCONTINUE / DIMBASELINE (issue #28)
+// ---------------------------------------------------------------------------
+void ChainDimCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt(baseline_ ? "Specify second extension line origin (baseline), or Enter: "
+                             : "Specify second extension line origin (continue), or Enter: ");
+}
+
+void ChainDimCommand::input(CommandContext& ctx, const std::string& text) {
+    if (trimmed(text).empty()) {
+        done_ = true; // Enter ends the chain, as in AutoCAD
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        // A FRESH undo group per pick, so each chained dimension undoes on its own --
+        // the MATCHPROP target-loop convention.
+        ctx.submit(core::ChainDimensionCommand{*p, baseline_, ctx.new_group()});
+        ctx.set_last_point(*p);
+        // The engine reports success or the honest reason it could not, so the command
+        // does not echo a guess. Keep prompting for the next one.
+        ctx.set_prompt(baseline_ ? "Specify second extension line origin (baseline), or Enter: "
+                                 : "Specify second extension line origin (continue), or Enter: ");
+    }
+}
+
+void ChainDimCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // Inquiry: DIST / ID / AREA / LIST (issue #30)
 // ---------------------------------------------------------------------------
 namespace {

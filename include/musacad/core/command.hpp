@@ -139,6 +139,17 @@ struct MoveSelectionCommand {
     std::uint64_t group = 0;
 };
 
+/// DIMCONTINUE / DIMBASELINE (issue #28). Placement helpers over the EXISTING
+/// Linear/Aligned types rather than new DimTypes: they only decide where the next
+/// dimension's def points and dimension line go, relative to the previous dimension.
+/// `baseline` false = continue the chain from the previous second extension line;
+/// true = stack from the previous FIRST extension line, offset by the baseline spacing.
+struct ChainDimensionCommand {
+    Vec2 at;              ///< the new second extension-line origin
+    bool baseline = false;
+    std::uint64_t group = 0;
+};
+
 /// Inquiry (issue #30). Read-only queries resolved on the geometry thread and reported
 /// through the existing status channel -- the UI never touches the store, and no data
 /// model changes. `AREA` reports area + perimeter of the entity under `at`; `LIST` dumps
@@ -704,6 +715,7 @@ using Command =
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,
                  AddDatumCommand, AddImageCommand, AddTableCommand,
-                 StretchSelectionCommand, AreaQueryCommand, ListQueryCommand>;
+                 StretchSelectionCommand, AreaQueryCommand, ListQueryCommand,
+                 ChainDimensionCommand>;
 
 } // namespace musacad::core

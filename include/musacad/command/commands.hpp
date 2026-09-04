@@ -297,6 +297,23 @@ private:
 /// Inquiry commands (issue #30). DIST and ID answer from the picked points alone, so
 /// they never reach the store; AREA and LIST submit a query the geometry thread resolves
 /// and reports through the status channel.
+/// DIMCONTINUE (DCO) / DIMBASELINE (DBA) -- issue #28. Each pick adds another dimension
+/// chained from the previous one, so the command loops until Esc/Enter, which is how a
+/// row of holes actually gets dimensioned.
+class ChainDimCommand final : public ICommand {
+public:
+    explicit ChainDimCommand(bool baseline) : baseline_(baseline) {}
+    std::string name() const override { return baseline_ ? "DIMBASELINE" : "DIMCONTINUE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool baseline_ = false;
+    bool done_ = false;
+};
+
 class DistCommand final : public ICommand {
 public:
     std::string name() const override { return "DIST"; }
