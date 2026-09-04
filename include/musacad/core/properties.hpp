@@ -79,6 +79,8 @@ struct DimTolerance {
 struct DimTextParts {
     std::string_view prefix;
     std::string_view suffix;
+    /// The text override (issue #20). Empty = derive the label from the measurement.
+    std::string_view text_override;
 };
 
 /// Where a dimension's value is placed when it does not fit between the extension

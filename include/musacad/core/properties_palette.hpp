@@ -56,6 +56,8 @@ enum class PropertyId : std::uint16_t {
     DimPrecision,
     // Text decoration around the measured value (issue #7). The VALUE stays computed
     // from the def points; only these qualify it.
+    DimTextOverride, ///< AutoCAD's text override; `<>` = the measurement (issue #20)
+    DimTextMoved,    ///< read-only: is the label displaced? offers "home text" (issue #21)
     DimPrefix,     ///< raw text before the value ("6X", "%%c")
     DimSuffix,     ///< raw text after the value ("TYP", "MAX", " H7")
     DimTolMode,    ///< TolMode: none / symmetric / limits / basic / reference
@@ -79,6 +81,7 @@ enum class PropEditor : std::uint8_t {
     ReadOnly = 0,    ///< value.text shown as a label
     Number,          ///< value.num, free numeric entry
     Text,            ///< value.text, single-line entry
+    Bool,            ///< value.flag, a checkbox
     TextContentEdit, ///< value.text, opens the (multi-line capable) content editor
     LayerCombo,      ///< value.choice = layer index
     ColorOverride,   ///< value.flag = ByLayer; value.color = override

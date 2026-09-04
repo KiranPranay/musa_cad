@@ -89,6 +89,49 @@ void with_dim_ov(Command& c, const std::function<void(DimOverrides&)>& fn) {
 // Only AddDimensionCommand carries .prefix / .suffix / .tol, so the same
 // requires-expression trick applies: the property "applies to whichever command
 // exposes the member", with no per-type enumeration.
+std::string get_dim_text_override(const Command& c) {
+    std::string s;
+    std::visit(
+        [&](const auto& x) {
+            if constexpr (requires { x.text_override; }) {
+                s = x.text_override;
+            }
+        },
+        c);
+    return s;
+}
+void set_dim_text_override(Command& c, const std::string& v) {
+    std::visit(
+        [&](auto& x) {
+            if constexpr (requires { x.text_override; }) {
+                x.text_override = v;
+            }
+        },
+        c);
+}
+/// Is the label displaced from its derived position (issue #21)?
+bool get_dim_text_moved(const Command& c) {
+    bool moved = false;
+    std::visit(
+        [&](const auto& x) {
+            if constexpr (requires { x.text_offset; }) {
+                moved = x.text_offset.x != 0.0 || x.text_offset.y != 0.0;
+            }
+        },
+        c);
+    return moved;
+}
+/// "Home text": clear the displacement so the label returns to where the geometry
+/// (and the ISO 129-1 fit) puts it. AutoCAD spells this Text Position > Home text.
+void set_dim_text_home(Command& c) {
+    std::visit(
+        [&](auto& x) {
+            if constexpr (requires { x.text_offset; }) {
+                x.text_offset = Vec2{};
+            }
+        },
+        c);
+}
 std::string get_dim_decor_prefix(const Command& c) {
     std::string s;
     std::visit(
@@ -811,6 +854,30 @@ const Desc kDescs[] = {
     // -- Dimension text decoration (issue #7). Unlike the rows above these are NOT
     // ByStyle overrides: prefix/suffix/tolerance are the dimension's own content, so
     // they are plain values with no style to fall back to.
+    // The text OVERRIDE (issue #20). `<>` expands to the measurement, so "<> H7" tracks
+    // the geometry; an override with no `<>` deliberately replaces the value, which the
+    // "Text moved/overridden" row below makes visible rather than silent.
+    {PropertyId::DimTextOverride, "Dimension", "Text override", PropEditor::Text, is_dimension,
+     [](const Command& c) {
+         PropertyValue v;
+         v.text = get_dim_text_override(c);
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) { set_dim_text_override(c, v.text); }},
+    // Label displacement (issue #21). Read as a yes/no; WRITING anything resets it, which
+    // is AutoCAD's "home text" -- there is no useful way to type a displacement, it is a
+    // grip drag, so the row exists to make the state visible and undoable.
+    {PropertyId::DimTextMoved, "Dimension", "Text moved", PropEditor::Bool, is_dimension,
+     [](const Command& c) {
+         PropertyValue v;
+         v.flag = get_dim_text_moved(c);
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         if (!v.flag) {
+             set_dim_text_home(c);
+         }
+     }},
     {PropertyId::DimPrefix, "Dimension", "Text prefix", PropEditor::Text, is_dimension,
      [](const Command& c) {
          PropertyValue v;
@@ -1093,6 +1160,8 @@ MatchSlot match_slot_for(PropertyId id) noexcept {
     // "6X" prefix describes THIS feature, and painting it onto another dimension with
     // MATCHPROP would silently assert something untrue about a different feature. Same
     // reasoning that makes TextContent unmatched. Deliberately MatchSlot::None.
+    case PropertyId::DimTextOverride:
+    case PropertyId::DimTextMoved:
     case PropertyId::DimPrefix:
     case PropertyId::DimSuffix:
     case PropertyId::DimTolMode:

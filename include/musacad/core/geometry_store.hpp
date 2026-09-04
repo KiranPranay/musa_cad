@@ -110,6 +110,21 @@ struct DimData {
     std::uint32_t prefix_len = 0;
     std::uint32_t suffix_offset = 0; ///< suffix string in the shared char pool
     std::uint32_t suffix_len = 0;
+    /// AutoCAD's text OVERRIDE (issue #20), in the shared char pool. Empty = derive the
+    /// label from the measurement. `<>` inside it expands to the measured value, so
+    /// "<> H7" tracks the geometry. The measurement is still computed either way -- an
+    /// override can always be inspected and removed.
+    std::uint32_t override_offset = 0;
+    std::uint32_t override_len = 0;
+    /// Displacement of the label from its DERIVED position (issue #21), in the text's
+    /// own frame: x along the baseline, y along baseline->cap. (0,0) = derived, which is
+    /// what every existing drawing loads as. Stored rather than baked, so the automatic
+    /// ISO 129-1 fit (#12) still runs and the value stays measured.
+    Vec2 text_offset{};
+
+    /// Grip index of the label. Deliberately outside the contiguous def-point/foot range
+    /// so adding grips to any dimension type can never collide with it.
+    static constexpr std::uint32_t kTextGripIndex = 100;
 };
 
 /// A quick leader: an arrowhead at `tip`, a leader line to `knee`, and a text
@@ -340,7 +355,8 @@ public:
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
                                EntityProps props = {}, DimOverrides overrides = {},
                                std::string_view prefix = {}, std::string_view suffix = {},
-                               DimTolerance tol = {});
+                               DimTolerance tol = {}, std::string_view text_override = {},
+                               Vec2 text_offset = {});
     EntityHandle add_leader(Vec2 tip, Vec2 knee, double text_height, std::uint16_t style,
                             std::string_view content, EntityProps props = {},
                             std::uint16_t font = 0, DimOverrides overrides = {});
@@ -409,8 +425,11 @@ public:
     /// Both at once, in the shape compute_dim_geometry takes. Every consumer of a
     /// dimension's geometry goes through this, so none of them can render an
     /// undecorated label by forgetting a parameter.
+    [[nodiscard]] std::string_view dim_override(const DimData& d) const noexcept {
+        return {string_pool_.data() + d.override_offset, d.override_len};
+    }
     [[nodiscard]] DimTextParts dim_text_parts(const DimData& d) const noexcept {
-        return DimTextParts{dim_prefix(d), dim_suffix(d)};
+        return DimTextParts{dim_prefix(d), dim_suffix(d), dim_override(d)};
     }
     /// Content of a paragraph-text block (MTEXT entity or QLEADER label).
     [[nodiscard]] std::string_view string_of(const MTextBlock& b) const noexcept;

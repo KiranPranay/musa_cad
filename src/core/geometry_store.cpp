@@ -74,14 +74,19 @@ EntityHandle GeometryStore::add_text(Vec2 pos, double height, double rotation, s
 EntityHandle GeometryStore::add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt,
                                           std::uint16_t style, EntityProps props,
                                           DimOverrides overrides, std::string_view prefix,
-                                          std::string_view suffix, DimTolerance tol) {
+                                          std::string_view suffix, DimTolerance tol,
+                                          std::string_view text_override, Vec2 text_offset) {
     const auto poff = static_cast<std::uint32_t>(string_pool_.size());
     string_pool_.insert(string_pool_.end(), prefix.begin(), prefix.end());
     const auto soff = static_cast<std::uint32_t>(string_pool_.size());
     string_pool_.insert(string_pool_.end(), suffix.begin(), suffix.end());
+    const auto ooff = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), text_override.begin(), text_override.end());
     const auto slot = dims_.insert(DimData{type, a, b, line_pt, style, props, overrides, tol, poff,
                                            static_cast<std::uint32_t>(prefix.size()), soff,
-                                           static_cast<std::uint32_t>(suffix.size())});
+                                           static_cast<std::uint32_t>(suffix.size()), ooff,
+                                           static_cast<std::uint32_t>(text_override.size()),
+                                           text_offset});
     return EntityHandle{slot.index, slot.generation, EntityKind::Dimension};
 }
 

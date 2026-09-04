@@ -41,6 +41,12 @@ struct DimGeometry {
     double text_rotation = 0.0;
     double text_height = 2.5;
     text::Justify text_justify = text::Justify::Center;
+
+    /// Where the label WOULD sit with no author displacement (issue #21). Meaningful
+    /// only when `text_moved`; it is where the text grip returns to on "home text", and
+    /// where the connector leader starts from.
+    Vec2 derived_text_pos{};
+    bool text_moved = false;
 };
 
 /// The composed, code-expanded label of a dimension: one line, or two when the

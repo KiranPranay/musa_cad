@@ -154,6 +154,48 @@ DimLabel compose_dim_label(const DimData& d, const DimStyle& style, DimTextParts
     const auto wrap = [&](const std::string& core) { return pre + core + suf; };
 
     DimLabel out;
+
+    // ---------------------------------------------------------------------------
+    // Text override (issue #20). AutoCAD's Properties "Text override" field, where
+    // `<>` stands in for the measurement -- so "<> H7" tracks the geometry while
+    // "APPROX 50" does not, and both are the author's explicit choice.
+    //
+    // DECISION: an override produces the WHOLE label. The prefix/suffix and the
+    // deviation-deriving tolerance modes (Symmetric, Limits) are not applied on top,
+    // because an author writing the text themselves is not also asking for text to be
+    // generated around it -- stacking them silently would produce strings nobody typed.
+    // Basic (the box) and Reference (the parentheses) DO still apply: those frame the
+    // label rather than saying anything, and a basic dimension stays basic whatever its
+    // text reads. Rejected: applying every mode on top of the override, which makes
+    // "<> H7" in Limits mode mean something no one can predict.
+    //
+    // The measurement is still computed regardless, so an override can always be
+    // inspected, compared against the geometry, and removed.
+    if (!parts.text_override.empty()) {
+        const std::string raw(parts.text_override);
+        const std::string measured = measured_text(d, style);
+        std::string expanded;
+        expanded.reserve(raw.size() + measured.size());
+        for (std::size_t i = 0; i < raw.size();) {
+            if (raw.compare(i, 2, "<>") == 0) {
+                expanded += measured;
+                i += 2;
+            } else {
+                expanded += raw[i];
+                ++i;
+            }
+        }
+        // Control codes expand through the SAME pass every other text uses, so an
+        // override can carry %%c and \U+XXXX with no dimension-specific handling.
+        out.line1 = text::substitute_text(expanded);
+        if (d.tol.mode == TolMode::Basic) {
+            out.boxed = true;
+        } else if (d.tol.mode == TolMode::Reference) {
+            out.line1 = "(" + out.line1 + ")";
+        }
+        return out;
+    }
+
     switch (d.tol.mode) {
     case TolMode::Symmetric:
         // One line: the value, then the deviation. ISO 129-1 writes a single
@@ -226,6 +268,15 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         const Vec2 ax{cs, sn};  // along the baseline
         const Vec2 ay{-sn, cs}; // baseline -> cap
         const double line_gap = h * 1.5;
+        // Author displacement (issue #21), applied HERE because finish_label is the one
+        // place text_pos becomes final for every dimension type -- so all five get the
+        // grip from a single edit, and the automatic ISO 129-1 fit (#12) still ran above
+        // to choose the derived position this offset is measured from.
+        if (d.text_offset.x != 0.0 || d.text_offset.y != 0.0) {
+            g.derived_text_pos = g.text_pos; // remember where it would have sat
+            g.text_moved = true;
+            g.text_pos = g.text_pos + ax * d.text_offset.x + ay * d.text_offset.y;
+        }
         const double pad = h * 0.4; // ASME draws the frame close around the text
         // A boxed label needs the FRAME, not the text, to clear the dimension line --
         // otherwise the box's lower edge lands exactly on it. Lift before placing the
@@ -254,6 +305,38 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         seg(g.dim_lines, c3, c0);
     };
 
+    /// A displaced label that has left its dimension line gets a connector back to it,
+    /// which is what ISO 129-1 expects when the value is not adjacent to what it
+    /// measures -- otherwise a dragged value is visually orphaned. Drawn only once the
+    /// text has actually cleared the line (a nudge of less than one text height is still
+    /// "next to" it), so small tidying drags stay clean.
+    const auto connect_moved_label = [&]() {
+        if (!g.text_moved) {
+            return;
+        }
+        const double h = g.text_height;
+        if (length(g.text_pos - g.derived_text_pos) < h * 1.5) {
+            return;
+        }
+        const double cs = std::cos(g.text_rotation);
+        const double sn = std::sin(g.text_rotation);
+        const Vec2 ax{cs, sn};
+        const Vec2 ay{-sn, cs};
+        // Land on the label's near baseline corner, so the connector meets the text
+        // rather than stopping in space beside it.
+        const double w = std::max(text::text_width(g.label, h), text::text_width(g.label2, h));
+        const double x0 = g.text_justify == text::Justify::Center  ? -w * 0.5
+                          : g.text_justify == text::Justify::Right ? -w
+                                                                   : 0.0;
+        const Vec2 left = g.text_pos + ax * x0;
+        const Vec2 right = g.text_pos + ax * (x0 + w);
+        const Vec2 land = distance(g.derived_text_pos, left) <= distance(g.derived_text_pos, right)
+                              ? left
+                              : right;
+        seg(g.dim_lines, g.derived_text_pos, land);
+        seg(g.dim_lines, land, land + (land.x >= g.derived_text_pos.x ? ax : ax * -1.0) * (h * 0.6));
+    };
+
     if (d.type == DimType::Radius || d.type == DimType::Diameter) {
         const Vec2 center = d.a;
         const Vec2 edge = d.b;
@@ -271,6 +354,7 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         g.text_rotation = 0.0;
         g.text_justify = text::Justify::Left;
         finish_label();
+        connect_moved_label();
         return g;
     }
 
@@ -310,6 +394,7 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         g.text_pos = {v.x + r * std::cos(am), v.y + r * std::sin(am)};
         g.text_rotation = 0.0;
         finish_label();
+        connect_moved_label();
         return g;
     }
 
@@ -403,6 +488,7 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         g.text_pos = g.text_pos + text_up * (g.text_height * 1.5);
     }
     finish_label();
+    connect_moved_label();
     return g;
 }
 

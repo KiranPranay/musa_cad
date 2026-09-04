@@ -104,6 +104,7 @@ add_executable(musacad_tests
     test_text_entity.cpp
     test_dimension.cpp
     test_dim_fit.cpp
+    test_dim_text_edit.cpp
     test_annotation_persistence.cpp
     test_lineweight.cpp
     test_plot_text_weight.cpp

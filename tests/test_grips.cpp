@@ -40,7 +40,17 @@ TEST_CASE("grips_of exposes the expected grips per entity") {
 
     g.clear();
     grips_of(s, s.add_dimension(DimType::Linear, {0, 0}, {10, 0}, {5, 3}, 0), g);
-    REQUIRE(g.size() == 5); // def a, def b, both dim-line feet, offset midpoint
+    // def a, def b, both dim-line feet, offset midpoint, and the TEXT grip (issue #21).
+    REQUIRE(g.size() == 6);
+    // The text grip uses a sentinel index outside the contiguous range, deliberately, so
+    // the per-type grip sets above can grow without ever colliding with it.
+    bool has_text_grip = false;
+    for (const Grip& gr : g) {
+        if (gr.index == DimData::kTextGripIndex) {
+            has_text_grip = true;
+        }
+    }
+    REQUIRE(has_text_grip);
 }
 
 TEST_CASE("edit_for_grip_drag edits parameters, staying parametric") {
@@ -149,8 +159,9 @@ TEST_CASE("Dimension: a non-centre grip is grabbable; dim-line drag moves it fre
                                       {0, 0}, {10, 0}, {5, 3}, 0, 1});
     REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
     engine.submit(SelectPickCommand{{5, 3}, 2.0, false});
-    // Full grip set: both def points, both dim-line feet, the offset midpoint.
-    REQUIRE(wait_until(engine, [](const auto& s) { return s.grips.size() == 5; }));
+    // Full grip set: both def points, both dim-line feet, the offset midpoint, and the
+    // label's own grip (issue #21).
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.grips.size() == 6; }));
 
     // Grab a dim-line FOOT grip (index 2) -- a non-centre handle.
     GripInfo foot{};

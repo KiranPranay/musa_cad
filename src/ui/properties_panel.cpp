@@ -9,6 +9,7 @@
 
 #include <QColor>
 #include <QColorDialog>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -357,6 +358,23 @@ void PropertiesPanel::rebuild() {
             connect(e, &QComboBox::activated, this, [this, id](int index) {
                 PropertyValue pv;
                 pv.choice = index; // 0 = ByStyle
+                emit_edit(id, pv);
+            });
+            current_form->addRow(label, e);
+            break;
+        }
+        case PropEditor::Bool: {
+            auto* e = new QCheckBox();
+            e->setTristate(false);
+            if (varies) {
+                e->setTristate(true);
+                e->setCheckState(Qt::PartiallyChecked);
+            } else {
+                e->setChecked(f.value.flag);
+            }
+            connect(e, &QCheckBox::clicked, this, [this, id](bool on) {
+                PropertyValue pv;
+                pv.flag = on;
                 emit_edit(id, pv);
             });
             current_form->addRow(label, e);
