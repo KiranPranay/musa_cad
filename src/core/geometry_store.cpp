@@ -159,6 +159,84 @@ void GeometryStore::set_image_def_table(std::vector<ImageDef> defs) {
     image_defs_ = std::move(defs);
 }
 
+EntityHandle GeometryStore::add_table(std::uint16_t rows, std::uint16_t cols,
+                                     const std::vector<TableCell>& cells,
+                                     const std::vector<double>& col_widths,
+                                     const std::vector<double>& row_heights, Vec2 pos,
+                                     double rotation, std::uint16_t style, bool has_title,
+                                     bool has_header, EntityProps props) {
+    // Cells and sizes are variable-length, so they live in shared pools as (offset,count)
+    // views -- the polyline/spline/FCF pattern. Cell TEXT is already in the char pool.
+    const auto cell_offset = static_cast<std::uint32_t>(table_cell_pool_.size());
+    table_cell_pool_.insert(table_cell_pool_.end(), cells.begin(), cells.end());
+    const auto size_offset = static_cast<std::uint32_t>(table_size_pool_.size());
+    table_size_pool_.insert(table_size_pool_.end(), col_widths.begin(), col_widths.end());
+    table_size_pool_.insert(table_size_pool_.end(), row_heights.begin(), row_heights.end());
+    TableData t;
+    t.cell_offset = cell_offset;
+    t.size_offset = size_offset;
+    t.rows = rows;
+    t.cols = cols;
+    t.has_title = has_title;
+    t.has_header = has_header;
+    t.pos = pos;
+    t.rotation = rotation;
+    t.style = style;
+    t.props = props;
+    const auto slot = tables_.insert(t);
+    return EntityHandle{slot.index, slot.generation, EntityKind::Table};
+}
+
+std::uint16_t GeometryStore::add_table_style(const TableStyle& st) {
+    for (std::size_t i = 0; i < table_styles_.size(); ++i) {
+        if (table_styles_[i].name == st.name) {
+            return static_cast<std::uint16_t>(i);
+        }
+    }
+    table_styles_.push_back(st);
+    return static_cast<std::uint16_t>(table_styles_.size() - 1);
+}
+
+void GeometryStore::set_table_style_table(std::vector<TableStyle> styles) {
+    table_styles_ = std::move(styles);
+    if (table_styles_.empty()) {
+        table_styles_.push_back(TableStyle{"Standard"});
+    }
+}
+
+std::span<const TableCell> GeometryStore::table_cells(const TableData& t) const noexcept {
+    return {table_cell_pool_.data() + t.cell_offset,
+            static_cast<std::size_t>(t.rows) * t.cols};
+}
+
+std::span<const double> GeometryStore::table_col_widths(const TableData& t) const noexcept {
+    return {table_size_pool_.data() + t.size_offset, t.cols};
+}
+
+std::span<const double> GeometryStore::table_row_heights(const TableData& t) const noexcept {
+    return {table_size_pool_.data() + t.size_offset + t.cols, t.rows};
+}
+
+std::uint32_t GeometryStore::intern_string(std::string_view s) {
+    const auto off = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), s.begin(), s.end());
+    return off;
+}
+
+std::string_view GeometryStore::string_of(const TableCell& c) const noexcept {
+    return {string_pool_.data() + c.str_offset, c.str_len};
+}
+
+std::vector<TableCellView> GeometryStore::table_cell_views(const TableData& t) const {
+    std::vector<TableCellView> out;
+    const std::span<const TableCell> cells = table_cells(t);
+    out.reserve(cells.size());
+    for (const TableCell& c : cells) {
+        out.push_back(TableCellView{string_of(c), c.span_cols, c.span_rows, c.align});
+    }
+    return out;
+}
+
 EntityHandle GeometryStore::add_mtext(const MTextBlock& block, std::string_view content,
                                       EntityProps props) {
     MTextBlock b = block;
@@ -247,6 +325,8 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return datums_.erase(h.index, h.generation);
     case EntityKind::Image:
         return images_.erase(h.index, h.generation);
+    case EntityKind::Table:
+        return tables_.erase(h.index, h.generation);
     }
     return false;
 }
@@ -285,6 +365,8 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return datums_.is_valid(h.index, h.generation);
     case EntityKind::Image:
         return images_.is_valid(h.index, h.generation);
+    case EntityKind::Table:
+        return tables_.is_valid(h.index, h.generation);
     }
     return false;
 }
@@ -295,7 +377,7 @@ std::size_t GeometryStore::live_count() const noexcept {
            texts_.live_count() + dims_.live_count() + leaders_.live_count() +
            mtexts_.live_count() + mleaders_.live_count() + inserts_.live_count() +
            hatches_.live_count() + fcfs_.live_count() + datums_.live_count() +
-           images_.live_count();
+           images_.live_count() + tables_.live_count();
 }
 
 void GeometryStore::clear() noexcept {
@@ -316,6 +398,9 @@ void GeometryStore::clear() noexcept {
     datums_.clear();
     images_.clear();
     image_defs_.clear();
+    tables_.clear();
+    table_cell_pool_.clear();
+    table_size_pool_.clear();
     fcf_cell_pool_.clear();
     polyline_pool_.clear();
     bulge_pool_.clear();
@@ -386,6 +471,10 @@ ImageData* GeometryStore::mutable_image(EntityHandle h) noexcept {
 
 const ImageData* GeometryStore::image(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Image ? images_.get(h.index, h.generation) : nullptr;
+}
+
+const TableData* GeometryStore::table(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Table ? tables_.get(h.index, h.generation) : nullptr;
 }
 std::string_view GeometryStore::string_of(const TextData& t) const noexcept {
     return std::string_view(string_pool_.data() + t.str_offset, t.str_len);
@@ -573,6 +662,11 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::Table:
+        if (const TableData* d = table(h)) {
+            return &d->props;
+        }
+        break;
     }
     return nullptr;
 }
@@ -671,6 +765,12 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
         break;
     case EntityKind::Image:
         if (ImageData* d = images_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Table:
+        if (TableData* d = tables_.get(h.index, h.generation)) {
             d->props = p;
             return true;
         }
@@ -801,6 +901,7 @@ bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
     for_each_live_const(fcfs_, check);
     for_each_live_const(datums_, check);
     for_each_live_const(images_, check);
+    for_each_live_const(tables_, check);
     return used;
 }
 
@@ -825,6 +926,7 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
     for_each_live_mut(fcfs_, fix);
     for_each_live_mut(datums_, fix);
     for_each_live_mut(images_, fix);
+    for_each_live_mut(tables_, fix);
 }
 
 bool GeometryStore::remove_layer(std::uint16_t index) {

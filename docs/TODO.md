@@ -27,6 +27,22 @@ parked and *what done looks like*, so it can be picked up cleanly later.
   today. **Done looks like:** a cap (a few MB) above which the writer warns and suggests
   the external-path form.
 
+## Tables (issue #22 DONE; refinements staged)
+
+* **Cell editing — staged.** A table is placed with empty cells; there is no in-app way to
+  type into one yet (fixtures and the format are the current route in). **Done looks like:**
+  the Ph21 double-click gesture over a cell, reusing `EditTextContentCommand`'s
+  capture→change→recommit shape. `table_cell_at()` already returns the cell index the
+  gesture needs.
+* **Row/column insert + delete — staged.** The grid shape is stored, so inserting a row is
+  a capture→rebuild→recommit like any other edit; there is just no command for it.
+* **DXF `ACAD_TABLE` — staged.** Nothing is written. It is a proxy-heavy entity; exporting
+  the table as its constituent lines + text is probably more useful to most consumers, and
+  is the recommended first step.
+* **Row-height grips — deliberately absent.** Row heights are stored but follow the style's
+  text heights in practice, so only column-boundary grips are published. Revisit if
+  authors ask for per-row heights.
+
 ## GD&T (issue #8 DONE; interop + input surface staged)
 
 * **DXF `TOLERANCE` export/import — staged.** GD&T is currently **native-only**: nothing is

@@ -1603,6 +1603,81 @@ void DimCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// TABLE: rows -> columns -> column width -> row height -> placement
+// ---------------------------------------------------------------------------
+void TableCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    mode_ = Mode::Rows;
+    ctx.set_prompt("Number of rows <4>: ");
+}
+
+void TableCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const auto number = [&](double& into, double min_value) {
+        if (t.empty()) {
+            return; // Enter keeps the default
+        }
+        try {
+            const double v = std::stod(t);
+            if (v >= min_value) {
+                into = v;
+            }
+        } catch (...) {
+        }
+    };
+    switch (mode_) {
+    case Mode::Rows: {
+        double v = rows_;
+        number(v, 1.0);
+        rows_ = static_cast<int>(v);
+        mode_ = Mode::Cols;
+        ctx.set_prompt("Number of columns <3>: ");
+        return;
+    }
+    case Mode::Cols: {
+        double v = cols_;
+        number(v, 1.0);
+        cols_ = static_cast<int>(v);
+        mode_ = Mode::ColWidth;
+        ctx.set_prompt("Column width <40>: ");
+        return;
+    }
+    case Mode::ColWidth:
+        number(col_w_, 1e-6);
+        mode_ = Mode::RowHeight;
+        ctx.set_prompt("Row height <8>: ");
+        return;
+    case Mode::RowHeight:
+        number(row_h_, 1e-6);
+        mode_ = Mode::Place;
+        ctx.set_prompt("Specify insertion point (top-left corner): ");
+        return;
+    case Mode::Place:
+        if (const auto p = read_point(ctx, text)) {
+            core::AddTableCommand cmd;
+            cmd.rows = static_cast<std::uint16_t>(rows_);
+            cmd.cols = static_cast<std::uint16_t>(cols_);
+            cmd.col_widths.assign(static_cast<std::size_t>(cols_), col_w_);
+            cmd.row_heights.assign(static_cast<std::size_t>(rows_), row_h_);
+            const std::size_t n = static_cast<std::size_t>(rows_) * cols_;
+            cmd.cells.assign(n, core::TableCell{});
+            cmd.texts.assign(n, std::string{});
+            cmd.pos = *p;
+            cmd.group = ctx.group_id();
+            ctx.submit(std::move(cmd));
+            ctx.echo("Table placed. Double-click a cell to edit it.");
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void TableCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // TOLERANCE / TOL: cell list -> placement (GD&T feature control frame)
 // ---------------------------------------------------------------------------
 void ToleranceCommand::prompt_cell(CommandContext& ctx) {

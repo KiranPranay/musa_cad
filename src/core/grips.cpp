@@ -10,6 +10,7 @@
 
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/image.hpp"
+#include "musacad/core/table.hpp"
 #include "musacad/core/text/mtext.hpp"
 
 namespace musacad::core {
@@ -143,6 +144,27 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                d->overrides,
                                st != nullptr ? *st : DimStyle{}};
     }
+    case EntityKind::Table: {
+        const TableData* td = store.table(h);
+        AddTableCommand c;
+        c.rows = td->rows;
+        c.cols = td->cols;
+        for (const TableCell& cell : store.table_cells(*td)) {
+            c.cells.push_back(cell);
+            c.texts.emplace_back(store.string_of(cell));
+        }
+        const std::span<const double> cw = store.table_col_widths(*td);
+        const std::span<const double> rh = store.table_row_heights(*td);
+        c.col_widths.assign(cw.begin(), cw.end());
+        c.row_heights.assign(rh.begin(), rh.end());
+        c.pos = td->pos;
+        c.rotation = td->rotation;
+        c.style = td->style;
+        c.has_title = td->has_title;
+        c.has_header = td->has_header;
+        c.props = td->props;
+        return c;
+    }
     case EntityKind::Image: {
         const ImageData* im = store.image(h);
         return AddImageCommand{im->def,     im->pos,     im->width,   im->height,
@@ -206,6 +228,18 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
             } else if constexpr (std::is_same_v<T, AddDatumCommand>) {
                 handle = store.add_datum(c.letter, c.tip, c.pos, c.rotation, c.style,
                                          props_of(c.props), c.overrides);
+            } else if constexpr (std::is_same_v<T, AddTableCommand>) {
+                // The command carries cell TEXT; add_table takes cells whose text is
+                // already pooled, so intern each string first -- the same shape every
+                // other pooled-string command uses.
+                std::vector<TableCell> cells = c.cells;
+                for (std::size_t i = 0; i < cells.size() && i < c.texts.size(); ++i) {
+                    cells[i].str_offset = store.intern_string(c.texts[i]);
+                    cells[i].str_len = static_cast<std::uint32_t>(c.texts[i].size());
+                }
+                handle = store.add_table(c.rows, c.cols, cells, c.col_widths, c.row_heights,
+                                         c.pos, c.rotation, c.style, c.has_title, c.has_header,
+                                         props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddImageCommand>) {
                 handle = store.add_image(c.def, c.pos, c.width, c.height, c.rotation,
                                          props_of(c.props));
@@ -366,6 +400,23 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
         push(out, q[2], GripKind::Vertex, 1);
         break;
     }
+    case EntityKind::Table: {
+        // Insertion point (top-left) moves the table; a grip on each interior column
+        // boundary resizes that column. Row heights follow the style's text height, so
+        // there is nothing useful to drag for them.
+        const TableData* td = store.table(h);
+        push(out, td->pos, GripKind::Move, 0);
+        const std::span<const double> cw = store.table_col_widths(*td);
+        const double cs = std::cos(td->rotation);
+        const double sn = std::sin(td->rotation);
+        double x = 0.0;
+        for (std::size_t i = 0; i + 1 < cw.size(); ++i) {
+            x += cw[i];
+            push(out, Vec2{td->pos.x + x * cs, td->pos.y + x * sn}, GripKind::Vertex,
+                 static_cast<std::uint32_t>(i + 1));
+        }
+        break;
+    }
     case EntityKind::Fcf: {
         // One grip: the insertion point moves the whole frame. The frame's SIZE is
         // derived from the text height, so there is nothing else to drag -- resizing it
@@ -471,6 +522,25 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     x.b = newpos;
                 } else {
                     x.line_pt = newpos; // dim-line offset / placement
+                }
+            } else if constexpr (std::is_same_v<T, AddTableCommand>) {
+                if (grip_index == 0) {
+                    x.pos = newpos;
+                } else if (grip_index <= x.col_widths.size()) {
+                    // Column-boundary grip: set that column's width from the drag, in the
+                    // table's own frame so a rotated table resizes along its own axis.
+                    const double cs = std::cos(x.rotation);
+                    const double sn = std::sin(x.rotation);
+                    const Vec2 d = newpos - x.pos;
+                    const double along = d.x * cs + d.y * sn;
+                    double before = 0.0;
+                    for (std::size_t i = 0; i + 1 < grip_index; ++i) {
+                        before += x.col_widths[i];
+                    }
+                    const double w = along - before;
+                    if (w > 1e-6) {
+                        x.col_widths[grip_index - 1] = w;
+                    }
                 }
             } else if constexpr (std::is_same_v<T, AddImageCommand>) {
                 if (grip_index == 0) {

@@ -5,6 +5,7 @@
 
 #include "musacad/core/gdt.hpp"
 #include "musacad/core/image.hpp"
+#include "musacad/core/table.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -434,6 +435,17 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         out = g.lines;
         break;
     }
+    case EntityKind::Table: {
+        // The drawn border + grid, straight from the shared geometry function, so hover
+        // and window-select highlight exactly what the snapshot drew.
+        const TableData* td = store.table(entity);
+        const TableStyle* st = store.table_style(td->style);
+        out = compute_table_geometry(*td, store.table_cell_views(*td),
+                                     store.table_col_widths(*td), store.table_row_heights(*td),
+                                     st != nullptr ? *st : TableStyle{}, Rgb{})
+                  .lines;
+        break;
+    }
     case EntityKind::Image: {
         // The placed quad as a closed strip -- hover/selection highlight outlines
         // exactly the region that is drawn.
@@ -632,6 +644,21 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         const DatumGeometry g = compute_datum_geometry(*dd, store.string_of(*dd),
                                                        st != nullptr ? *st : DimStyle{}, Rgb{});
         if (point_in_quad(g.box, query)) {
+            out_point = query;
+            return true;
+        }
+        return nearest_on_segments(g.lines, query, out_point);
+    }
+    case EntityKind::Table: {
+        // A click in ANY cell picks the table, so it reads as one object -- the point of
+        // making it an entity instead of hand-drawn line work. Otherwise the nearest
+        // grid line, so the borders are grabbable too.
+        const TableData* td = store.table(entity);
+        const TableStyle* st = store.table_style(td->style);
+        const TableGeometry g = compute_table_geometry(
+            *td, store.table_cell_views(*td), store.table_col_widths(*td),
+            store.table_row_heights(*td), st != nullptr ? *st : TableStyle{}, Rgb{});
+        if (table_cell_at(g, query) >= 0) {
             out_point = query;
             return true;
         }
@@ -906,6 +933,7 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::Fcf:    // ... nor GD&T annotation
     case EntityKind::Datum:
     case EntityKind::Image:  // ... nor a raster image
+    case EntityKind::Table:  // ... nor a table
         break;
     }
     return false;

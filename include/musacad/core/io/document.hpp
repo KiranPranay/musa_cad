@@ -11,6 +11,7 @@
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
+#include "musacad/core/table_types.hpp"
 
 namespace musacad::core {
 class GeometryStore;
@@ -43,6 +44,10 @@ namespace musacad::core::io {
 /// gains text_fit BEFORE its name (the name absorbs the rest of the line, so a trailing
 /// field would be ambiguous) and is read by version, not token count. v1-v15 files load
 /// with text_fit = Auto, which is the default -- so older drawings simply stop colliding.
+/// v20: TABLE entities + the TABLESTYLE table. A TABLE record carries the grid shape and
+/// the column/row sizes, then one line per cell (`span_cols span_rows align` followed by
+/// the raw text on the next line, since it may contain spaces). Older files simply have
+/// no TABLESTYLE/TABLE records.
 /// v19: dimension text override + text offset -- two trailing fields on the DIM record
 /// (the offset) plus a third content line (the raw override, which may contain spaces).
 /// Detected by token count; v1-v18 dimensions load with no override and a zero offset,
@@ -53,7 +58,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 19;
+inline constexpr std::uint32_t kFormatVersion = 20;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -221,6 +226,31 @@ struct DocDatum {
     friend bool operator==(const DocDatum&, const DocDatum&) = default;
 };
 
+/// A table cell in the serializable IR: content inline (pool-free).
+struct DocTableCell {
+    std::string text;
+    std::uint16_t span_cols = 1;
+    std::uint16_t span_rows = 1;
+    std::uint8_t align = 1;
+    friend bool operator==(const DocTableCell&, const DocTableCell&) = default;
+};
+
+/// A TABLE in the serializable IR.
+struct DocTable {
+    std::uint16_t rows = 0;
+    std::uint16_t cols = 0;
+    bool has_title = false;
+    bool has_header = false;
+    Vec2 pos;
+    double rotation = 0.0;
+    std::uint16_t style = 0;
+    std::vector<double> col_widths;
+    std::vector<double> row_heights;
+    std::vector<DocTableCell> cells; ///< row-major, rows*cols
+    EntityProps props{};
+    friend bool operator==(const DocTable&, const DocTable&) = default;
+};
+
 /// A raster image definition in the serializable IR (the payload lives here, once).
 struct DocImageDef {
     std::string source;
@@ -273,6 +303,8 @@ struct Document {
     std::vector<DocFcf> fcfs;             ///< GD&T feature control frames (v17)
     std::vector<DocDatum> datums;         ///< GD&T datum feature symbols (v17)
     std::vector<DocImage> images;         ///< placed raster images (v18)
+    std::vector<DocTable> tables;         ///< tables (v20)
+    std::vector<TableStyle> table_styles; ///< table-style table (not in entity_count)
     std::vector<DocImageDef> image_defs;  ///< image-definition table (not in entity_count)
     std::vector<DocInsert> inserts;        ///< model-space block references
     std::vector<DocBlockDef> block_defs;   ///< block-definition table (not in entity_count)
@@ -281,7 +313,7 @@ struct Document {
         return points.size() + lines.size() + circles.size() + arcs.size() + polylines.size() +
                splines.size() + texts.size() + dims.size() + leaders.size() + mtexts.size() +
                mleaders.size() + hatches.size() + inserts.size() + fcfs.size() + datums.size() +
-               images.size();
+               images.size() + tables.size();
     }
     [[nodiscard]] bool empty() const noexcept { return entity_count() == 0; }
 

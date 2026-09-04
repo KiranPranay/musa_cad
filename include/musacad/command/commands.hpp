@@ -287,6 +287,27 @@ private:
     core::Vec2 tip_{};
 };
 
+/// TABLE / TB -- insert a table (issue #22). Command-line Q&A: rows, columns, column
+/// width, row height, then a placement pick. Cells start empty; they are filled by
+/// editing, which keeps the command a placement tool rather than a data-entry form.
+class TableCommand final : public ICommand {
+public:
+    std::string name() const override { return "TABLE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class Mode { Rows, Cols, ColWidth, RowHeight, Place };
+    bool done_ = false;
+    Mode mode_ = Mode::Rows;
+    int rows_ = 4;
+    int cols_ = 3;
+    double col_w_ = 40.0;
+    double row_h_ = 8.0;
+};
+
 class TrimCommand final : public ICommand {
 public:
     std::string name() const override { return "TRIM"; }

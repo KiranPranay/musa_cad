@@ -27,6 +27,7 @@ enum class EntityKind : std::uint16_t {
     Fcf,   ///< GD&T feature control frame
     Datum, ///< GD&T datum feature symbol
     Image, ///< placed raster image
+    Table, ///< a grid of text cells (BOM, revision block, parts list)
 };
 
 /// Coarse classification of an EntityKind, used by MATCHPROP to decide when
@@ -71,6 +72,10 @@ enum class EntityFamily : std::uint8_t {
     // clip describe THIS placement), so it sits with the other reference-like kinds --
     // the same call INSERT made -- and only the universal properties travel.
     case EntityKind::Image:
+    // A table's type-specific state is its CONTENT (cells, sizes), which MATCHPROP must
+    // never copy -- the same reasoning that leaves TextContent unmatched. So it sits with
+    // the reference-like kinds and only universal properties travel.
+    case EntityKind::Table:
         return EntityFamily::Insert;
     case EntityKind::Point:
     case EntityKind::Line:

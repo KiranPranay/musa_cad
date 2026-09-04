@@ -159,6 +159,33 @@ Document document_from_store(const GeometryStore& store) {
                                           d.style, d.props, d.overrides});
         }
     }
+    for (const TableStyle& ts : store.table_styles()) {
+        doc.table_styles.push_back(ts);
+    }
+    const auto& table_arena = store.tables();
+    for (std::uint32_t i = 0; i < table_arena.slot_count(); ++i) {
+        if (table_arena.alive(i)) {
+            const TableData& t = table_arena.data()[i];
+            DocTable dt;
+            dt.rows = t.rows;
+            dt.cols = t.cols;
+            dt.has_title = t.has_title;
+            dt.has_header = t.has_header;
+            dt.pos = t.pos;
+            dt.rotation = t.rotation;
+            dt.style = t.style;
+            dt.props = t.props;
+            const std::span<const double> cw = store.table_col_widths(t);
+            const std::span<const double> rh = store.table_row_heights(t);
+            dt.col_widths.assign(cw.begin(), cw.end());
+            dt.row_heights.assign(rh.begin(), rh.end());
+            for (const TableCell& c : store.table_cells(t)) {
+                dt.cells.push_back(DocTableCell{std::string(store.string_of(c)), c.span_cols,
+                                                c.span_rows, c.align});
+            }
+            doc.tables.push_back(std::move(dt));
+        }
+    }
     for (const ImageDef& d : store.image_defs()) {
         doc.image_defs.push_back(DocImageDef{d.source, d.bytes, d.pixel_w, d.pixel_h});
     }
@@ -312,6 +339,24 @@ void populate_store(GeometryStore& store, const Document& doc) {
             d->clip_u1 = im.clip_u1;
             d->clip_v1 = im.clip_v1;
         }
+    }
+    if (!doc.table_styles.empty()) {
+        store.set_table_style_table(doc.table_styles);
+    }
+    for (const DocTable& t : doc.tables) {
+        std::vector<TableCell> cells;
+        cells.reserve(t.cells.size());
+        for (const DocTableCell& c : t.cells) {
+            TableCell tc;
+            tc.str_offset = store.intern_string(c.text);
+            tc.str_len = static_cast<std::uint32_t>(c.text.size());
+            tc.span_cols = c.span_cols;
+            tc.span_rows = c.span_rows;
+            tc.align = c.align;
+            cells.push_back(tc);
+        }
+        store.add_table(t.rows, t.cols, cells, t.col_widths, t.row_heights, t.pos, t.rotation,
+                        t.style, t.has_title, t.has_header, t.props);
     }
     for (const DocFcf& f : doc.fcfs) {
         store.add_fcf(f.cells, f.pos, f.rotation, f.style, f.props, f.overrides);

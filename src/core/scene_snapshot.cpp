@@ -14,6 +14,7 @@
 #include "musacad/core/font_engine.hpp"
 #include "musacad/core/gdt.hpp"
 #include "musacad/core/image.hpp"
+#include "musacad/core/table.hpp"
 #include "musacad/core/hatch.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/linetype.hpp"
@@ -267,6 +268,30 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
                                        g.text_justify, tseg);
         }
         add_lines(g.text_color, g.lineweight, tseg, /*is_text=*/true, g.text_height);
+    });
+
+    // TABLE: borders/grid into the line batches, cell text through the same stroke-font
+    // emission every other entity uses. All derived here, never baked.
+    for_each_live(store.tables(), EntityKind::Table, [&](EntityHandle h) {
+        const TableData* td = store.table(h);
+        if (!visible(store, td->props)) {
+            return;
+        }
+        const Rgb base = entity_resolved(store, td->props).color;
+        const TableStyle* st = store.table_style(td->style);
+        const TableGeometry g = compute_table_geometry(
+            *td, store.table_cell_views(*td), store.table_col_widths(*td),
+            store.table_row_heights(*td), st != nullptr ? *st : TableStyle{}, base);
+        add_lines(g.line_color, g.lineweight, g.lines);
+        for (std::size_t i = 0; i < g.cell_text.size(); ++i) {
+            if (g.cell_text[i].empty()) {
+                continue;
+            }
+            tseg.clear();
+            text::append_text_segments(g.cell_text[i], g.text_pos[i], g.text_height[i],
+                                       g.rotation, text::Justify::Left, tseg);
+            add_lines(g.text_color, g.lineweight, tseg, /*is_text=*/true, g.text_height[i]);
+        }
     });
 
     // Raster images: publish the TRANSFORM only. Decoded pixels never enter the
