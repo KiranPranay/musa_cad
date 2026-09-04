@@ -17,6 +17,11 @@
 
 namespace musacad::core {
 
+/// A human-readable name for an entity kind ("Line", "Feature control frame", ...).
+/// THE naming table -- the Properties palette's header and the LIST inquiry command both
+/// read it, so an entity cannot be called two different things in two places.
+[[nodiscard]] const char* kind_name(EntityKind k) noexcept;
+
 /// The EntityKind a captured Add*Command represents.
 [[nodiscard]] EntityKind kind_of(const Command& c) noexcept;
 

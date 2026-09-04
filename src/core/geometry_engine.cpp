@@ -3,6 +3,9 @@
 
 #include "musacad/core/geometry_engine.hpp"
 
+#include "musacad/core/dimension.hpp"
+#include "musacad/core/properties_registry.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -725,6 +728,136 @@ void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
     }
     redo_.clear();
     geom_dirty_ = true;
+}
+
+namespace {
+/// Shortest human-readable form of a number for an inquiry report: enough precision to
+/// be useful, no trailing noise.
+std::string num(double v) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.4g", v);
+    return std::string(buf);
+}
+/// Signed area of a closed point list (the shoelace formula); the sign encodes winding,
+/// which callers do not need, so they take the absolute value.
+double shoelace(const std::vector<Vec2>& p) {
+    double a = 0.0;
+    for (std::size_t i = 0; i < p.size(); ++i) {
+        const Vec2& u = p[i];
+        const Vec2& v = p[(i + 1) % p.size()];
+        a += u.x * v.y - v.x * u.y;
+    }
+    return a * 0.5;
+}
+double path_length(const std::vector<Vec2>& p, bool closed) {
+    double L = 0.0;
+    for (std::size_t i = 1; i < p.size(); ++i) {
+        L += distance(p[i - 1], p[i]);
+    }
+    if (closed && p.size() > 2) {
+        L += distance(p.back(), p.front());
+    }
+    return L;
+}
+} // namespace
+
+void GeometryEngine::apply_area_query(Vec2 at, double radius) {
+    const EntityHandle h = pick_nearest(at, radius);
+    if (!store_.is_valid(h)) {
+        report("AREA: no object found at that point.");
+        return;
+    }
+    // Circles and arcs have exact closed forms; everything else is measured from the
+    // SAME tessellation the renderer draws, so the reported area matches what is on
+    // screen rather than an independent approximation.
+    if (h.kind == EntityKind::Circle) {
+        const CircleData* c = store_.circle(h);
+        const double r = c->radius;
+        report("Area = " + num(kPi * r * r) + ",  Circumference = " + num(kTwoPi * r));
+        return;
+    }
+    std::vector<Vec2> pts;
+    kernel_.tessellate(store_, h, kDefaultTessTolerance, pts);
+    if (pts.size() < 2) {
+        report("AREA: that object has no measurable extent.");
+        return;
+    }
+    bool closed = distance(pts.front(), pts.back()) < 1e-9;
+    if (h.kind == EntityKind::Polyline) {
+        const PolylineData* pl = store_.polyline(h);
+        closed = closed || pl->closed;
+    }
+    if (closed) {
+        report("Area = " + num(std::abs(shoelace(pts))) + ",  Perimeter = " +
+               num(path_length(pts, true)));
+    } else {
+        // An open path has no area; saying so is better than reporting the area of the
+        // polygon you would get by closing it, which is what the number would mean.
+        report("Length = " + num(path_length(pts, false)) + "  (open object -- no area)");
+    }
+}
+
+void GeometryEngine::apply_list_query(Vec2 at, double radius) {
+    const EntityHandle h = pick_nearest(at, radius);
+    if (!store_.is_valid(h)) {
+        report("LIST: no object found at that point.");
+        return;
+    }
+    const EntityProps* pr = store_.props(h);
+    const std::string layer =
+        pr != nullptr && pr->layer < store_.layers().size() ? store_.layers()[pr->layer].name : "?";
+    std::string out = std::string(kind_name(h.kind)) + "  on layer \"" + layer + "\"";
+    switch (h.kind) {
+    case EntityKind::Line: {
+        const LineData* l = store_.line(h);
+        out += ",  from (" + num(l->a.x) + "," + num(l->a.y) + ") to (" + num(l->b.x) + "," +
+               num(l->b.y) + "),  length " + num(distance(l->a, l->b));
+        break;
+    }
+    case EntityKind::Circle: {
+        const CircleData* c = store_.circle(h);
+        out += ",  centre (" + num(c->center.x) + "," + num(c->center.y) + "),  radius " +
+               num(c->radius);
+        break;
+    }
+    case EntityKind::Arc: {
+        const ArcData* a = store_.arc(h);
+        out += ",  centre (" + num(a->center.x) + "," + num(a->center.y) + "),  radius " +
+               num(a->radius) + ",  from " + num(to_degrees(a->start_angle)) + "\u00B0 to " +
+               num(to_degrees(a->end_angle)) + "\u00B0";
+        break;
+    }
+    case EntityKind::Polyline: {
+        const PolylineData* p = store_.polyline(h);
+        out += ",  " + std::to_string(p->count) + " vertices,  " +
+               (p->closed ? "closed" : "open");
+        break;
+    }
+    case EntityKind::Text: {
+        const TextData* t = store_.text(h);
+        out += ",  height " + num(t->height) + ",  \"" + std::string(store_.string_of(*t)) + "\"";
+        break;
+    }
+    case EntityKind::Dimension: {
+        const DimData* d = store_.dimension(h);
+        // Report the MEASURED value -- the whole point of the entity is that this is
+        // computed from the def points and cannot have been authored.
+        out += ",  measures " + num(dim_measure(*d));
+        if (!store_.dim_override(*d).empty()) {
+            out += ",  text override \"" + std::string(store_.dim_override(*d)) + "\"";
+        }
+        break;
+    }
+    case EntityKind::Table: {
+        const TableData* t = store_.table(h);
+        out += ",  " + std::to_string(t->rows) + " rows x " + std::to_string(t->cols) +
+               " columns";
+        break;
+    }
+    default:
+        break;
+    }
+    report(out);
 }
 
 void GeometryEngine::apply_stretch(Vec2 mn, Vec2 mx, Vec2 delta, std::uint64_t group) {
@@ -2439,6 +2572,10 @@ void GeometryEngine::apply(const Command& command) {
                 selection_ = all_live();
             } else if constexpr (std::is_same_v<T, ClearSelectionCommand>) {
                 selection_.clear();
+            } else if constexpr (std::is_same_v<T, AreaQueryCommand>) {
+                apply_area_query(c.at, c.pick_radius);
+            } else if constexpr (std::is_same_v<T, ListQueryCommand>) {
+                apply_list_query(c.at, c.pick_radius);
             } else if constexpr (std::is_same_v<T, StretchSelectionCommand>) {
                 apply_stretch(c.win_min, c.win_max, c.delta, c.group);
             } else if constexpr (std::is_same_v<T, MoveSelectionCommand>) {

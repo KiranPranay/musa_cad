@@ -194,6 +194,8 @@ private:
         bool has = false;
     };
     Clipboard clipboard_;
+    void apply_area_query(Vec2 at, double radius);
+    void apply_list_query(Vec2 at, double radius);
     void apply_stretch(Vec2 mn, Vec2 mx, Vec2 delta, std::uint64_t group);
     void apply_copy_clipboard();
     void apply_cut_clipboard(std::uint64_t group);

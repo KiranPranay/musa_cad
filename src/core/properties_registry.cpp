@@ -1024,7 +1024,9 @@ const Desc* find_desc(PropertyId id) {
     return nullptr;
 }
 
-const char* kind_name(EntityKind k) {
+} // namespace
+
+const char* kind_name(EntityKind k) noexcept {
     switch (k) {
     case EntityKind::Point:
         return "Point";
@@ -1063,6 +1065,8 @@ const char* kind_name(EntityKind k) {
     }
     return "Entity";
 }
+
+namespace {
 
 } // namespace
 

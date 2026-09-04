@@ -294,6 +294,59 @@ private:
 /// on a crossing window for this command, so the command asks for one rather than
 /// consuming the current selection: "which points move" is the window's job, and a
 /// pre-existing selection cannot express it.
+/// Inquiry commands (issue #30). DIST and ID answer from the picked points alone, so
+/// they never reach the store; AREA and LIST submit a query the geometry thread resolves
+/// and reports through the status channel.
+class DistCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIST"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+    bool have_first_ = false;
+    core::Vec2 first_{};
+};
+
+class IdCommand final : public ICommand {
+public:
+    std::string name() const override { return "ID"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+class AreaCommand final : public ICommand {
+public:
+    std::string name() const override { return "AREA"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+class ListCommand final : public ICommand {
+public:
+    std::string name() const override { return "LIST"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 class StretchCommand final : public ICommand {
 public:
     std::string name() const override { return "STRETCH"; }
