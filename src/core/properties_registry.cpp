@@ -1040,6 +1040,8 @@ const char* kind_name(EntityKind k) {
         return "Spline";
     case EntityKind::Text:
         return "Text";
+    case EntityKind::Table:
+        return "Table";
     case EntityKind::Image:
         return "Image";
     case EntityKind::Fcf:
@@ -1097,6 +1099,8 @@ EntityKind kind_of(const Command& c) noexcept {
                 k = EntityKind::Datum;
             } else if constexpr (std::is_same_v<T, AddImageCommand>) {
                 k = EntityKind::Image;
+            } else if constexpr (std::is_same_v<T, AddTableCommand>) {
+                k = EntityKind::Table;
             }
         },
         c);

@@ -14,6 +14,7 @@
 #include "musacad/core/generational_arena.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
+#include "musacad/core/table_types.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 
@@ -225,6 +226,27 @@ struct DatumData {
     DimOverrides overrides{};
 };
 
+/// A TABLE: a grid of cells with stored column widths and row heights, plus an insertion
+/// point, rotation and a table-style index. Borders, grid lines, cell rectangles and text
+/// placement are all DERIVED by compute_table_geometry -- never baked -- so a style edit
+/// re-lays out every table on the next snapshot.
+///
+/// The insertion point is the table's TOP-left corner, because that is the corner a
+/// drafter places and the direction rows grow from (AutoCAD's behaviour).
+struct TableData {
+    std::uint32_t cell_offset = 0; ///< first cell in the shared table-cell pool
+    std::uint32_t size_offset = 0; ///< first entry in the shared size pool:
+                                   ///< `cols` widths followed by `rows` heights
+    std::uint16_t rows = 0;
+    std::uint16_t cols = 0;
+    bool has_title = false;  ///< row 0 is a title row (title text height, merged across)
+    bool has_header = false; ///< the row after any title is a header row
+    Vec2 pos;                ///< insertion point: the table's TOP-left corner
+    double rotation = 0.0;   ///< radians, CCW
+    std::uint16_t style = 0; ///< index into the table-style table
+    EntityProps props{};
+};
+
 /// A raster image DEFINITION, held in a table on the store parallel to the layer /
 /// dimstyle / block-definition tables. N placements of one logo are N small entities
 /// plus ONE definition -- the BLOCKDEF/INSERT shape -- which gives dedup and one place
@@ -383,6 +405,14 @@ public:
     /// A placed raster image referencing `def` in the image-definition table.
     EntityHandle add_image(std::uint16_t def, Vec2 pos, double width, double height,
                            double rotation, EntityProps props = {});
+    /// A table. `cells` are the raw cell strings in ROW-MAJOR order (`rows * cols` of
+    /// them); `col_widths` and `row_heights` size the grid.
+    EntityHandle add_table(std::uint16_t rows, std::uint16_t cols,
+                           const std::vector<TableCell>& cells,
+                           const std::vector<double>& col_widths,
+                           const std::vector<double>& row_heights, Vec2 pos, double rotation,
+                           std::uint16_t style, bool has_title = false, bool has_header = false,
+                           EntityProps props = {});
     /// A model-space block reference into the block-definition table.
     EntityHandle add_insert(std::uint16_t block, Vec2 pos, double scale_x, double scale_y,
                             double rotation, EntityProps props = {});
@@ -413,6 +443,7 @@ public:
     [[nodiscard]] const FcfData* fcf(EntityHandle h) const noexcept;
     [[nodiscard]] const DatumData* datum(EntityHandle h) const noexcept;
     [[nodiscard]] const ImageData* image(EntityHandle h) const noexcept;
+    [[nodiscard]] const TableData* table(EntityHandle h) const noexcept;
     /// Mutable access for the create path only (the clip fields are set right after
     /// insertion); everything else reads through the const accessor.
     [[nodiscard]] ImageData* mutable_image(EntityHandle h) noexcept;
@@ -470,6 +501,7 @@ public:
     [[nodiscard]] const GenerationalArena<FcfData>& fcfs() const noexcept { return fcfs_; }
     [[nodiscard]] const GenerationalArena<DatumData>& datums() const noexcept { return datums_; }
     [[nodiscard]] const GenerationalArena<ImageData>& images() const noexcept { return images_; }
+    [[nodiscard]] const GenerationalArena<TableData>& tables() const noexcept { return tables_; }
 
     // --- block-definition table (parallel to the layer table) ---------------
     // Definitions are referenced by INSERTs by index. Few in number; a vector is
@@ -517,6 +549,28 @@ public:
     /// drawing that places one logo ten times holds one definition.
     std::uint16_t add_image_def(const ImageDef& def);
     void set_image_def_table(std::vector<ImageDef> defs);
+
+    // --- table-style table (parallel to the layer / dimstyle tables) ---
+    [[nodiscard]] const std::vector<TableStyle>& table_styles() const noexcept {
+        return table_styles_;
+    }
+    [[nodiscard]] const TableStyle* table_style(std::uint16_t i) const noexcept {
+        return i < table_styles_.size() ? &table_styles_[i] : nullptr;
+    }
+    std::uint16_t add_table_style(const TableStyle& s);
+    void set_table_style_table(std::vector<TableStyle> styles);
+
+    /// A table's cells / column widths / row heights, as spans into the shared pools.
+    [[nodiscard]] std::span<const TableCell> table_cells(const TableData& t) const noexcept;
+    [[nodiscard]] std::span<const double> table_col_widths(const TableData& t) const noexcept;
+    [[nodiscard]] std::span<const double> table_row_heights(const TableData& t) const noexcept;
+    [[nodiscard]] std::string_view string_of(const TableCell& c) const noexcept;
+    /// Copy `s` into the shared char pool and return its offset. Used by the create path
+    /// for pooled-string entities whose command carries the text inline.
+    [[nodiscard]] std::uint32_t intern_string(std::string_view s);
+    /// The cells in the shape compute_table_geometry takes, so no consumer can build a
+    /// table's geometry without its text.
+    [[nodiscard]] std::vector<TableCellView> table_cell_views(const TableData& t) const;
 
     /// The injected raster decoder (IImageDecoder), or null. Null is not an error: the
     /// image's QUAD still resolves, so bounds, pick and grips work headlessly with no
@@ -633,6 +687,10 @@ private:
     GenerationalArena<FcfData> fcfs_;
     GenerationalArena<DatumData> datums_;
     GenerationalArena<ImageData> images_;
+    GenerationalArena<TableData> tables_;
+    std::vector<TableCell> table_cell_pool_;  ///< shared, like the polyline vertex pool
+    std::vector<double> table_size_pool_;     ///< column widths then row heights
+    std::vector<TableStyle> table_styles_{TableStyle{"Standard"}}; // index 0 always present
     std::vector<ImageDef> image_defs_;                     // parallel to the layer table
     const IImageDecoder* image_decoder_ = nullptr;         // non-owning; injected service
     std::vector<FcfCell> fcf_cell_pool_; ///< shared, like the polyline vertex pool

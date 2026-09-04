@@ -12,6 +12,7 @@
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
+#include "musacad/core/table_types.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 #include "musacad/core/properties_palette.hpp"
@@ -524,6 +525,24 @@ struct AddImageCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// Create a TABLE. `cells` are the raw cell strings in ROW-MAJOR order (rows*cols of
+/// them) with their spans/alignment; `col_widths` and `row_heights` size the grid.
+struct AddTableCommand {
+    std::uint16_t rows = 0;
+    std::uint16_t cols = 0;
+    std::vector<TableCell> cells;    ///< str_offset/len are ignored; `texts` carries content
+    std::vector<std::string> texts;  ///< parallel to `cells`
+    std::vector<double> col_widths;
+    std::vector<double> row_heights;
+    Vec2 pos;
+    double rotation = 0.0;
+    std::uint16_t style = 0;
+    bool has_title = false;
+    bool has_header = false;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
 /// HATCH "Select objects" mode: the engine reads the current selection, extracts the
 /// closed boundary of each selected closed polyline (UI never touches the store), and
 /// creates one hatch with the given pattern. Resolved geometry-side, like JOIN.
@@ -660,6 +679,6 @@ using Command =
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,
-                 AddDatumCommand, AddImageCommand>;
+                 AddDatumCommand, AddImageCommand, AddTableCommand>;
 
 } // namespace musacad::core

@@ -31,7 +31,7 @@ The dimension model is strong (value computed from def points, never baked, one 
 
 | Item | AutoCAD behaviour | Priority |
 |---|---|---|
-| **TABLE entity + TABLESTYLE** | A real table: rows/columns, cell text, merged cells, a title row, borders from a style. Used for BOMs, revision blocks, parts lists. | **P0** |
+| ~~**TABLE entity + TABLESTYLE**~~ | **Done** (#22) — merged cells, per-cell alignment, style-driven text heights. Cell editing staged. | ✅ |
 | **Text STYLE table** | Named text styles (font, height, width factor, oblique) that entities reference, like DIMSTYLE. Today a text entity carries a raw font index. | **P1** |
 | **FIELD** | Auto-updating text (date, filename, sheet number, object property). | **P2** |
 

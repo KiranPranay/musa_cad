@@ -18,6 +18,7 @@ add_library(musacad_core STATIC
     dimension.cpp
     gdt.cpp
     image.cpp
+    table.cpp
     block_resolve.cpp
     grips.cpp
     properties_registry.cpp

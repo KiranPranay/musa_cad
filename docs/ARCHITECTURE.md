@@ -2048,6 +2048,68 @@ surface for the frame (command-line Q&A is implemented, which is the scriptable 
 editing an existing frame's cell list from the Properties palette (the PR exposes styling,
 not the variable-length cell list). All in `docs/TODO.md`.
 
+## TABLE entity + TABLESTYLE (issue #22)
+
+Every fabrication sheet carries a bill of materials, a revision block or a hole schedule,
+and until now the only way to draw one was LINE + TEXT by hand — which carries no
+semantics, cannot be edited as a unit, and lets column widths drift between tables. Same
+complaint #8 made about hand-composed feature control frames, same answer.
+
+### Model
+
+`TableData` in its own arena holds the grid shape (`rows`, `cols`, title/header flags),
+an insertion point (the **top-left** corner, because that is the corner a drafter places
+and the direction rows grow), a rotation and a table-style index — plus `(offset, count)`
+views into two shared pools: a **cell pool** and a **size pool** (`cols` widths followed
+by `rows` heights). That is the polyline/spline/FCF pattern.
+
+**A cell is text.** `TableCell` is an `(offset, len)` into the shared char pool plus a
+span and an alignment — the decision #8 made for GD&T cells, which keeps the record small
+and gives cells the existing control-code pass for free (`⌀6.4`, `⌴`, `↧` in the plotted
+sheet are just `%%c` and `\U+` escapes).
+
+`TableStyle` lives in a table on the store parallel to the layer / dimstyle /
+image-definition tables, carrying the **presentation**: title / header / data text
+heights, cell margin, lineweight and colours. The cell contents and the column/row sizes
+are the table's own stored data, because those are what the drafter sets per table.
+
+The small value types (`TableStyle`, `TableCell`, `TableCellView`, `CellAlign`) live in
+`core/table_types.hpp` so commands and the serializable IR can name them **without**
+pulling in the whole `GeometryStore` — which is exactly why `core/mtext_block.hpp` exists.
+
+### Merges
+
+A cell spanning several columns or rows carries the span; the cells it covers carry
+`span_cols == 0`, marking them "not drawn, not picked". That keeps the grid row-major and
+directly indexable while still allowing merges, and it means the interior grid is drawn by
+**emitting only the edges each visible cell owns** rather than drawing the full grid and
+erasing — the erase-afterwards approach fights the draw order and leaves seams.
+
+### One geometry function
+
+`compute_table_geometry()` derives the outer border, the interior grid, every cell
+rectangle, and every text position and height from the stored sizes plus the style's text
+heights. Never baked, so a style edit re-lays out every table on the next snapshot. It
+feeds the snapshot, entity bounds, the kernel's pick (`table_cell_at`, which returns the
+**cell index** so cell editing has what it needs) and grips.
+
+**Grips:** the insertion point moves the table; a grip on each interior column boundary
+resizes that column, measured in the table's own frame so a rotated table resizes along
+its own axis. Row heights follow the style's text heights, so there is nothing useful to
+drag for them.
+
+### Persistence
+
+Native **v20**. `TABLESTYLE` records first (so a `TABLE` can reference one), then a
+`TABLE` record with the grid shape, a line of column widths, a line of row heights, and
+per cell a `span_cols span_rows align` line followed by the **raw** text on its own line
+— it may contain spaces, the same reason `TEXT` puts its content on a line. v1–v19 files
+load with no tables.
+
+**DXF: `ACAD_TABLE` is not written — a stated gap.** It is a proxy-heavy entity whose
+practical value to most consumers is low; exporting the table as its constituent lines and
+text is the more useful first step and is recorded in `docs/TODO.md` rather than faked.
+
 ## Dimension text: override and position (issues #20, #21)
 
 Two edits a drafter needs on essentially every real sheet, both landing on the same

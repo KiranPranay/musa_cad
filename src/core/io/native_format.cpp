@@ -730,6 +730,70 @@ std::string serialize_native(const Document& doc) {
     for (std::size_t i = 0; i < doc.polylines.size(); ++i) {
         emit_celt(3, i, doc.polylines[i].celtscale);
     }
+    // v20: TABLESTYLE + TABLE. The style table first, so a TABLE can reference it.
+    // TABLESTYLE <title_h> <header_h> <data_h> <margin> <lw> <line ec4> <text ec4> name...
+    for (const TableStyle& ts : doc.table_styles) {
+        s += "TABLESTYLE ";
+        append_double(s, ts.title_height);
+        s += ' ';
+        append_double(s, ts.header_height);
+        s += ' ';
+        append_double(s, ts.data_height);
+        s += ' ';
+        append_double(s, ts.margin);
+        s += ' ';
+        append_uint(s, ts.lineweight);
+        s += ' ';
+        append_ecolor(s, ts.line_color);
+        append_ecolor(s, ts.text_color);
+        s += ts.name; // absorbs the rest of the line, so it may contain spaces
+        s += '\n';
+    }
+    // TABLE rows cols has_title has_header px py rot style <props7>; then one line of
+    // column widths, one of row heights, then per cell: "span_cols span_rows align" and
+    // the raw text on the following line (it may contain spaces, so it cannot be a token).
+    for (const DocTable& t : doc.tables) {
+        s += "TABLE ";
+        append_uint(s, t.rows);
+        s += ' ';
+        append_uint(s, t.cols);
+        s += ' ';
+        append_uint(s, t.has_title ? 1 : 0);
+        s += ' ';
+        append_uint(s, t.has_header ? 1 : 0);
+        s += ' ';
+        append_vec(s, t.pos);
+        s += ' ';
+        append_double(s, t.rotation);
+        s += ' ';
+        append_uint(s, t.style);
+        append_props(s, t.props);
+        s += '\n';
+        for (std::size_t k = 0; k < t.col_widths.size(); ++k) {
+            if (k != 0) {
+                s += ' ';
+            }
+            append_double(s, t.col_widths[k]);
+        }
+        s += '\n';
+        for (std::size_t k = 0; k < t.row_heights.size(); ++k) {
+            if (k != 0) {
+                s += ' ';
+            }
+            append_double(s, t.row_heights[k]);
+        }
+        s += '\n';
+        for (const DocTableCell& c : t.cells) {
+            append_uint(s, c.span_cols);
+            s += ' ';
+            append_uint(s, c.span_rows);
+            s += ' ';
+            append_uint(s, c.align);
+            s += '\n';
+            s += c.text;
+            s += '\n';
+        }
+    }
     // v18: raster images. IMAGEDEF <pixel_w> <pixel_h> <b64chunks> <sourcelen>; then the
     // source line, then `b64chunks` lines of base64. Chunking is forced by the format
     // being line-oriented -- an embedded PNG is far too long for one record.
@@ -1186,6 +1250,99 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       tol,
                                       doverride,
                                       dtext_offset});
+        } else if (key == "TABLESTYLE") {
+            if (tok.size() < 15) {
+                return fail("malformed TABLESTYLE");
+            }
+            TableStyle ts;
+            std::uint64_t lw = 0;
+            if (!to_double(tok[1], ts.title_height) || !to_double(tok[2], ts.header_height) ||
+                !to_double(tok[3], ts.data_height) || !to_double(tok[4], ts.margin) ||
+                !to_uint(tok[5], lw)) {
+                return fail("malformed TABLESTYLE field");
+            }
+            ts.lineweight = static_cast<std::uint8_t>(lw);
+            const auto read_ec = [&](std::size_t i2, ElementColor& ec) {
+                std::uint64_t by = 1, r = 0, g2 = 0, b = 0;
+                to_uint(tok[i2], by);
+                to_uint(tok[i2 + 1], r);
+                to_uint(tok[i2 + 2], g2);
+                to_uint(tok[i2 + 3], b);
+                ec.by_layer = by != 0;
+                ec.color = {static_cast<std::uint8_t>(r), static_cast<std::uint8_t>(g2),
+                            static_cast<std::uint8_t>(b)};
+            };
+            read_ec(6, ts.line_color);
+            read_ec(10, ts.text_color);
+            std::string name(tok[14]);
+            for (std::size_t k = 15; k < tok.size(); ++k) {
+                name += ' ';
+                name += std::string(tok[k]);
+            }
+            ts.name = name;
+            doc.table_styles.push_back(std::move(ts));
+        } else if (key == "TABLE") {
+            std::uint64_t rows = 0, cols = 0, title = 0, header = 0, style = 0;
+            vals.clear();
+            EntityProps props;
+            if (tok.size() != 9 + 7 || !to_uint(tok[1], rows) || !to_uint(tok[2], cols) ||
+                !to_uint(tok[3], title) || !to_uint(tok[4], header) ||
+                !parse_doubles(tok, 5, 3, vals) || !to_uint(tok[8], style) ||
+                !parse_props(tok, 9, props)) {
+                return fail("TABLE record malformed");
+            }
+            DocTable t;
+            t.rows = static_cast<std::uint16_t>(rows);
+            t.cols = static_cast<std::uint16_t>(cols);
+            t.has_title = title != 0;
+            t.has_header = header != 0;
+            t.pos = {vals[0], vals[1]};
+            t.rotation = vals[2];
+            t.style = static_cast<std::uint16_t>(style);
+            t.props = props;
+            const auto read_doubles = [&](std::size_t n, std::vector<double>& dest) {
+                std::string line;
+                if (!read_line(line)) {
+                    return false;
+                }
+                const std::vector<std::string_view> dt = tokenize(line);
+                if (dt.size() != n) {
+                    return false;
+                }
+                dest.resize(n);
+                for (std::size_t k = 0; k < n; ++k) {
+                    if (!to_double(dt[k], dest[k])) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            if (!read_doubles(t.cols, t.col_widths) || !read_doubles(t.rows, t.row_heights)) {
+                return fail("TABLE size line malformed");
+            }
+            const std::size_t n_cells = static_cast<std::size_t>(t.rows) * t.cols;
+            t.cells.reserve(n_cells);
+            for (std::size_t k = 0; k < n_cells; ++k) {
+                std::string meta;
+                if (!read_line(meta)) {
+                    return fail("TABLE missing cell line");
+                }
+                const std::vector<std::string_view> mt = tokenize(meta);
+                std::uint64_t sc = 1, sr = 1, al = 1;
+                if (mt.size() != 3 || !to_uint(mt[0], sc) || !to_uint(mt[1], sr) ||
+                    !to_uint(mt[2], al)) {
+                    return fail("TABLE cell metadata malformed");
+                }
+                DocTableCell c;
+                c.span_cols = static_cast<std::uint16_t>(sc);
+                c.span_rows = static_cast<std::uint16_t>(sr);
+                c.align = static_cast<std::uint8_t>(std::min<std::uint64_t>(al, 2));
+                if (!read_line(c.text)) {
+                    return fail("TABLE missing cell text line");
+                }
+                t.cells.push_back(std::move(c));
+            }
+            doc.tables.push_back(std::move(t));
         } else if (key == "IMAGEDEF") {
             std::uint64_t pw = 0;
             std::uint64_t ph = 0;

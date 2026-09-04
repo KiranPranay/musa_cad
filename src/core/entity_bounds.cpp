@@ -10,6 +10,7 @@
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/gdt.hpp"
 #include "musacad/core/image.hpp"
+#include "musacad/core/table.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/text/mtext.hpp"
 #include "musacad/core/text/stroke_font.hpp"
@@ -246,6 +247,17 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
         std::vector<Vec2> pts = g.lines;
         pts.insert(pts.end(), g.fills.begin(), g.fills.end());
         return bounds_of_points(pts, out_min, out_max);
+    }
+    case EntityKind::Table: {
+        const TableData* td = store.table(h);
+        if (td == nullptr) {
+            return false;
+        }
+        const TableStyle* st = store.table_style(td->style);
+        const TableGeometry g = compute_table_geometry(
+            *td, store.table_cell_views(*td), store.table_col_widths(*td),
+            store.table_row_heights(*td), st != nullptr ? *st : TableStyle{}, Rgb{});
+        return bounds_of_points(g.lines, out_min, out_max);
     }
     case EntityKind::Image: {
         const ImageData* im = store.image(h);
