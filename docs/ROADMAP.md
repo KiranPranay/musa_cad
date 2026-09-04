@@ -50,7 +50,7 @@ The store already has arenas for splines and points; the *commands* are missing.
 
 | Item | Priority |
 |---|---|
-| **STRETCH** (crossing-window vertex drag) | **P0** |
+| ~~**STRETCH**~~ | **Done** (#24) | ✅ |
 | **BREAK**, **LENGTHEN**, **ALIGN** | **P1** |
 | **DIVIDE / MEASURE** (point or block at intervals) | **P2** |
 | **PEDIT** + add/remove polyline vertex via grips | **P1** |

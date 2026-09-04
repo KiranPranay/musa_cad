@@ -2048,6 +2048,33 @@ surface for the frame (command-line Q&A is implemented, which is the scriptable 
 editing an existing frame's cell list from the Properties palette (the PR exposes styling,
 not the variable-length cell list). All in `docs/TODO.md`.
 
+## STRETCH (issue #24)
+
+The crossing-window modify command: the points **inside** the window move, the rest of
+each entity stays anchored. It is what MOVE cannot do — lengthen a slot, widen a bracket,
+move a wall — and it had no substitute in the command set.
+
+`stretch_cmd()` sits next to `translate_cmd()` in the engine and is **the** per-kind rule
+for "which stored points move". Lines, polylines, leader vertices and hatch loop vertices
+move their enclosed points; kinds whose shape is defined by a single point (circle, arc,
+text, insert, image, table, GD&T) **move entirely** when that point is enclosed and are
+never deformed — AutoCAD does the same, and a circle cannot be stretched.
+
+**Dimensions get the interesting behaviour for free.** A dimension stores def points and
+computes its value from them (Ph13/Ph15), so moving an enclosed def point re-measures with
+no dimension-specific code in the stretch path at all. Stretching a feature and its
+dimension together does the right thing because of a decision made three phases earlier.
+
+`apply_stretch` queries the **same** spatial index every other pick uses, then does
+capture → stretch → erase → recreate per entity as **one undo group**, exactly the
+`apply_move` shape. An entity whose points are all outside the window is skipped entirely
+rather than recreated as a no-op, so the undo log stays clean, and the engine reports what
+it actually did through the Ph10.1 status channel instead of the command guessing.
+
+The command asks for the crossing window itself rather than consuming the current
+selection. That is both what AutoCAD does and the only thing that can work: "which points
+move" is the window's job, and a pre-existing selection cannot express it.
+
 ## TABLE entity + TABLESTYLE (issue #22)
 
 Every fabrication sheet carries a bill of materials, a revision block or a hole schedule,

@@ -139,6 +139,17 @@ struct MoveSelectionCommand {
     std::uint64_t group = 0;
 };
 
+/// STRETCH (issue #24): move the stored points inside the crossing window `win_min..win_max`
+/// by `delta`, leaving the rest of each entity anchored. Resolved on the geometry thread
+/// against the existing spatial index -- the UI never touches the store, it just sends the
+/// window and the displacement.
+struct StretchSelectionCommand {
+    Vec2 win_min;
+    Vec2 win_max;
+    Vec2 delta;
+    std::uint64_t group = 0;
+};
+
 /// Copy all selected entities by `delta`, leaving the originals.
 struct CopySelectionCommand {
     Vec2 delta;
@@ -679,6 +690,7 @@ using Command =
                  PasteClipboardCommand, MatchPropPickSourceCommand,
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,
-                 AddDatumCommand, AddImageCommand, AddTableCommand>;
+                 AddDatumCommand, AddImageCommand, AddTableCommand,
+                 StretchSelectionCommand>;
 
 } // namespace musacad::core
