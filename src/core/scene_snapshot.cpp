@@ -120,9 +120,14 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     const auto font_is_outline = [&](std::uint16_t font_id) {
         return fonts != nullptr && fonts->is_outline_font(store.font_name(font_id));
     };
+    // `lineweight` is the entity's RESOLVED weight (ByLayer already applied). Stroke
+    // glyphs carry it into the line batches exactly like any other stroked geometry, so
+    // PLOT prints text at the weight the author set. The viewport is unaffected: it
+    // ignores `lineweight` for `is_text` batches and applies its own screen weight
+    // (Ph31), so the on-screen polish and the paper result stay independent.
     const auto emit_text_run = [&](std::string_view raw, Vec2 origin, double height,
                                    double rotation, text::Justify justify, std::uint16_t font_id,
-                                   Rgb color) {
+                                   Rgb color, std::uint8_t lineweight) {
         // Expand control codes at render time (storage stays raw). `vis` drives every metric
         // and glyph; the over/under-line toggles become decoration bars below.
         const text::SubstitutedText sub = text::substitute_text_codes(raw);
@@ -147,7 +152,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         } else {
             trun.clear();
             text::append_text_segments(str, o, height, rotation, text::Justify::Left, trun);
-            add_lines(color, 0, trun, /*is_text=*/true, height);
+            add_lines(color, lineweight, trun, /*is_text=*/true, height);
         }
         // Overline (%%o) / underline (%%u): a horizontal stroke spanning each toggled run,
         // placed just above the cap height / just below the baseline, in the text colour.
@@ -158,7 +163,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
                     const double x1 = measure(str.substr(0, s.end));
                     const Vec2 a{o.x + x0 * cs - ly * sn, o.y + x0 * sn + ly * cs};
                     const Vec2 b{o.x + x1 * cs - ly * sn, o.y + x1 * sn + ly * cs};
-                    add_line(color, 0, a, b, /*is_text=*/true, height);
+                    add_line(color, lineweight, a, b, /*is_text=*/true, height);
                 }
             };
             bar(sub.overline, height * 1.15);
@@ -223,7 +228,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         }
         const ResolvedProps r = entity_resolved(store, t->props);
         emit_text_run(store.string_of(*t), t->pos, t->height, t->rotation,
-                      static_cast<text::Justify>(t->justify), t->font, r.color);
+                      static_cast<text::Justify>(t->justify), t->font, r.color, r.lineweight);
         if (editable(store, t->props)) {
             // The selection box uses the VISIBLE width (codes expanded); the edit target
             // keeps the RAW string so double-click editing shows %%c50, not the symbol.
@@ -261,7 +266,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             text::append_text_segments(g.label2, g.label2_pos, g.text_height, g.text_rotation,
                                        g.text_justify, tseg);
         }
-        add_lines(g.text_color, 0, tseg, /*is_text=*/true, g.text_height);
+        add_lines(g.text_color, g.lineweight, tseg, /*is_text=*/true, g.text_height);
     });
 
     // Raster images: publish the TRANSFORM only. Decoded pixels never enter the
@@ -302,7 +307,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             tseg.clear();
             text::append_text_segments(g.cell_text[i], g.text_pos[i], g.text_height, g.rotation,
                                        text::Justify::Left, tseg);
-            add_lines(g.text_color, 0, tseg, /*is_text=*/true, g.text_height);
+            add_lines(g.text_color, g.lineweight, tseg, /*is_text=*/true, g.text_height);
         }
     });
 
@@ -320,7 +325,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         tseg.clear();
         text::append_text_segments(g.text, g.text_pos, g.text_height, g.rotation,
                                    text::Justify::Left, tseg);
-        add_lines(g.text_color, 0, tseg, /*is_text=*/true, g.text_height);
+        add_lines(g.text_color, g.lineweight, tseg, /*is_text=*/true, g.text_height);
     });
 
     // Leaders: arrowhead + leader line + text label (shares the dimstyle arrow).
@@ -345,7 +350,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         add_fills(arrow_c, afill);
         add_lines(arrow_c, r.lineweight, aline);
         emit_text_run(store.string_of(*l), l->knee + Vec2{s.arrow_size * 0.4, 0.0}, l->text_height,
-                      0.0, text::Justify::Left, l->font, text_c);
+                      0.0, text::Justify::Left, l->font, text_c, r.lineweight);
     });
 
     // MTEXT: multi-line paragraph text. Layout is COMPUTED here from the stored
@@ -358,7 +363,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         const ResolvedProps r = entity_resolved(store, m->props);
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
                                                          store.font_name(m->text.font));
-        add_lines(r.color, 0, lay.segments, /*is_text=*/true, m->text.height);
+        add_lines(r.color, r.lineweight, lay.segments, /*is_text=*/true, m->text.height);
         add_fills(r.color, lay.fills);
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,
@@ -392,7 +397,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         }
         const text::MTextLayout lay = text::layout_mtext(m->text, store.string_of(m->text), fonts,
                                                          store.font_name(m->text.font));
-        add_lines(text_c, 0, lay.segments, /*is_text=*/true, m->text.height);
+        add_lines(text_c, r.lineweight, lay.segments, /*is_text=*/true, m->text.height);
         add_fills(text_c, lay.fills);
         if (editable(store, m->props)) {
             out.text_edit_targets.push_back(TextEditTarget{h, m->text.pos, lay.min, lay.max,

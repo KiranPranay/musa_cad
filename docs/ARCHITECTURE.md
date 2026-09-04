@@ -331,10 +331,21 @@ professional **on screen** without changing what reaches paper:
   into the batch), and the renderer tapers the stroke to a fraction of the glyph's *on-screen*
   height (`text_height × camera.scale()`), floored at a 1 px hairline — so tiny title-block
   fields read crisp instead of blocky while title-size text keeps full presence. The
-  **plot** path is a separate route (QPainter) that ignores `is_text` and honours the entity
-  weight (0 → cosmetic hairline), so the on-screen polish **never reaches paper**: a plot of
-  the same drawing is ink-for-ink identical before/after (verified: 0-pixel raster diff). This
-  is the "same entity, two render contexts" pattern (cf. screen vs plot lineweight).
+  **plot** path is a separate route (QPainter) that ignores `is_text` and honours the entity's
+  resolved lineweight, so the on-screen polish **never reaches paper**. This is the "same
+  entity, two render contexts" pattern (cf. screen vs plot lineweight).
+
+  **Correction (issue #19).** Stroke text originally entered `line_batches` with
+  `lineweight = 0`, so `paint_plot`'s `b.lineweight > 0` rule left *every* glyph cosmetic:
+  text set to 0.50 mm printed as a hairline, while a LINE at the same weight printed
+  correctly. Dimension text and notes were unreadable on A4 fabrication sheets. The batches
+  now carry the entity's **resolved** weight (ByLayer applied), exactly like any other
+  stroked geometry. The viewport is untouched by that change *by construction* — it ignores
+  `lineweight` for `is_text` batches and computes its own screen weight — so the two
+  contexts stay independent, which is what made the fix a one-line-per-site change rather
+  than a renderer rework. Verified by pixel-measuring a plotted ladder: ink per scanline
+  goes 27 / 62 / 120 / 247 for weights 0 / 0.25 / 0.50 / 1.00 mm, and the LINE references
+  measure exactly 2 / 4 / 8 px at 200 DPI.
 - **Real lowercase.** The built-in stroke font (`core::text::stroke_font`) gained true
   lowercase a–z (simplex/Hershey-class, hand-authored on the existing 6×8 cell with proper
   ascenders/x-height/descenders), replacing the Phase-13 small-caps fallback (kept only as a
