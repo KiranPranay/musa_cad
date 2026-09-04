@@ -105,6 +105,10 @@ commands (Ribbon Phase A):
 | JOIN — **select** lines/arcs/open polylines (any way), then JOIN merges every connected chain among them into ONE polyline each (arcs become bulged segments), inheriting the source's layer/properties; a chain whose ends meet becomes a **closed** polyline (which then OFFSETs uniformly). The merged polyline is a single entity — moving it or a grip keeps it connected. With nothing pre-selected, JOIN falls back to picking a source + targets. One undo group | J | Implemented |
 | ARRAY dialog (interactive grid/preview) | AR | Planned (Phase 13) |
 | **STRETCH** — crossing window -> base point -> displacement. Points INSIDE the window move; the rest of each entity stays anchored, so a partly-enclosed line/polyline is deformed rather than translated. Single-point kinds (circle, arc, text, insert, image, table, GD&T) move entirely when their defining point is enclosed and are never deformed, as in AutoCAD. A dimension whose def points move **re-measures**. One undo group; reports honestly when the window caught nothing | S | Implemented (issue #24) |
+| **DIST (DI)** — distance, angle and delta X/Y between two points. Answered from the picked points alone, so it never reaches the store | DI | Implemented (issue #30) |
+| **ID** — the coordinates of a point | ID | Implemented (issue #30) |
+| **AREA (AA)** — area and perimeter of a closed object (exact for circles, shoelace over the SAME tessellation the renderer draws for everything else). An OPEN object reports its length and says it has no area, rather than the area of the polygon you would get by closing it | AA | Implemented (issue #30) |
+| **LIST (LI)** — an object's type, layer and defining parameters. A dimension reports its MEASURED value, which by construction cannot have been authored | LI | Implemented (issue #30) |
 | EXPLODE | X | Planned (Phase 13) |
 | JOIN | J | Planned (Phase 13) |
 

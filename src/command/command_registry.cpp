@@ -174,6 +174,16 @@ CommandRegistry CommandRegistry::make_default() {
         "Create a dimension suited to the selected object.");
     reg({"LEADER"}, [] { return std::make_unique<LeaderCommand>(); }, "assets/ribbon/leader.svg",
         "Draw a leader line with an arrowhead and annotation.");
+    // --- Inquiry (issue #30) ---
+    reg({"DI", "DIST"}, [] { return std::make_unique<DistCommand>(); },
+        "assets/ribbon/measure.svg", "Measure the distance and angle between two points.");
+    reg({"ID"}, [] { return std::make_unique<IdCommand>(); }, "assets/ribbon/measure.svg",
+        "Report the coordinates of a point.");
+    reg({"AA", "AREA"}, [] { return std::make_unique<AreaCommand>(); },
+        "assets/ribbon/measure.svg", "Report the area and perimeter of an object.");
+    reg({"LI", "LIST"}, [] { return std::make_unique<ListCommand>(); },
+        "assets/ribbon/list.svg", "List an object's type, layer and defining parameters.");
+
     reg({"S", "STRETCH"}, [] { return std::make_unique<StretchCommand>(); },
         "assets/ribbon/stretch.svg",
         "Move the parts of objects inside a crossing window, keeping the rest anchored.");

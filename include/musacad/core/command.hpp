@@ -139,6 +139,19 @@ struct MoveSelectionCommand {
     std::uint64_t group = 0;
 };
 
+/// Inquiry (issue #30). Read-only queries resolved on the geometry thread and reported
+/// through the existing status channel -- the UI never touches the store, and no data
+/// model changes. `AREA` reports area + perimeter of the entity under `at`; `LIST` dumps
+/// its type, layer and defining parameters.
+struct AreaQueryCommand {
+    Vec2 at;
+    double pick_radius = 0.0;
+};
+struct ListQueryCommand {
+    Vec2 at;
+    double pick_radius = 0.0;
+};
+
 /// STRETCH (issue #24): move the stored points inside the crossing window `win_min..win_max`
 /// by `delta`, leaving the rest of each entity anchored. Resolved on the geometry thread
 /// against the existing spatial index -- the UI never touches the store, it just sends the
@@ -691,6 +704,6 @@ using Command =
                  MatchPropSourceFromSelectionCommand, MatchPropApplyCommand, AddHatchCommand,
                  HatchFromSelectionCommand, HatchPickPointCommand, AddFcfCommand,
                  AddDatumCommand, AddImageCommand, AddTableCommand,
-                 StretchSelectionCommand>;
+                 StretchSelectionCommand, AreaQueryCommand, ListQueryCommand>;
 
 } // namespace musacad::core

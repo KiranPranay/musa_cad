@@ -1603,6 +1603,101 @@ void DimCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Inquiry: DIST / ID / AREA / LIST (issue #30)
+// ---------------------------------------------------------------------------
+namespace {
+/// Compact number formatting shared by the inquiry echoes.
+std::string inum(double v) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.4g", v);
+    return std::string(buf);
+}
+} // namespace
+
+void DistCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    have_first_ = false;
+    ctx.set_prompt("Specify first point: ");
+}
+
+void DistCommand::input(CommandContext& ctx, const std::string& text) {
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (!have_first_) {
+        first_ = *p;
+        have_first_ = true;
+        ctx.set_last_point(*p);
+        ctx.set_prompt("Specify second point: ");
+        return;
+    }
+    // Answered from the picked points alone -- no store access, so no round trip.
+    const core::Vec2 d = *p - first_;
+    const double ang = core::to_degrees(std::atan2(d.y, d.x));
+    ctx.echo("Distance = " + inum(core::length(d)) + ",  Angle = " + inum(ang) +
+             "\u00B0,  Delta X = " + inum(d.x) + ",  Delta Y = " + inum(d.y));
+    done_ = true;
+}
+
+void DistCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void IdCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify point: ");
+}
+
+void IdCommand::input(CommandContext& ctx, const std::string& text) {
+    if (const auto p = read_point(ctx, text)) {
+        ctx.echo("X = " + inum(p->x) + ",  Y = " + inum(p->y));
+        done_ = true;
+    }
+}
+
+void IdCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void AreaCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select an object to measure: ");
+}
+
+void AreaCommand::input(CommandContext& ctx, const std::string& text) {
+    if (const auto p = read_point(ctx, text)) {
+        // The engine resolves the entity and reports -- the UI never reads the store.
+        ctx.submit(core::AreaQueryCommand{*p, ctx.pick_radius()});
+        done_ = true;
+    }
+}
+
+void AreaCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ListCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select an object to list: ");
+}
+
+void ListCommand::input(CommandContext& ctx, const std::string& text) {
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::ListQueryCommand{*p, ctx.pick_radius()});
+        done_ = true;
+    }
+}
+
+void ListCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // STRETCH: crossing window -> base point -> displacement
 // ---------------------------------------------------------------------------
 void StretchCommand::start(CommandContext& ctx) {
