@@ -42,6 +42,17 @@ gh run download --name "MusaCAD-<version>-x86_64-setup" --dir .
 
 Verify locally (the discipline that catches breakage):
 - Install + launch the AppImage from outside the build dir; open a drawing, plot a PDF, exit.
+- **Exercise the HEADLESS paths from the extracted AppImage too, not just the desktop launch.**
+  v0.2.0 shipped a `--plot` mode that forces Qt's `offscreen` platform; the AppImage bundled
+  only `libqxcb.so`, so the desktop launch worked perfectly while `--plot` aborted with
+  "Could not find the Qt platform plugin \"offscreen\"" and exit code 127. A working GUI does
+  **not** imply a working headless mode -- they load different plugins. Minimum check:
+
+  ```sh
+  cd "$(mktemp -d)" && cp <repo>/MusaCAD-<ver>-x86_64.AppImage .
+  env -u DISPLAY -u WAYLAND_DISPLAY APPIMAGE_EXTRACT_AND_RUN=1 \
+      ./MusaCAD-<ver>-x86_64.AppImage --plot <drawing>.musa out.pdf --paper A4
+  ```
 - Install + launch the Flatpak (`flatpak install --user ...flatpak`; `flatpak run com.musacad.MusaCAD`).
 - **Windows: a human installs the `.exe` on a real Windows box** and confirms it launches + draws.
   Claude Code / Linux CI cannot verify the Windows binary at runtime — this step is manual.
@@ -67,6 +78,14 @@ and the `v<version>` tag is visible.
 
 - Flathub submission (manifest is ready; see `packaging/flatpak/BUILD_FLATPAK.md` → "Flathub — STAGED").
 - File follow-up issues for anything deferred or surfaced during verification.
+
+## Linux-only releases
+
+A release may ship **Linux only** when the Windows installer has not yet been verified on
+real hardware (issue #6). In that case: build and publish the AppImage, say so plainly at
+the top of the release notes, and leave the Windows artifact for the person with the
+Windows box to add to the same GitHub release afterwards. Do not publish an unverified
+`.exe` just because CI produced one.
 
 ## Notes / gotchas
 

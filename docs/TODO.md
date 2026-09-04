@@ -105,6 +105,12 @@ parked and *what done looks like*, so it can be picked up cleanly later.
   behind `MUSACAD_MSVC_WERROR` (default **OFF**) so the Windows release isn't blocked, while
   GCC/Clang `-Werror` stays on. **Done looks like:** clean the MSVC `/W4` warnings and flip
   `MUSACAD_MSVC_WERROR` ON in CI. See `cmake/CompilerWarnings.cmake`.
+* **Wayland platform plugin in the AppImage — deliberately absent.** The AppImage bundles
+  `xcb`, `offscreen` and `minimal`. On a Wayland session it prints "Could not find the Qt
+  platform plugin \"wayland\"" and falls back to XWayland, which works. Bundling Qt's wayland
+  plugin needs matching `libwayland-*` client libraries inside the AppImage and is a common
+  source of breakage, so the fallback is preferred. **Done looks like:** bundling it *and*
+  verifying on both a Wayland and an X11 session before removing this note.
 * **Windows installer hardware verification — staged.** v0.1.0's `.exe` is CI-produced and was
   published without a real-Windows-hardware launch test. **Done looks like:** install on a real
   Windows box, confirm it launches + draws + plots, and fix anything found.
