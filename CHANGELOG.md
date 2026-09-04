@@ -33,6 +33,7 @@ the Windows installer is built and verified separately on real hardware (#6).
   paper/orientation/scale/window options. Exit codes 0/1/2/3. See `docs/CLI.md`.
 - **Raster IMAGE entity** (#10, **partial**) — external or base64-embedded payloads;
   selectable, movable and plotted. Viewport display, IMAGEATTACH/IMAGECLIP and DXF deferred.
+- **DIMCONTINUE / DIMBASELINE** (#28, partial) — chain or stack dimensions from the previous one, the normal way to dimension a row of holes. DIMORDINATE, DIMJOGGED and DIMARC remain.
 - **Inquiry commands** (#30, partial) — `DIST`, `ID`, `AREA` and `LIST`. Read-only queries that report through the command line; `PURGE`, `AUDIT` and `UNITS` remain.
 - **STRETCH** (#24) — the crossing-window modify command: points inside the window move, the rest of each entity stays anchored, and a dimension whose definition points move re-measures automatically.
 - `docs/ROADMAP.md` — a grouped survey of what is not yet implemented (issues #20–#33).

@@ -174,6 +174,14 @@ CommandRegistry CommandRegistry::make_default() {
         "Create a dimension suited to the selected object.");
     reg({"LEADER"}, [] { return std::make_unique<LeaderCommand>(); }, "assets/ribbon/leader.svg",
         "Draw a leader line with an arrowhead and annotation.");
+    // --- Dimension chaining (issue #28) ---
+    reg({"DCO", "DIMCONTINUE"}, [] { return std::make_unique<ChainDimCommand>(false); },
+        "assets/ribbon/dimcontinue.svg",
+        "Continue a dimension chain from the last dimension's second extension line.");
+    reg({"DBA", "DIMBASELINE"}, [] { return std::make_unique<ChainDimCommand>(true); },
+        "assets/ribbon/dimbaseline.svg",
+        "Stack dimensions from a common first extension line.");
+
     // --- Inquiry (issue #30) ---
     reg({"DI", "DIST"}, [] { return std::make_unique<DistCommand>(); },
         "assets/ribbon/measure.svg", "Measure the distance and angle between two points.");

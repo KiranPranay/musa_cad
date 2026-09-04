@@ -160,7 +160,7 @@ commands (Ribbon Phase A):
 | Object-aware dims capture **def points** at creation (no entity ref) | — | Implemented (deleting the source entity never dangles the dim) |
 | Placement preview: the full dimension (with live value) rubber-bands to the cursor, commits on click | — | Implemented (all dim types + DIM; angular arc is fixed by its two lines) |
 | Associativity: value recomputed from def points each rebuild | — | Implemented (moving the *referenced* entity does not auto-update) |
-| DIMCONTINUE / DIMBASELINE | DCO / DBA | Planned |
+| **DIMCONTINUE (DCO)** — chain the next dimension from the previous one's SECOND extension line, on the same dimension line. **DIMBASELINE (DBA)** — stack from the previous FIRST extension line, offset perpendicular by the baseline spacing. Both are placement helpers over the existing Linear/Aligned types (no new DimType, no format change) and inherit the previous dimension's style + overrides. Each pick is its own undo group, and the chain follows undo -- it continues from whatever is now last | DCO / DBA | Implemented (issue #28) |
 | MTEXT (multi-line) | MT | Planned |
 | MLEADER (multi-segment) | MLD | Planned |
 | STYLE (text style) | ST | Planned |

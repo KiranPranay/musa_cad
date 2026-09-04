@@ -2048,6 +2048,39 @@ surface for the frame (command-line Q&A is implemented, which is the scriptable 
 editing an existing frame's cell list from the Properties palette (the PR exposes styling,
 not the variable-length cell list). All in `docs/TODO.md`.
 
+## DIMCONTINUE / DIMBASELINE (issue #28)
+
+Placement helpers over the **existing** Linear/Aligned types — no new `DimType`, no format
+change. They only decide where the next dimension's def points and dimension line go
+relative to the previous one, which is all AutoCAD's versions do.
+
+* **DIMCONTINUE** — the new dimension runs from the previous one's `b` to the picked point,
+  on the **same** dimension line.
+* **DIMBASELINE** — from the previous `a` to the picked point, with the dimension line
+  offset perpendicular by the baseline spacing so the stack reads outward.
+
+Both inherit the previous dimension's style *and* its overrides, so a chain looks like one
+thing rather than reverting to the style defaults halfway along.
+
+**"The previous dimension" is found by walking the undo log** (`most_recent_dimension()`,
+the shape `most_recent_live()` already had) rather than by caching a handle. That means
+there is no state to keep in sync, and the chain **follows undo** for free: undo the last
+dimension and the next pick continues from the one before it. Asserted.
+
+**A subtlety worth recording**, because it produced a silently wrong result that a test
+caught: "which side of the def points does the dimension line sit on" must be measured
+along the **perpendicular**. The obvious `line_pt - foot_of_a` is parallel to the dimension
+direction *by construction* — the foot IS the projection of `a` onto the line through
+`line_pt` along `dir` — so using it offsets the baseline stack *along* the dimension
+instead of away from it, and every stacked dimension lands on the same line.
+
+Baseline spacing is derived as **1.5 × the effective text height**, which reproduces
+AutoCAD's ISO default (DIMDLI 3.75 mm at 2.5 mm text) without adding a style variable and a
+format bump. A real `DIMDLI` field is recorded in `docs/TODO.md`.
+
+Each pick is its **own undo group** (the MATCHPROP target-loop convention), so a
+five-dimension chain undoes one dimension at a time rather than vanishing at once.
+
 ## STRETCH (issue #24)
 
 The crossing-window modify command: the points **inside** the window move, the rest of

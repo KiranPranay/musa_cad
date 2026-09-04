@@ -761,6 +761,84 @@ double path_length(const std::vector<Vec2>& p, bool closed) {
 }
 } // namespace
 
+EntityHandle GeometryEngine::most_recent_dimension() const {
+    // Walk the undo log backwards, exactly as most_recent_live() does -- no new state to
+    // keep in sync, and it naturally follows undo: undo the last dimension and the chain
+    // continues from the one before it.
+    for (auto git = undo_.rbegin(); git != undo_.rend(); ++git) {
+        for (auto it = git->items.rbegin(); it != git->items.rend(); ++it) {
+            if (it->is_create && it->handle.kind == EntityKind::Dimension &&
+                store_.is_valid(it->handle)) {
+                return it->handle;
+            }
+        }
+    }
+    return EntityHandle::null();
+}
+
+void GeometryEngine::apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t group) {
+    const EntityHandle prev = most_recent_dimension();
+    if (!store_.is_valid(prev)) {
+        report(baseline ? "DIMBASELINE: no previous dimension to stack from."
+                        : "DIMCONTINUE: no previous dimension to continue from.");
+        return;
+    }
+    const DimData* p = store_.dimension(prev);
+    if (p->type != DimType::Linear && p->type != DimType::Aligned) {
+        // Continuing a radius/diameter/angular dimension is not defined; say so rather
+        // than producing something arbitrary.
+        report(baseline ? "DIMBASELINE needs a linear or aligned dimension to stack from."
+                        : "DIMCONTINUE needs a linear or aligned dimension to continue from.");
+        return;
+    }
+
+    // The previous dimension's line direction and which way its dim line sits relative to
+    // the def points -- both derived, so a chain follows a dimension that was later moved.
+    const Vec2 dir = p->type == DimType::Aligned && length_squared(p->b - p->a) > 1e-18
+                         ? normalized(p->b - p->a)
+                         : (std::abs(p->b.x - p->a.x) >= std::abs(p->b.y - p->a.y) ? Vec2{1, 0}
+                                                                                   : Vec2{0, 1});
+    // Which side of the def points the dimension line sits on. This must be measured
+    // along the PERPENDICULAR: `line_pt - foot_of_a` is parallel to `dir` by construction
+    // (the foot IS the projection of `a` onto the line through `line_pt` along `dir`), so
+    // using it gives a direction along the dimension instead of away from it, and a
+    // baseline stack that never offsets.
+    const Vec2 perp{-dir.y, dir.x};
+    const Vec2 away = dot(p->line_pt - p->a, perp) >= 0.0 ? perp : perp * -1.0;
+
+    const DimStyle* raw = store_.dimstyle(p->style);
+    const DimStyle st = apply_dim_overrides(raw != nullptr ? *raw : DimStyle{}, p->overrides);
+    // Baseline spacing follows AutoCAD's DIMDLI default proportion (3.75 mm at 2.5 mm
+    // text). Derived from the text height rather than stored as its own style variable --
+    // a deliberate simplification, recorded in docs/TODO.md.
+    const double spacing = st.text_height * 1.5;
+
+    DimData d;
+    d.type = p->type;
+    d.a = baseline ? p->a : p->b; // stack from the first origin, or continue from the second
+    d.b = at;
+    d.line_pt = baseline ? p->line_pt + away * spacing : p->line_pt;
+    d.style = p->style;
+    d.props = p->props;
+    d.overrides = p->overrides; // the chain inherits the previous dimension's look
+
+    AddDimensionCommand cmd;
+    cmd.type = static_cast<std::uint8_t>(d.type);
+    cmd.a = d.a;
+    cmd.b = d.b;
+    cmd.line_pt = d.line_pt;
+    cmd.style = d.style;
+    cmd.group = group;
+    cmd.props = d.props;
+    cmd.overrides = d.overrides;
+    const Command command = cmd;
+    const EntityHandle nh = create_indexed(command);
+    push_create_item(group, nh, command);
+    redo_.clear();
+    geom_dirty_ = true;
+    report(baseline ? "Baseline dimension added." : "Continued dimension added.");
+}
+
 void GeometryEngine::apply_area_query(Vec2 at, double radius) {
     const EntityHandle h = pick_nearest(at, radius);
     if (!store_.is_valid(h)) {
@@ -2572,6 +2650,8 @@ void GeometryEngine::apply(const Command& command) {
                 selection_ = all_live();
             } else if constexpr (std::is_same_v<T, ClearSelectionCommand>) {
                 selection_.clear();
+            } else if constexpr (std::is_same_v<T, ChainDimensionCommand>) {
+                apply_chain_dimension(c.at, c.baseline, c.group);
             } else if constexpr (std::is_same_v<T, AreaQueryCommand>) {
                 apply_area_query(c.at, c.pick_radius);
             } else if constexpr (std::is_same_v<T, ListQueryCommand>) {
