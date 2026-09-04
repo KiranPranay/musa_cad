@@ -500,7 +500,7 @@ TEST_CASE("Struct sizes: the decoration lands in the COLD dim arena only") {
     static_assert(sizeof(CircleData) == 32, "hot struct: CircleData must stay 32 B");
     static_assert(sizeof(EntityProps) == 8, "hot struct: EntityProps must stay 8 B");
     // Cold, and now carrying the decoration (tolerance + two char-pool ranges).
-    static_assert(sizeof(DimData) == 152, "DimData size changed -- update the docs too");
+    static_assert(sizeof(DimData) == 176, "DimData size changed -- update the docs too");
     // The strings live in the shared char pool, NOT inline: two (offset,len) pairs is
     // 16 bytes whatever the text says, so a long fit-class note costs the arena nothing.
     static_assert(sizeof(DimTolerance) == 24, "DimTolerance layout changed");

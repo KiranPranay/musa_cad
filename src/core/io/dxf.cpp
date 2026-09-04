@@ -455,7 +455,8 @@ std::string serialize_dxf(const Document& doc) {
             dd.tol = d.tol;
             const DimStyle ds = d.style < doc.dimstyles.size() ? doc.dimstyles[d.style] : DimStyle{};
             const DimLabel lbl =
-                compose_dim_label(dd, apply_dim_overrides(ds, d.overrides), {d.prefix, d.suffix});
+                compose_dim_label(dd, apply_dim_overrides(ds, d.overrides),
+                                  {d.prefix, d.suffix, d.text_override});
             // A two-line (limits) label becomes AutoCAD's stacked-text form.
             code(s, 1, lbl.line2.empty() ? lbl.line1 : lbl.line1 + "\\P" + lbl.line2);
         }

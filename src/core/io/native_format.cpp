@@ -482,10 +482,16 @@ std::string serialize_native(const Document& doc) {
         append_double(s, d.tol.upper);
         s += ' ';
         append_double(s, d.tol.lower);
+        // v19: the label displacement inline, the raw override on its own line (it may
+        // contain spaces, so it cannot be a token -- the same reason prefix/suffix are lines).
+        s += ' ';
+        append_vec(s, d.text_offset);
         s += '\n';
         s += d.prefix;
         s += '\n';
         s += d.suffix;
+        s += '\n';
+        s += d.text_override;
         s += '\n';
     }
     // LEADER tipx tipy kneex kneey height style <props7>; content on next line.
@@ -1120,7 +1126,9 @@ IoResult parse_native(std::string_view text, Document& out) {
             //          35 = v16  the override block gained text_fit (16 fields)
             std::uint64_t dtype = 0;
             vals.clear();
-            const bool has_fit = tok.size() == 35;
+            // 37 = v19 (the override block's 16 fields + decoration + the 2-token offset)
+            const bool has_move = tok.size() == 37;
+            const bool has_fit = tok.size() == 35 || has_move;
             const bool has_decor = tok.size() == 34 || has_fit;
             const bool has_ov = tok.size() == 31 || has_decor;
             if ((tok.size() != 16 && !has_ov) || !to_uint(tok[1], dtype) ||
@@ -1139,6 +1147,8 @@ IoResult parse_native(std::string_view text, Document& out) {
             DimTolerance tol{};
             std::string dprefix;
             std::string dsuffix;
+            std::string doverride;
+            Vec2 dtext_offset{};
             if (has_decor) {
                 // The decoration follows the override block, which is one field wider
                 // from v16 -- so its offset is keyed to the same discriminator.
@@ -1154,6 +1164,15 @@ IoResult parse_native(std::string_view text, Document& out) {
                 if (!read_line(dprefix) || !read_line(dsuffix)) {
                     return fail("DIM missing prefix/suffix line");
                 }
+                if (has_move) {
+                    if (!to_double(tok[db + 3], dtext_offset.x) ||
+                        !to_double(tok[db + 4], dtext_offset.y)) {
+                        return fail("DIM text offset malformed");
+                    }
+                    if (!read_line(doverride)) {
+                        return fail("DIM missing text-override line");
+                    }
+                }
             }
             doc.dims.push_back(DocDim{static_cast<std::uint8_t>(dtype),
                                       {vals[0], vals[1]},
@@ -1164,7 +1183,9 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       ov,
                                       dprefix,
                                       dsuffix,
-                                      tol});
+                                      tol,
+                                      doverride,
+                                      dtext_offset});
         } else if (key == "IMAGEDEF") {
             std::uint64_t pw = 0;
             std::uint64_t ph = 0;

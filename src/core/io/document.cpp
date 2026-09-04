@@ -97,7 +97,8 @@ Document document_from_store(const GeometryStore& store) {
             doc.dims.push_back(DocDim{static_cast<std::uint8_t>(dd.type), dd.a, dd.b, dd.line_pt,
                                       dd.style, dd.props, dd.overrides,
                                       std::string(store.dim_prefix(dd)),
-                                      std::string(store.dim_suffix(dd)), dd.tol});
+                                      std::string(store.dim_suffix(dd)), dd.tol,
+                                      std::string(store.dim_override(dd)), dd.text_offset});
         }
     }
     const auto& leaders = store.leaders();
@@ -272,7 +273,8 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     for (const DocDim& d : doc.dims) {
         store.add_dimension(static_cast<DimType>(d.type), d.a, d.b, d.line_pt, d.style, d.props,
-                            d.overrides, d.prefix, d.suffix, d.tol);
+                            d.overrides, d.prefix, d.suffix, d.tol, d.text_override,
+                            d.text_offset);
     }
     for (const DocLeader& l : doc.leaders) {
         store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props,

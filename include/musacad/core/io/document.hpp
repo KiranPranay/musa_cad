@@ -43,13 +43,17 @@ namespace musacad::core::io {
 /// gains text_fit BEFORE its name (the name absorbs the rest of the line, so a trailing
 /// field would be ambiguous) and is read by version, not token count. v1-v15 files load
 /// with text_fit = Auto, which is the default -- so older drawings simply stop colliding.
+/// v19: dimension text override + text offset -- two trailing fields on the DIM record
+/// (the offset) plus a third content line (the raw override, which may contain spaces).
+/// Detected by token count; v1-v18 dimensions load with no override and a zero offset,
+/// i.e. exactly today's derived placement.
 /// v18: raster IMAGE entities. IMAGEDEF records carry the payload (an external source
 /// path relative to the drawing, or base64 chunked across following lines because the
 /// format is line-oriented); IMAGE records place a definition with a transform + clip.
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 18;
+inline constexpr std::uint32_t kFormatVersion = 19;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -119,6 +123,10 @@ struct DocDim {
     std::string prefix;
     std::string suffix;
     DimTolerance tol{};
+    /// v19: the AutoCAD-style text override (raw; `<>` = the measurement) and the
+    /// author's displacement of the label from its derived position.
+    std::string text_override;
+    Vec2 text_offset{};
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {

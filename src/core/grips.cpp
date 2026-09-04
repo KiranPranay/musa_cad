@@ -65,7 +65,9 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                    st != nullptr ? *st : DimStyle{},
                                    std::string(store.dim_prefix(*d)),
                                    std::string(store.dim_suffix(*d)),
-                                   d->tol};
+                                   d->tol,
+                                   std::string(store.dim_override(*d)),
+                                   d->text_offset};
     }
     case EntityKind::Leader: {
         const LeaderData* l = store.leader(h);
@@ -179,7 +181,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 handle = store.add_dimension(static_cast<DimType>(c.type), c.a, c.b, c.line_pt,
                                              c.style, props_of(c.props), c.overrides, c.prefix,
-                                             c.suffix, c.tol);
+                                             c.suffix, c.tol, c.text_override, c.text_offset);
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
                                           props_of(c.props), store.add_font(c.font), c.overrides);
@@ -309,6 +311,16 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
                 push(out, d->line_pt, GripKind::DimLine, 2);
             }
         }
+        // The TEXT grip (issue #21), on every dimension type. Its index is a sentinel
+        // outside the contiguous range above, so the per-type grip sets can grow without
+        // ever colliding with it. Sits at the label's baseline-left corner, i.e. on the
+        // text the user is reaching for.
+        {
+            Vec2 q[4];
+            if (dim_label_quad(g, /*second=*/false, q)) {
+                push(out, (q[0] + q[2]) * 0.5, GripKind::Move, DimData::kTextGripIndex);
+            }
+        }
         break;
     }
     case EntityKind::Leader: {
@@ -425,6 +437,29 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                 x.pos = newpos;
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 const auto t = static_cast<DimType>(x.type);
+                if (grip_index == DimData::kTextGripIndex) {
+                    // Displacement is stored in the TEXT's own frame, so a rotated
+                    // (e.g. vertical) dimension's label moves along its own baseline
+                    // rather than in world x -- and so the offset survives the whole
+                    // dimension being rotated later.
+                    DimData probe;
+                    probe.type = t;
+                    probe.a = x.a;
+                    probe.b = x.b;
+                    probe.line_pt = x.line_pt;
+                    probe.overrides = x.overrides;
+                    probe.tol = x.tol;
+                    const DimGeometry base = compute_dim_geometry(
+                        probe, x.dim_style, Rgb{}, {x.prefix, x.suffix, x.text_override});
+                    Vec2 q[4];
+                    const Vec2 anchor = dim_label_quad(base, false, q) ? (q[0] + q[2]) * 0.5
+                                                                      : base.text_pos;
+                    const Vec2 delta = newpos - anchor;
+                    const double cs = std::cos(base.text_rotation);
+                    const double sn = std::sin(base.text_rotation);
+                    x.text_offset = {delta.x * cs + delta.y * sn, -delta.x * sn + delta.y * cs};
+                    return;
+                }
                 if ((t == DimType::Radius || t == DimType::Diameter) && grip_index == 0) {
                     const Vec2 d = newpos - x.a; // centre grip -> move the whole dim
                     x.a = x.a + d;

@@ -20,8 +20,8 @@ The dimension model is strong (value computed from def points, never baked, one 
 
 | Item | AutoCAD behaviour | Priority |
 |---|---|---|
-| **Text override** | The Properties palette's *Text override* field, where `<>` stands in for the measurement (`<> H7`, `2x<>`, `APPROX <>`). The measurement stays live. | **P0** |
-| **Text reposition grip** | Every dimension has a grip on its text that drags it anywhere; the value stays measured. Needs a stored text offset + a format field. | **P0** |
+| ~~**Text override**~~ | **Done** (#20) — `<>` expands to the measurement. | ✅ |
+| ~~**Text reposition grip**~~ | **Done** (#21) — text grip on all five types, connector leader, "home text". | ✅ |
 | **DIMBASELINE / DIMCONTINUE** | Chain and stack dimensions off the last one's extension line. | **P1** |
 | **DIMJOGGED / DIMARC / DIMORDINATE** | Jogged radius for large radii; arc-length; ordinate (X/Y datum) dimensions. | **P1** |
 | **Narrow-dimension fit for radial/angular** | The ISO 129-1 fallback covers linear/aligned only. | **P2** |

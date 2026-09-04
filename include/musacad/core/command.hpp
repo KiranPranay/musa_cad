@@ -340,6 +340,11 @@ struct AddDimensionCommand {
     std::string prefix = {};
     std::string suffix = {};
     DimTolerance tol = {};
+    /// The AutoCAD-style text override (issue #20; raw, `<>` = the measurement) and the
+    /// author's displacement of the label from its derived position (issue #21). Both
+    /// travel the same capture/recreate path as the decoration above.
+    std::string text_override = {};
+    Vec2 text_offset = {};
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under

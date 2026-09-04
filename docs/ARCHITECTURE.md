@@ -2048,6 +2048,66 @@ surface for the frame (command-line Q&A is implemented, which is the scriptable 
 editing an existing frame's cell list from the Properties palette (the PR exposes styling,
 not the variable-length cell list). All in `docs/TODO.md`.
 
+## Dimension text: override and position (issues #20, #21)
+
+Two edits a drafter needs on essentially every real sheet, both landing on the same
+`compute_dim_geometry` path and both preserving the invariant that makes a Musa CAD
+dimension trustworthy: **the value is always measured from the def points.**
+
+### Text override — `<>` (issue #20)
+
+`DimData` gains an override string in the shared char pool (the prefix/suffix pattern
+from #7). `compose_dim_label()` — already the single label definition feeding both the
+renderer and the DXF text override — expands `<>` to the measured value, so `<> H7`
+tracks the geometry while `SEE DETAIL A` deliberately does not.
+
+**Decision: an override produces the WHOLE label.** Prefix/suffix and the
+deviation-deriving tolerance modes (Symmetric, Limits) are *not* applied on top of it,
+because an author writing the text themselves is not also asking for text to be generated
+around it — stacking them would silently produce strings nobody typed. `Basic` (the box)
+and `Reference` (the parentheses) **do** still apply: they frame the label rather than
+saying anything, and a basic dimension stays basic whatever its text reads.
+**Rejected:** applying every mode on top, which makes `<> H7` in Limits mode mean
+something no one can predict.
+
+The measurement is still computed either way, so an override can always be inspected
+against the geometry and removed — and the PR shows it as an override rather than as the
+value. Because the label is composed in the one shared place, the override also feeds the
+ISO 129-1 fit (#12) for free: a long override pushes the text outside exactly as a fit
+class does.
+
+### Text position (issue #21)
+
+`DimData` gains a `text_offset` in the **label's own frame** (x along the baseline, y
+along baseline→cap), applied inside `finish_label()` — the one place `text_pos` becomes
+final for every dimension type, so all five types get the feature from a single edit, and
+the automatic fit still runs first to choose the derived position the offset is measured
+from.
+
+Storing the displacement in the text's frame rather than in world coordinates is what
+makes a rotated (e.g. vertical) dimension's label move along its own baseline, and what
+lets the offset survive the whole dimension being rotated later.
+
+* **The text grip** is published by `grips_of` at a **sentinel index**
+  (`DimData::kTextGripIndex`) deliberately outside the contiguous def-point/foot range, so
+  the per-type grip sets can grow without ever colliding with it. `edit_for_grip_drag`
+  recomputes the derived anchor and stores the delta, so dragging puts the label exactly
+  where the cursor is.
+* **A connector leader** is drawn once the label has cleared its dimension line by more
+  than 1.5 text heights — ISO 129-1 expects the value to stay visually attached to what it
+  measures. A small tidying nudge draws nothing.
+* **"Home text"** is the `Text moved` PR row: writing `false` clears the offset, returning
+  the label to the derived position. It is a checkbox rather than a numeric field because
+  there is no useful way to *type* a displacement — it is a grip drag — but the state must
+  be visible and the reset must be undoable.
+
+`DimData` grows 152 → **176 B** (cold arena; `LineData` 40 / `CircleData` 32 /
+`EntityProps` 8 re-asserted unchanged). Native **v19**: two trailing fields on the `DIM`
+record for the offset plus a third content line for the raw override (it may contain
+spaces, so it cannot be a token — the same reason prefix/suffix are lines). Detected by
+token count; v1–v18 load with no override and a zero offset, i.e. exactly today's
+placement.
+
 ## ISO 129-1 narrow-dimension fit (issue #12)
 
 A linear dimension used to place its value unconditionally at the midpoint of the
