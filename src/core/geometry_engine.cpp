@@ -355,6 +355,70 @@ void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additiv
 
 namespace {
 
+/// STRETCH (issue #24): move only the stored points that lie inside `mn..mx`, leaving the
+/// rest of the entity anchored. THE per-kind rule, in one place next to translate_cmd.
+///
+/// Returns true if anything moved, so the caller can skip entities the window did not
+/// touch rather than churning the undo log with no-op recreations.
+///
+/// Kinds whose shape is defined by a single point (circle, arc, text, insert, image,
+/// table, hatch, GD&T) MOVE ENTIRELY when that point is enclosed and are otherwise
+/// untouched -- AutoCAD does the same (a circle cannot be stretched). Dimensions move
+/// their enclosed DEF POINTS, so a stretched feature's dimension RE-MEASURES for free:
+/// the value is computed from those points, never baked.
+bool stretch_cmd(Command& c, Vec2 d, Vec2 mn, Vec2 mx) {
+    const auto inside = [&](Vec2 p) {
+        return p.x >= mn.x && p.x <= mx.x && p.y >= mn.y && p.y <= mx.y;
+    };
+    bool moved = false;
+    const auto pull = [&](Vec2& p) {
+        if (inside(p)) {
+            p += d;
+            moved = true;
+        }
+    };
+    std::visit(
+        [&](auto& x) {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, AddLineCommand>) {
+                pull(x.a);
+                pull(x.b);
+            } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
+                for (Vec2& v : x.points) {
+                    pull(v);
+                }
+            } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
+                // Def points re-measure; the placement point follows so the dimension
+                // line keeps its offset from the feature it now describes.
+                pull(x.a);
+                pull(x.b);
+                pull(x.line_pt);
+            } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
+                pull(x.tip);
+                pull(x.knee);
+            } else if constexpr (std::is_same_v<T, AddMLeaderCommand>) {
+                for (Vec2& v : x.vertices) {
+                    pull(v);
+                }
+            } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
+                for (std::vector<Vec2>& loop : x.loops) {
+                    for (Vec2& v : loop) {
+                        pull(v);
+                    }
+                }
+            } else if constexpr (std::is_same_v<T, AddDatumCommand>) {
+                pull(x.tip);
+                pull(x.pos);
+            } else if constexpr (requires { x.center; }) {
+                pull(x.center); // circle / arc: move whole, never deform
+            } else if constexpr (requires { x.pos; }) {
+                pull(x.pos); // text, mtext, insert, image, table, FCF
+            }
+        },
+        c);
+    return moved;
+}
+
 void translate_cmd(Command& c, Vec2 d) {
     std::visit(
         [&](auto& x) {
@@ -661,6 +725,41 @@ void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
     }
     redo_.clear();
     geom_dirty_ = true;
+}
+
+void GeometryEngine::apply_stretch(Vec2 mn, Vec2 mx, Vec2 delta, std::uint64_t group) {
+    // Candidates from the SAME spatial index every other pick uses. A crossing window is
+    // the right query: an entity only partly inside must still be considered, because its
+    // enclosed vertices are exactly the ones that move.
+    std::vector<EntityHandle> candidates;
+    grid_.query(mn, mx, candidates);
+    std::vector<EntityHandle> result;
+    int touched = 0;
+    for (const EntityHandle h : candidates) {
+        if (!selectable(h)) {
+            continue; // off / frozen / locked layers are inert, as everywhere else
+        }
+        const Command original = capture_entity(h);
+        Command edited = original;
+        if (!stretch_cmd(edited, delta, mn, mx)) {
+            continue; // the window enclosed none of its points -- leave it alone
+        }
+        remove_indexed(h);
+        push_erase_item(group, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(group, nh, edited);
+        result.push_back(nh);
+        ++touched;
+    }
+    if (touched == 0) {
+        report("Nothing in the crossing window to stretch.");
+        return;
+    }
+    selection_ = result;
+    redo_.clear();
+    geom_dirty_ = true;
+    report("Stretched " + std::to_string(touched) +
+           (touched == 1 ? " object." : " objects."));
 }
 
 void GeometryEngine::apply_copy_clipboard() {
@@ -2340,6 +2439,8 @@ void GeometryEngine::apply(const Command& command) {
                 selection_ = all_live();
             } else if constexpr (std::is_same_v<T, ClearSelectionCommand>) {
                 selection_.clear();
+            } else if constexpr (std::is_same_v<T, StretchSelectionCommand>) {
+                apply_stretch(c.win_min, c.win_max, c.delta, c.group);
             } else if constexpr (std::is_same_v<T, MoveSelectionCommand>) {
                 apply_move(c.delta, false, c.group);
             } else if constexpr (std::is_same_v<T, CopySelectionCommand>) {

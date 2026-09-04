@@ -194,6 +194,7 @@ private:
         bool has = false;
     };
     Clipboard clipboard_;
+    void apply_stretch(Vec2 mn, Vec2 mx, Vec2 delta, std::uint64_t group);
     void apply_copy_clipboard();
     void apply_cut_clipboard(std::uint64_t group);
     void apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at_cursor);

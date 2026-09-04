@@ -174,6 +174,10 @@ CommandRegistry CommandRegistry::make_default() {
         "Create a dimension suited to the selected object.");
     reg({"LEADER"}, [] { return std::make_unique<LeaderCommand>(); }, "assets/ribbon/leader.svg",
         "Draw a leader line with an arrowhead and annotation.");
+    reg({"S", "STRETCH"}, [] { return std::make_unique<StretchCommand>(); },
+        "assets/ribbon/stretch.svg",
+        "Move the parts of objects inside a crossing window, keeping the rest anchored.");
+
     reg({"TB", "TABLE"}, [] { return std::make_unique<TableCommand>(); },
         "assets/ribbon/table.svg",
         "Insert a table of rows and columns for a BOM, revision block or parts list.");

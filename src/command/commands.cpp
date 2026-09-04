@@ -1603,6 +1603,59 @@ void DimCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// STRETCH: crossing window -> base point -> displacement
+// ---------------------------------------------------------------------------
+void StretchCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    mode_ = Mode::Corner1;
+    ctx.set_prompt("Specify first corner of crossing window: ");
+}
+
+void StretchCommand::input(CommandContext& ctx, const std::string& text) {
+    switch (mode_) {
+    case Mode::Corner1:
+        if (const auto p = read_point(ctx, text)) {
+            c1_ = *p;
+            ctx.set_last_point(*p);
+            mode_ = Mode::Corner2;
+            ctx.set_prompt("Specify opposite corner: ");
+        }
+        return;
+    case Mode::Corner2:
+        if (const auto p = read_point(ctx, text)) {
+            c2_ = *p;
+            ctx.set_last_point(*p);
+            mode_ = Mode::Base;
+            ctx.set_prompt("Specify base point: ");
+        }
+        return;
+    case Mode::Base:
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            ctx.set_last_point(*p);
+            mode_ = Mode::Displacement;
+            ctx.set_prompt("Specify second point: ");
+        }
+        return;
+    case Mode::Displacement:
+        if (const auto p = read_point(ctx, text)) {
+            const core::Vec2 mn{std::min(c1_.x, c2_.x), std::min(c1_.y, c2_.y)};
+            const core::Vec2 mx{std::max(c1_.x, c2_.x), std::max(c1_.y, c2_.y)};
+            ctx.submit(core::StretchSelectionCommand{mn, mx, *p - base_, ctx.group_id()});
+            // The engine reports what it actually did (Ph10.1 honest feedback), so the
+            // command does not guess a success message here.
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void StretchCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // TABLE: rows -> columns -> column width -> row height -> placement
 // ---------------------------------------------------------------------------
 void TableCommand::start(CommandContext& ctx) {

@@ -33,6 +33,7 @@ the Windows installer is built and verified separately on real hardware (#6).
   paper/orientation/scale/window options. Exit codes 0/1/2/3. See `docs/CLI.md`.
 - **Raster IMAGE entity** (#10, **partial**) — external or base64-embedded payloads;
   selectable, movable and plotted. Viewport display, IMAGEATTACH/IMAGECLIP and DXF deferred.
+- **STRETCH** (#24) — the crossing-window modify command: points inside the window move, the rest of each entity stays anchored, and a dimension whose definition points move re-measures automatically.
 - `docs/ROADMAP.md` — a grouped survey of what is not yet implemented (issues #20–#33).
 
 ### Fixed
