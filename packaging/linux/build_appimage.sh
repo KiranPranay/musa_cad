@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build a standalone Musa CAD AppImage that bundles musacad_app + all Qt6 runtime
 # dependencies (incl. the qsvg image plugin, required for the ribbon/branding SVGs) +
-# the xcb platform plugin. Produces MusaCAD-<version>-x86_64.AppImage in the repo root.
+# the xcb + offscreen platform plugins. Produces MusaCAD-<version>-x86_64.AppImage in
+# the repo root.
 #
 # Reused verbatim by .github/workflows/build-linux.yml, so it must be self-contained:
 # it downloads linuxdeploy + linuxdeploy-plugin-qt + appimagetool on demand.
@@ -62,11 +63,19 @@ install -Dm644 "$REPO_ROOT/assets/branding/musacad.desktop" \
 install -Dm644 "$REPO_ROOT/assets/branding/musacad_logo.svg" \
         "$APPDIR/usr/share/icons/hicolor/scalable/apps/musacad.svg"
 
-# 4. Run linuxdeploy with the Qt plugin. EXTRA_PLATFORM_PLUGINS pins xcb; the qt plugin
-#    auto-bundles imageformats (qsvg/qico), iconengines, platforms, styles.
+# 4. Run linuxdeploy with the Qt plugin. EXTRA_PLATFORM_PLUGINS pins the platform plugins
+#    we actually need; the qt plugin auto-bundles imageformats (qsvg/qico), iconengines,
+#    platforms, styles.
+#
+#    `offscreen` is REQUIRED, not optional: `musacad --plot` (issue #11) forces the
+#    offscreen platform so a headless plot works from cron/CI/ssh. Without it bundled the
+#    AppImage aborts with "Could not find the Qt platform plugin \"offscreen\"" -- which is
+#    how this was found, by running --plot from an extracted AppImage rather than trusting
+#    that the desktop path implied the headless one. `minimal` costs nothing and is the
+#    documented fallback for a Qt app with no windowing system.
 echo "==> Running linuxdeploy + qt plugin"
 export QMAKE
-export EXTRA_PLATFORM_PLUGINS="libqxcb.so"
+export EXTRA_PLATFORM_PLUGINS="libqxcb.so;libqoffscreen.so;libqminimal.so"
 export EXTRA_QT_PLUGINS="svg;imageformats/qsvg;iconengines/qsvgicon;styles"
 export OUTPUT="$OUT"
 rm -f "$REPO_ROOT/$OUT"
