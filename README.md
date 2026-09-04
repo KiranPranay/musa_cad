@@ -122,7 +122,7 @@ src/app/       main(), thread orchestration
 include/musacad/   public headers mirroring src/
 shaders/       GLSL (embedded into the build)
 tests/         per-module unit tests + offscreen render & insertion benchmarks
-docs/          BUILD.md, ARCHITECTURE.md, CLI.md, COMMANDS.md
+docs/          BUILD.md, ARCHITECTURE.md, CLI.md, COMMANDS.md, ROADMAP.md
 scripts/       release + fixture-plotting helpers
 assets/        branding (logo/icons), ribbon SVG icons, screenshots
 ```
