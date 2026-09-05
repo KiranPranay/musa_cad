@@ -127,3 +127,195 @@ TEST_CASE("CHAMFER bevels the corner between two lines; undo restores") {
     REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 4; }));
     engine.stop();
 }
+
+// ---------------------------------------------------------------------------
+// TRIM / EXTEND must preserve the entity's own properties (issue #27).
+//
+// Both rebuild the entity as a fresh Add* command. Neither carried the original's
+// EntityProps, so the pieces were stamped with the CURRENT layer -- trim a line drawn
+// on "HIDDEN" while layer 0 is current and it silently changed layer, colour, linetype
+// and lineweight. They are the same object, shortened, and must stay so.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("#27: TRIM keeps the trimmed line's layer, not the current one") {
+    GeometryEngine engine;
+    engine.start();
+    Layer red;
+    red.name = "red";
+    red.color = {255, 0, 0};
+    engine.submit(AddLayerCommand{red}); // index 1
+    engine.submit(SetCurrentLayerCommand{1});
+    engine.submit(AddLineCommand{{0, 0}, {100, 0}, 1});    // the line to trim
+    engine.submit(AddLineCommand{{50, -10}, {50, 10}, 2}); // the cutting edge
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 4; }));
+
+    // The user moves on to layer 0 (white) before trimming -- the ordinary case.
+    engine.submit(SetCurrentLayerCommand{0});
+    engine.submit(TrimPickCommand{{80, 0}, 1.0, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("Trimmed.") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    REQUIRE(!engine.snapshot().line_batches.empty());
+    for (const ColorBatch& b : engine.snapshot().line_batches) {
+        REQUIRE(b.color == Rgb{255, 0, 0}); // still red: nothing jumped to layer 0
+    }
+    engine.stop();
+}
+
+TEST_CASE("#27: EXTEND keeps the extended line's layer, not the current one") {
+    GeometryEngine engine;
+    engine.start();
+    Layer red;
+    red.name = "red";
+    red.color = {255, 0, 0};
+    engine.submit(AddLayerCommand{red}); // index 1
+    engine.submit(SetCurrentLayerCommand{1});
+    engine.submit(AddLineCommand{{0, 0}, {50, 0}, 1});      // the line to extend
+    engine.submit(AddLineCommand{{100, -10}, {100, 10}, 2}); // the boundary
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 4; }));
+
+    engine.submit(SetCurrentLayerCommand{0});
+    engine.submit(ExtendPickCommand{{45, 0}, 1.0, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("Extended.") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    REQUIRE(!engine.snapshot().line_batches.empty());
+    for (const ColorBatch& b : engine.snapshot().line_batches) {
+        REQUIRE(b.color == Rgb{255, 0, 0});
+    }
+    engine.stop();
+}
+
+// ---------------------------------------------------------------------------
+// TRIM and EXTEND on CURVES (issue #27).
+//
+// The cutting/boundary side already handled curves; it was the *modified* entity that
+// had to be a line. Arcs and circles now trim, and arcs extend. The circle case is the
+// one with a convention to fix: a circle has no ends, so the crossings themselves bound
+// the piece to remove, and what survives is a single arc.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("#27: TRIM cuts an ARC back to a crossing line") {
+    // A semicircle of radius 50 crossed by the vertical x=0 line at (0,50). Picking the
+    // left half removes it, leaving the right quarter from (50,0) to (0,50).
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddArcCommand{{0, 0}, 50.0, 0.0, kPi, 1});
+    engine.submit(AddLineCommand{{0, -60}, {0, 60}, 2}); // crosses the arc at (0,50)
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+
+    engine.submit(TrimPickCommand{{-45.0, 20.0}, 3.0, 3}); // pick the left half of the arc
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("Trimmed.") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    // Nothing of the arc survives on the left; the right quarter does.
+    bool any_left = false;
+    bool any_right = false;
+    for (const Vec2& v : engine.snapshot().line_vertices) {
+        if (std::abs(length(v) - 50.0) < 0.5) { // on the arc, not the cutting line
+            if (v.x < -1.0) {
+                any_left = true;
+            }
+            if (v.x > 1.0) {
+                any_right = true;
+            }
+        }
+    }
+    REQUIRE(!any_left);
+    REQUIRE(any_right);
+    engine.stop();
+}
+
+TEST_CASE("#27: TRIM turns a CIRCLE into an arc between two crossings") {
+    // Two vertical cutters at x=+-30 cross the circle four times. Picking the top piece
+    // removes the span between the two crossings that bracket it.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddCircleCommand{{0, 0}, 50.0, 1});
+    engine.submit(AddLineCommand{{-30, -60}, {-30, 60}, 2});
+    engine.submit(AddLineCommand{{30, -60}, {30, 60}, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+
+    engine.submit(TrimPickCommand{{0.0, 50.0}, 3.0, 4}); // the top of the circle
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("Trimmed.") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    // The top of the circle is gone; the bottom is still there.
+    bool top = false;
+    bool bottom = false;
+    for (const Vec2& v : engine.snapshot().line_vertices) {
+        if (std::abs(length(v) - 50.0) < 0.5) {
+            if (v.y > 45.0) {
+                top = true;
+            }
+            if (v.y < -45.0) {
+                bottom = true;
+            }
+        }
+    }
+    REQUIRE(!top);
+    REQUIRE(bottom);
+    engine.stop();
+}
+
+TEST_CASE("#27: a circle with only one crossing is refused, not half-trimmed") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddCircleCommand{{0, 0}, 50.0, 1});
+    engine.submit(AddLineCommand{{50, 0}, {90, 0}, 2}); // touches at one point only
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    const std::size_t before = engine.snapshot().line_vertices.size();
+
+    engine.submit(TrimPickCommand{{0.0, 50.0}, 3.0, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("needs two crossing edges") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    REQUIRE(engine.snapshot().line_vertices.size() == before); // untouched
+    engine.stop();
+}
+
+TEST_CASE("#27: EXTEND grows an ARC round to a boundary") {
+    // A quarter circle from (50,0) to (0,50), and a boundary line along x=-50. Extending
+    // the (0,50) end sweeps it round to (-50,0).
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddArcCommand{{0, 0}, 50.0, 0.0, kPi / 2.0, 1});
+    engine.submit(AddLineCommand{{-50, -10}, {-50, 60}, 2}); // tangent-ish boundary at (-50,0)
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+
+    engine.submit(ExtendPickCommand{{0.0, 50.0}, 3.0, 3});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("Extended.") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    bool reached = false;
+    bool kept_start = false;
+    for (const Vec2& v : engine.snapshot().line_vertices) {
+        if (length(v - Vec2{-50, 0}) < 1.0) {
+            reached = true;
+        }
+        if (length(v - Vec2{50, 0}) < 1.0) {
+            kept_start = true;
+        }
+    }
+    REQUIRE(reached);
+    REQUIRE(kept_start); // the other end never moved
+    engine.stop();
+}
+
+TEST_CASE("#27: EXTEND on an arc with nothing ahead says so") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(AddArcCommand{{0, 0}, 50.0, 0.0, kPi / 2.0, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return !s.line_vertices.empty(); }));
+    engine.submit(ExtendPickCommand{{0.0, 50.0}, 3.0, 2});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("no boundary ahead") != std::string::npos;
+    }));
+    engine.stop();
+}

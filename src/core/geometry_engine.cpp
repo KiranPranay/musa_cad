@@ -1545,14 +1545,120 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
     report("Polar array created: " + std::to_string(made) + " copies.");
 }
 
+void GeometryEngine::apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t group) {
+    const ArcData* arc = store_.arc(h);
+    const Vec2 centre = arc->center;
+    const double r = arc->radius;
+    const double start = arc->start_angle;
+    const EntityProps props = arc->props;
+    const double cts = store_.celtscale(h);
+    double total = arc->end_angle - start;
+    while (total <= 0.0) {
+        total += kTwoPi;
+    }
+    // Which END grows: the one nearer the pick. Growing the end means sweeping FORWARD
+    // past `total`; growing the start means sweeping BACKWARD past 0, which is the same
+    // search run on the reversed arc.
+    const Vec2 start_pt{centre.x + r * std::cos(start), centre.y + r * std::sin(start)};
+    const Vec2 end_pt{centre.x + r * std::cos(arc->end_angle),
+                      centre.y + r * std::sin(arc->end_angle)};
+    const bool grow_end = length_squared(pick - end_pt) <= length_squared(pick - start_pt);
+
+    // Candidates near the arc's FULL circle, since the extension leaves the arc's own box.
+    std::vector<EntityHandle> cand;
+    grid_.query(Vec2{centre.x - r, centre.y - r}, Vec2{centre.x + r, centre.y + r}, cand);
+
+    // The nearest crossing strictly beyond the growing end, measured as extra sweep.
+    double best = 0.0;
+    bool found = false;
+    std::vector<Vec2> hits;
+    for (const EntityHandle c : cand) {
+        if (c == h) {
+            continue;
+        }
+        // Intersect the FULL circle the arc lies on: a boundary the arc does not reach
+        // yet is exactly what we are extending to, so the arc's own sweep must not filter.
+        hits.clear();
+        if (c.kind == EntityKind::Line) {
+            const LineData* m = store_.line(c);
+            Vec2 p0{};
+            Vec2 p1{};
+            const int n =
+                NativeKernel2D::line_circle_intersection(m->a, m->b, centre, r, p0, p1);
+            if (n >= 1) {
+                hits.push_back(p0);
+            }
+            if (n == 2) {
+                hits.push_back(p1);
+            }
+        } else if (c.kind == EntityKind::Circle || c.kind == EntityKind::Arc) {
+            // Curve-vs-curve: tessellate the other entity and cross each of its segments
+            // with this arc's circle. Accurate to the tessellation, which is the same
+            // guarantee the kernel's own curve-curve fallback gives.
+            std::vector<Vec2> poly;
+            kernel_.tessellate(store_, c, std::max(tess_tolerance_, 1e-6), poly);
+            for (std::size_t i = 1; i < poly.size(); ++i) {
+                Vec2 p0{};
+                Vec2 p1{};
+                const int n = NativeKernel2D::line_circle_intersection(poly[i - 1], poly[i], centre,
+                                                                       r, p0, p1);
+                if (n >= 1) {
+                    hits.push_back(p0);
+                }
+                if (n == 2) {
+                    hits.push_back(p1);
+                }
+            }
+        } else {
+            continue;
+        }
+        for (const Vec2& p : hits) {
+            // Extra sweep beyond the growing end, always positive going the growth way.
+            double extra = grow_end
+                               ? std::atan2(p.y - centre.y, p.x - centre.x) - arc->end_angle
+                               : start - std::atan2(p.y - centre.y, p.x - centre.x);
+            while (extra <= 1e-9) {
+                extra += kTwoPi;
+            }
+            // Never wrap all the way round onto the arc itself.
+            if (extra + total >= kTwoPi - 1e-9) {
+                continue;
+            }
+            if (!found || extra < best) {
+                best = extra;
+                found = true;
+            }
+        }
+    }
+    if (!found) {
+        report("Extend: no boundary ahead of that end.");
+        return;
+    }
+    const Command extended =
+        grow_end ? AddArcCommand{centre, r, start, start + total + best, 0, props, cts}
+                 : AddArcCommand{centre, r, start - best, start + total, 0, props, cts};
+    const Command original = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(group, original);
+    push_create_item(group, create_indexed(extended), extended);
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Extended.");
+}
+
 void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group) {
     const EntityHandle h = pick_nearest(pick, radius);
     if (h.is_null()) {
         report("Extend: nothing under the pick.");
         return;
     }
+    if (h.kind == EntityKind::Arc) {
+        apply_extend_arc(h, pick, group);
+        return;
+    }
     if (h.kind != EntityKind::Line) {
-        report("Extend: only line entities can be extended yet (closed shapes have no open end).");
+        report("Extend: only lines and arcs can be extended (closed shapes have no open end).");
         return;
     }
     const LineData* l = store_.line(h);
@@ -1624,10 +1730,13 @@ void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group)
         report("Extend: no boundary ahead of that end.");
         return;
     }
+    // Same object, longer: keep its properties rather than stamping the current layer.
+    const EntityProps props = store_.line(h)->props;
+    const double cts = store_.celtscale(h);
     const Command original = capture_entity(h);
     remove_indexed(h);
     push_erase_item(group, original);
-    const Command extended = AddLineCommand{fix, target, 0};
+    const Command extended = AddLineCommand{fix, target, 0, props, cts};
     push_create_item(group, create_indexed(extended), extended);
     redo_.clear();
     geom_dirty_ = true;
@@ -2750,26 +2859,20 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
         report("Trim: nothing under the pick.");
         return;
     }
-    if (h.kind != EntityKind::Line) {
-        report("Trim: only line entities can be trimmed yet (explode polylines first).");
-        return;
-    }
-    const LineData* l = store_.line(h);
-    const Vec2 a = l->a;
-    const Vec2 b = l->b;
-    const Vec2 ab = b - a;
-    const double len2 = length_squared(ab);
-    if (len2 <= 0.0) {
+    if (h.kind != EntityKind::Line && h.kind != EntityKind::Arc && h.kind != EntityKind::Circle) {
+        report("Trim: only lines, arcs and circles can be trimmed yet (explode polylines first).");
         return;
     }
 
-    // Intersection parameters along the line with every nearby other entity.
-    Vec2 lo;
-    Vec2 hi;
-    entity_aabb(store_, h, lo, hi);
+    // Every crossing with a nearby entity, whatever both kinds are. The kernel already
+    // resolves line-vs-curve exactly and falls back to tessellation for curve-vs-curve,
+    // so the cutting side has never been the limitation -- only the trimmed side was.
+    Vec2 lo_box;
+    Vec2 hi_box;
+    entity_aabb(store_, h, lo_box, hi_box);
     std::vector<EntityHandle> cand;
-    grid_.query(lo, hi, cand);
-    std::vector<double> ts;
+    grid_.query(lo_box, hi_box, cand);
+    std::vector<Vec2> crossings;
     std::vector<Vec2> hits;
     for (const EntityHandle c : cand) {
         if (c == h) {
@@ -2777,44 +2880,169 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
         }
         hits.clear();
         kernel_.intersect(store_, h, c, hits);
-        for (const Vec2& p : hits) {
+        crossings.insert(crossings.end(), hits.begin(), hits.end());
+    }
+    if (crossings.empty()) {
+        report("Trim: no crossing edge found.");
+        return;
+    }
+
+    // The surviving pieces, built per kind; the shared tail commits them as one group.
+    std::vector<Command> pieces;
+
+    if (h.kind == EntityKind::Line) {
+        const LineData* l = store_.line(h);
+        const Vec2 a = l->a;
+        const Vec2 b = l->b;
+        const Vec2 ab = b - a;
+        const double len2 = length_squared(ab);
+        if (len2 <= 0.0) {
+            return;
+        }
+        const EntityProps props = l->props;
+        const double cts = store_.celtscale(h);
+        std::vector<double> ts;
+        for (const Vec2& p : crossings) {
             const double t = dot(p - a, ab) / len2;
             if (t > 1e-6 && t < 1.0 - 1e-6) {
                 ts.push_back(t);
             }
         }
-    }
-    if (ts.empty()) {
-        report("Trim: no crossing edge found.");
-        return;
-    }
-    std::sort(ts.begin(), ts.end());
-    const double tp = std::clamp(dot(pick - a, ab) / len2, 0.0, 1.0);
-    double lo_t = 0.0;
-    double hi_t = 1.0;
-    for (const double t : ts) {
-        if (t <= tp) {
-            lo_t = t;
+        if (ts.empty()) {
+            report("Trim: no crossing edge found.");
+            return;
         }
-        if (t >= tp) {
-            hi_t = t;
-            break;
+        std::sort(ts.begin(), ts.end());
+        const double tp = std::clamp(dot(pick - a, ab) / len2, 0.0, 1.0);
+        double lo_t = 0.0;
+        double hi_t = 1.0;
+        for (const double t : ts) {
+            if (t <= tp) {
+                lo_t = t;
+            }
+            if (t >= tp) {
+                hi_t = t;
+                break;
+            }
         }
+        // The pieces are the SAME object, shortened, so they keep its properties. Read
+        // them BEFORE the store pointer is invalidated, and pass them explicitly --
+        // leaving props empty stamps the CURRENT layer, silently moving the line off its own.
+        if (lo_t > 1e-6) {
+            pieces.push_back(AddLineCommand{a, a + ab * lo_t, 0, props, cts});
+        }
+        if (hi_t < 1.0 - 1e-6) {
+            pieces.push_back(AddLineCommand{a + ab * hi_t, b, 0, props, cts});
+        }
+    } else if (h.kind == EntityKind::Arc) {
+        const ArcData* arc = store_.arc(h);
+        const Vec2 centre = arc->center;
+        const double r = arc->radius;
+        const double start = arc->start_angle;
+        const EntityProps props = arc->props;
+        const double cts = store_.celtscale(h);
+        double total = arc->end_angle - start;
+        while (total <= 0.0) {
+            total += kTwoPi;
+        }
+        // Sweep from the arc's own start, so a crossing is one number and the surviving
+        // pieces are just the two ends of that sweep -- the same shape as the line case.
+        const auto sweep_of = [&](Vec2 p) {
+            double sw = std::atan2(p.y - centre.y, p.x - centre.x) - start;
+            while (sw < 0.0) {
+                sw += kTwoPi;
+            }
+            return sw;
+        };
+        std::vector<double> ss;
+        for (const Vec2& p : crossings) {
+            const double sw = sweep_of(p);
+            if (sw > 1e-6 && sw < total - 1e-6) {
+                ss.push_back(sw);
+            }
+        }
+        if (ss.empty()) {
+            report("Trim: no crossing edge found.");
+            return;
+        }
+        std::sort(ss.begin(), ss.end());
+        const double sp = std::clamp(sweep_of(pick), 0.0, total);
+        double lo_s = 0.0;
+        double hi_s = total;
+        for (const double sw : ss) {
+            if (sw <= sp) {
+                lo_s = sw;
+            }
+            if (sw >= sp) {
+                hi_s = sw;
+                break;
+            }
+        }
+        if (lo_s > 1e-6) {
+            pieces.push_back(AddArcCommand{centre, r, start, start + lo_s, 0, props, cts});
+        }
+        if (hi_s < total - 1e-6) {
+            pieces.push_back(AddArcCommand{centre, r, start + hi_s, start + total, 0, props, cts});
+        }
+    } else { // Circle
+        const CircleData* ci = store_.circle(h);
+        const Vec2 centre = ci->center;
+        const double r = ci->radius;
+        const EntityProps props = ci->props;
+        const double cts = store_.celtscale(h);
+        // A circle has no ends, so the crossings themselves bound the piece to remove:
+        // find the two that bracket the pick, going round, and keep the rest. That
+        // leaves ONE arc -- a circle with a piece missing is an arc.
+        std::vector<double> as;
+        for (const Vec2& p : crossings) {
+            double ang = std::atan2(p.y - centre.y, p.x - centre.x);
+            while (ang < 0.0) {
+                ang += kTwoPi;
+            }
+            as.push_back(ang);
+        }
+        std::sort(as.begin(), as.end());
+        as.erase(std::unique(as.begin(), as.end(),
+                             [](double x, double y) { return std::abs(x - y) < 1e-9; }),
+                 as.end());
+        if (as.size() < 2) {
+            report("Trim: a circle needs two crossing edges to trim between.");
+            return;
+        }
+        double pa = std::atan2(pick.y - centre.y, pick.x - centre.x);
+        while (pa < 0.0) {
+            pa += kTwoPi;
+        }
+        // The bracketing pair, wrapping past 2*pi for a pick in the last gap.
+        double from = as.back();
+        double to = as.front();
+        for (std::size_t i = 0; i < as.size(); ++i) {
+            const double lo_a = as[i];
+            const double hi_a = (i + 1 < as.size()) ? as[i + 1] : as.front() + kTwoPi;
+            const double p_adj = (pa >= lo_a) ? pa : pa + kTwoPi;
+            if (p_adj >= lo_a && p_adj <= hi_a) {
+                from = lo_a;
+                to = hi_a;
+                break;
+            }
+        }
+        // Keep the complement: from the end of the removed span round to its start.
+        pieces.push_back(AddArcCommand{centre, r, to, from + kTwoPi, 0, props, cts});
     }
 
+    if (pieces.empty()) {
+        report("Trim: that would remove the whole object -- use ERASE.");
+        return;
+    }
     const Command original = capture_entity(h);
     remove_indexed(h);
     push_erase_item(group, original);
-    if (lo_t > 1e-6) {
-        const Command piece = AddLineCommand{a, a + ab * lo_t, 0};
-        push_create_item(group, create_indexed(piece), piece);
-    }
-    if (hi_t < 1.0 - 1e-6) {
-        const Command piece = AddLineCommand{a + ab * hi_t, b, 0};
+    for (const Command& piece : pieces) {
         push_create_item(group, create_indexed(piece), piece);
     }
     redo_.clear();
     geom_dirty_ = true;
+    dirty_ = true;
     report("Trimmed.");
 }
 

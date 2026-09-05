@@ -116,9 +116,11 @@ commands (Ribbon Phase A):
 | DIVIDE (n equal segments) | DIV | Implemented |
 | MEASURE (fixed interval) | ME | Implemented |
 | TRIM a line (cut by line/circle/arc edges) | TR | Implemented |
-| TRIM an arc/circle/polyline *entity* | TR | Partial (line entities only; curve entities deferred) |
+| TRIM an arc/circle *entity* | TR | Implemented (a trimmed circle becomes an arc) |
+| TRIM a polyline *entity* | TR | Planned (explode first) |
 | EXTEND a line (to line/circle/arc boundary) | EX | Implemented |
-| EXTEND an arc/polyline *entity* | EX | Partial (line entities only) |
+| EXTEND an arc *entity* | EX | Implemented |
+| EXTEND a polyline *entity* | EX | Planned (explode first) |
 | FILLET (line/line; radius 0 or tangent arc) | F | Implemented |
 | FILLET (polyline corner → a true arc segment / bulge, dimensionable) | F | Implemented (incl. RECTANGLE corners — a rectangle IS a closed polyline; verified end-to-end through the full F-command path, including the closing-edge wrap corner) |
 | Polyline arc segments (per-vertex bulge, AutoCAD LWPOLYLINE) | — | Implemented |
