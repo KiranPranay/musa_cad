@@ -123,7 +123,13 @@ says this.
    its own at the grip's *original* position, so the wait could return one snapshot early
    and the assertion then checked the moved position against the un-moved preview. Now
    verified with **12 consecutive full runs at -j32**, all green.
-4. **The GUI self-test had been failing, silently, for two releases.** Two assertions went
+4. **TRIM and EXTEND were silently changing an entity's layer.** Both rebuild the entity
+   as a fresh `Add*` command, and neither carried the original's `EntityProps` or
+   `celtscale` — so the result was stamped with the **current** layer. Trim a line drawn on
+   "HIDDEN" while layer 0 is current and it quietly changed layer, colour, linetype and
+   lineweight. Found while extending them to curves; both tests written failing first,
+   against the resolved batch colour, so they check what you actually see.
+5. **The GUI self-test had been failing, silently, for two releases.** Two assertions went
    stale when later features landed: dimension grips expected 5 but issue #21 added the
    label grip making 6; the DWG gap catalogue used a `HATCH` as its "unsupported entity",
    then hatch import landed, so the check **stopped testing anything and started failing**.
@@ -148,6 +154,13 @@ All are registered, documented in `docs/COMMANDS.md`, icon'd, and covered by tes
 | `BREAKATPOINT` | Split with no gap |
 | `ALIGN` (`AL`) | Two point pairs, optional uniform scale |
 | `LENGTHEN` (`LEN`) | DElta / Percent / Total, on lines and arcs |
+| `PURGE` (`PU`) | Unused layers (dimstyles/blocks still Planned) |
+
+**TRIM and EXTEND also stopped being line-only.** An arc trims, a **circle trims to an
+arc** (it has no ends, so the crossings themselves bound the piece to remove, and fewer
+than two is refused rather than half-trimmed), and an arc extends round to a boundary. The
+boundary side already handled curves — it was only the *modified* entity that had to be a
+line.
 
 `AddPointCommand` was wired through every path a new entity kind must reach to be a
 first-class citizen — capture, add-to-store, the property fan-out, and all five transforms
@@ -164,7 +177,7 @@ on the chord between its ends.
 
 You asked that everything be tested "either by script or gui control". Both.
 
-- **Unit/integration: 526 tests, all passing** (up from 459). 12 consecutive full runs at
+- **Unit/integration: 536 tests, all passing** (up from 459). 12 consecutive full runs at
   `-j32` green after the flake fix.
 - **GUI: a new real-window self-test section** drives each new or fixed command through the
   **real `CommandProcessor`** — the same route your keystrokes take, prompts and parsing
@@ -187,9 +200,9 @@ happens on the render thread, and making it write the processor's state would in
 
 | Issue | Title | Status after tonight |
 |---|---|---|
-| **#27** | Modify gaps | **5 of 5 missing commands done**: BREAK, LENGTHEN, ALIGN, DIVIDE, MEASURE. Remaining: curve TRIM/EXTEND/FILLET (the *modified* entity must still be a line) |
+| **#27** | Modify gaps | **Substantially closed.** All 5 missing commands done (BREAK, LENGTHEN, ALIGN, DIVIDE, MEASURE), **plus** arc/circle TRIM and arc EXTEND. Remaining: polyline TRIM/EXTEND and the curve FILLET cases |
 | **#23** | Draw commands | **POINT and POLYGON done.** Remaining: SPLINE, ELLIPSE, XLINE/RAY |
-| #30 | Inquiry + housekeeping | DIST/AREA/ID/LIST landed last run. Remaining: PURGE, AUDIT, UNITS |
+| #30 | Inquiry + housekeeping | DIST/AREA/ID/LIST landed last run; **PURGE done** (unused layers). Remaining: AUDIT, UNITS, and purging dimstyles/blocks |
 | #28 | Dimension types | DIMBASELINE/DIMCONTINUE landed last run. Remaining: DIMORDINATE, DIMJOGGED, DIMARC |
 | #33 | Smaller parity gaps | Untouched — but see the DONUT note below |
 | #10 | Raster IMAGE entity | Partial slice landed last run |
@@ -215,10 +228,9 @@ happens on the render thread, and making it write the processor's state would in
 
 ### What I would do next, in priority order
 
-1. **Curve TRIM/EXTEND** (#27). The boundary side already handles curves; it is the
-   modified entity that is line-only. This is the biggest remaining everyday wall.
-2. **PURGE and UNITS** (#30). Small, self-contained, no data-model change.
-3. **ELLIPSE as a real entity** (#23), which also improves DXF fidelity (#31).
+1. **ELLIPSE as a real entity** (#23), which also improves DXF fidelity (#31).
+2. **Polyline TRIM/EXTEND** and the curve **FILLET** cases — the rest of #27.
+3. **UNITS and AUDIT** (#30), and extending PURGE to dimstyles and block definitions.
 4. **Associative arrays**, which unlocks ARRAYEDIT/ARRAYCLOSE.
 5. **Polyline width**, which unlocks DONUT and wide-polyline DXF fidelity.
 
@@ -229,5 +241,5 @@ happens on the render thread, and making it write the processor's state would in
 - Branch `fix/stretch-window-picks`, merged into `main`. No force-push, no history
   rewritten, no tags or releases touched.
 - No commit carries a Claude co-author trailer.
-- `cmake --build build/dev` clean; **526/526 tests pass**; GUI self-test `overall: PASS`.
+- `cmake --build build/dev` clean; **536/536 tests pass**; GUI self-test `overall: PASS`.
 - No release cut, as instructed.
