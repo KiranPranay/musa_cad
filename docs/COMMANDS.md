@@ -39,6 +39,7 @@ commands (Ribbon Phase A):
 | ARRAYPOLAR | Create a circular pattern of copies about a centre point. |
 | ARRAYPATH | Distribute copies evenly along a path curve. |
 | POLYGON (POL) | Draw a regular polygon by centre or by one edge. |
+| PURGE (PU) | Remove unused layers from the drawing. |
 | ALIGN (AL) | Move, rotate and optionally scale a selection onto two destination points. |
 | LENGTHEN (LEN) | Change the length of a line or arc. |
 | BREAK (BR) | Break a curve between two points. |
@@ -108,6 +109,8 @@ commands (Ribbon Phase A):
 | ARRAYPATH (Divide / Measure, align to path) | ARRAYPATH | Implemented |
 | ARRAYEDIT / ARRAYCLOSE | - | Not applicable (arrays are non-associative -- see below) |
 | POLYGON (centre: Inscribed/Circumscribed; Edge) | POL | Implemented |
+| PURGE (unused layers) | PU | Implemented |
+| PURGE (dimstyles, text styles, block definitions) | PU | Planned |
 | ALIGN (2 point pairs, optional uniform scale) | AL | Implemented |
 | LENGTHEN (DElta / Percent / Total; lines + arcs) | LEN | Implemented |
 | BREAK (line, arc, circle, open + closed polyline) | BR | Implemented |

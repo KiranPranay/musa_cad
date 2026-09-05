@@ -2015,6 +2015,26 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
     return true;
 }
 
+void GeometryEngine::apply_purge() {
+    // Walk BACKWARDS: remove_layer reindexes every reference above the slot it drops, so
+    // going down means the indices still to be examined never move under us.
+    int purged = 0;
+    for (std::size_t i = store_.layer_count(); i-- > 1;) {
+        if (store_.remove_layer(static_cast<std::uint16_t>(i))) {
+            ++purged;
+        }
+    }
+    if (purged == 0) {
+        report("Purge: nothing to purge.");
+        return;
+    }
+    // Layer indices moved, so every cached AABB key is stale in the same way a layer
+    // change is; a full re-publish is the cheapest correct answer.
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Purged " + std::to_string(purged) + (purged == 1 ? " layer." : " layers."));
+}
+
 void GeometryEngine::apply_align(const AlignSelectionCommand& c) {
     const std::vector<EntityHandle> sel = selection_;
     if (sel.empty()) {
@@ -3524,6 +3544,8 @@ void GeometryEngine::apply(const Command& command) {
                 apply_divide_measure(c);
             } else if constexpr (std::is_same_v<T, BreakCommand>) {
                 apply_break(c);
+            } else if constexpr (std::is_same_v<T, PurgeCommand>) {
+                apply_purge();
             } else if constexpr (std::is_same_v<T, AlignSelectionCommand>) {
                 apply_align(c);
             } else if constexpr (std::is_same_v<T, LengthenCommand>) {

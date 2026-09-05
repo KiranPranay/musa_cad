@@ -118,3 +118,90 @@ TEST_CASE("Snapshot publishes the layer table and current layer") {
     }));
     engine.stop();
 }
+
+// ---------------------------------------------------------------------------
+// PURGE (issue #30): drop symbol-table entries nothing refers to.
+//
+// The rule is AutoCAD's, and it is already enforced by remove_layer: layer 0, the
+// CURRENT layer, and any layer holding geometry all stay. Purge is therefore a walk,
+// not a new policy -- which is the point of putting the refusal in the store.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("#30: PURGE removes unused layers and keeps the ones in use") {
+    GeometryEngine engine;
+    engine.start();
+    const auto layer = [](const char* n) {
+        Layer l;
+        l.name = n;
+        return l;
+    };
+    engine.submit(AddLayerCommand{layer("used")});    // index 1
+    engine.submit(AddLayerCommand{layer("empty_a")}); // index 2
+    engine.submit(AddLayerCommand{layer("empty_b")}); // index 3
+    engine.submit(AddLayerCommand{layer("current")}); // index 4
+    engine.submit(SetCurrentLayerCommand{1});
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1}); // puts geometry on "used"
+    engine.submit(SetCurrentLayerCommand{4});          // "current" is empty but current
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.layers.size() == 5; }));
+
+    engine.submit(PurgeCommand{2});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("Purged 2 layers.") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    // 0, "used" (has geometry) and "current" (is current) survive; the two empties go.
+    const auto& ls = engine.snapshot().layers;
+    REQUIRE(ls.size() == 3);
+    bool has_used = false;
+    bool has_current = false;
+    for (const auto& l : ls) {
+        REQUIRE(l.name != "empty_a");
+        REQUIRE(l.name != "empty_b");
+        has_used = has_used || l.name == "used";
+        has_current = has_current || l.name == "current";
+    }
+    REQUIRE(has_used);
+    REQUIRE(has_current);
+    engine.stop();
+}
+
+TEST_CASE("#30: PURGE says so when there is nothing to purge") {
+    // Ph10.1: an empty purge must not look like a successful one.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(PurgeCommand{1});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("Purge: nothing to purge.") != std::string::npos;
+    }));
+    engine.stop();
+}
+
+TEST_CASE("#30: geometry keeps its layer across a purge that reindexes") {
+    // Removing a layer shifts every index above it. If purge walked upwards the
+    // surviving entities would end up pointing at the wrong layer, so it walks down.
+    GeometryEngine engine;
+    engine.start();
+    Layer gap;
+    gap.name = "gap";
+    Layer red;
+    red.name = "red";
+    red.color = {255, 0, 0};
+    engine.submit(AddLayerCommand{gap}); // index 1 -- will be purged
+    engine.submit(AddLayerCommand{red}); // index 2 -- holds the line
+    engine.submit(SetCurrentLayerCommand{2});
+    engine.submit(AddLineCommand{{0, 0}, {10, 0}, 1});
+    REQUIRE(wait_until(engine, [](const auto& s) { return s.layers.size() == 3; }));
+
+    engine.submit(PurgeCommand{2});
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return s.status.find("Purged 1 layer.") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    REQUIRE(engine.snapshot().layers.size() == 2);
+    // The line is still red: its layer reference followed the reindex.
+    REQUIRE(!engine.snapshot().line_batches.empty());
+    for (const ColorBatch& b : engine.snapshot().line_batches) {
+        REQUIRE(b.color == Rgb{255, 0, 0});
+    }
+    engine.stop();
+}

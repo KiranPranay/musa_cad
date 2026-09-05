@@ -28,6 +28,14 @@ namespace musacad::core {
 /// Which entities ERASE targets (selection/picking arrives in Phase 5).
 enum class EraseScope : std::uint8_t { Last, All };
 
+/// PURGE (AutoCAD): drop symbol-table entries nothing refers to. Today that means
+/// unused LAYERS, which is what an imported drawing accumulates dozens of; dimension
+/// styles, text styles and block definitions are not purgeable yet (see docs/COMMANDS.md).
+/// Reports how many went, so an empty purge says so rather than looking like success.
+struct PurgeCommand {
+    std::uint64_t group = 0;
+};
+
 /// ALIGN (AutoCAD): move, rotate and optionally uniformly scale the selection so that
 /// `src1` lands on `dst1` and the direction src1->src2 lines up with dst1->dst2. With
 /// `scale` true the distance dst1..dst2 also sets the size, which is how a detail is
@@ -790,7 +798,7 @@ using Command =
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
                  ArrayPathCommand, AddPointCommand, DividePathCommand, BreakCommand,
-                 AlignSelectionCommand, LengthenCommand,
+                 AlignSelectionCommand, LengthenCommand, PurgeCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,

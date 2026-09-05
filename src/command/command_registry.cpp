@@ -137,6 +137,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/rotate.svg", "Rotate selected objects around a base point.");
     reg({"SC", "SCALE"}, [] { return std::make_unique<ScaleCommand>(); }, "assets/ribbon/scale.svg",
         "Resize selected objects uniformly about a base point.");
+    reg({"PU", "PURGE"}, [] { return std::make_unique<PurgeCommand>(); },
+        "assets/ribbon/purge.svg", "Remove unused layers from the drawing.");
     reg({"AL", "ALIGN"}, [] { return std::make_unique<AlignCommand>(); },
         "assets/ribbon/align.svg",
         "Move, rotate and optionally scale a selection onto two destination points.");

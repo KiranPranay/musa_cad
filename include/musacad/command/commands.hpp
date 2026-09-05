@@ -441,6 +441,21 @@ private:
     bool done_ = false;
 };
 
+/// PURGE (AutoCAD PU). No prompts: an imported drawing's unused layers just go, and the
+/// engine reports how many. Undo is deliberately NOT offered -- purging removes symbol
+/// table entries nothing refers to, so there is no geometry to restore.
+class PurgeCommand final : public ICommand {
+public:
+    std::string name() const override { return "PURGE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// ALIGN (AutoCAD AL): fit the selection between two known points in one step, with an
 /// optional uniform scale. Two source/destination pairs, then the scale question --
 /// AutoCAD's 2D flow, without the third pair that only means anything in 3D.

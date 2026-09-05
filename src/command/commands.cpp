@@ -1055,6 +1055,22 @@ int parse_int(const std::string& t, int fallback) {
 } // namespace
 
 // ---------------------------------------------------------------------------
+// PURGE: drop unused symbol-table entries
+// ---------------------------------------------------------------------------
+void PurgeCommand::start(CommandContext& ctx) {
+    ctx.submit(core::PurgeCommand{ctx.group_id()});
+    // The engine reports the count (Ph10.1); there is nothing to prompt for.
+    done_ = true;
+}
+
+void PurgeCommand::input(CommandContext& /*ctx*/, const std::string& /*text*/) {}
+
+void PurgeCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // ALIGN: two source/destination pairs, optional uniform scale
 // ---------------------------------------------------------------------------
 void AlignCommand::start(CommandContext& ctx) {
