@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 Pranay Kiran
 //
-// The ARRAY family (issue #25). AutoCAD ships ARRAY/-ARRAY (which ask for the type),
+// The ARRAY family. AutoCAD ships ARRAY/-ARRAY (which ask for the type),
 // ARRAYRECT, ARRAYPOLAR and ARRAYPATH, plus ARRAYEDIT/ARRAYCLOSE for ASSOCIATIVE
 // arrays. Musa CAD's arrays are non-associative -- the same thing AutoCAD's own -ARRAY
 // produces -- so the four creation commands are the whole family here; there is no
@@ -76,7 +76,7 @@ struct ProcHarness {
 // Rectangular
 // ---------------------------------------------------------------------------
 
-TEST_CASE("#25: a rectangular array's axis angle rotates the lattice, not the items") {
+TEST_CASE("ARRAY: a rectangular array's axis angle rotates the lattice, not the items") {
     // AutoCAD's "Angle of axes": the rows/columns run along a rotated pair of axes
     // while each copy keeps the orientation it was drawn with. A 1x2 array at 90
     // degrees therefore puts the second item straight UP, not to the right.
@@ -98,7 +98,7 @@ TEST_CASE("#25: a rectangular array's axis angle rotates the lattice, not the it
     engine.stop();
 }
 
-TEST_CASE("#25: a rectangular array reports how many copies it made") {
+TEST_CASE("ARRAY: a rectangular array reports how many copies it made") {
     GeometryEngine engine;
     engine.start();
     engine.submit(AddLineCommand{{0, 0}, {1, 0}, 1});
@@ -112,7 +112,7 @@ TEST_CASE("#25: a rectangular array reports how many copies it made") {
     engine.stop();
 }
 
-TEST_CASE("#25: arraying nothing says so instead of silently doing nothing") {
+TEST_CASE("ARRAY: arraying nothing says so instead of silently doing nothing") {
     // Ph10.1: the engine reports what actually happened rather than letting the
     // command guess a success message.
     GeometryEngine engine;
@@ -128,7 +128,7 @@ TEST_CASE("#25: arraying nothing says so instead of silently doing nothing") {
 // Path -- Divide
 // ---------------------------------------------------------------------------
 
-TEST_CASE("#25: a path array spreads N items over the whole path (Divide)") {
+TEST_CASE("ARRAY: a path array spreads N items over the whole path (Divide)") {
     // A 100-long horizontal line as the path, a small circle as the item. Five items
     // over an OPEN path land at 0, 25, 50, 75, 100 -- endpoints included, which is what
     // AutoCAD's Divide method does.
@@ -162,7 +162,7 @@ TEST_CASE("#25: a path array spreads N items over the whole path (Divide)") {
     engine.stop();
 }
 
-TEST_CASE("#25: a closed path gets no duplicate item at the seam") {
+TEST_CASE("ARRAY: a closed path gets no duplicate item at the seam") {
     // On a closed path the start and end are the same point, so N items must divide
     // by N, not N-1 -- otherwise the last item lands on top of the first.
     GeometryEngine engine;
@@ -197,7 +197,7 @@ TEST_CASE("#25: a closed path gets no duplicate item at the seam") {
 // Path -- Measure
 // ---------------------------------------------------------------------------
 
-TEST_CASE("#25: Measure steps by distance and stops at the end of the path") {
+TEST_CASE("ARRAY: Measure steps by distance and stops at the end of the path") {
     // Spacing 30 on a 100-long path fits stations at 0, 30, 60, 90 -- four items. The
     // fifth would be at 120, past the end, so it is not placed.
     GeometryEngine engine;
@@ -228,7 +228,7 @@ TEST_CASE("#25: Measure steps by distance and stops at the end of the path") {
     engine.stop();
 }
 
-TEST_CASE("#25: Measure honours an item-count cap") {
+TEST_CASE("ARRAY: Measure honours an item-count cap") {
     GeometryEngine engine;
     engine.start();
     engine.submit(AddLineCommand{{0, 0}, {100, 0}, 1});
@@ -259,7 +259,7 @@ TEST_CASE("#25: Measure honours an item-count cap") {
 // Path -- alignment and guards
 // ---------------------------------------------------------------------------
 
-TEST_CASE("#25: aligned items turn with the path; unaligned ones do not") {
+TEST_CASE("ARRAY: aligned items turn with the path; unaligned ones do not") {
     // The path turns a right angle at (100,0). An item on the vertical leg must be
     // rotated 90 degrees when aligned, and untouched when not.
     const auto run = [](bool align) {
@@ -302,7 +302,7 @@ TEST_CASE("#25: aligned items turn with the path; unaligned ones do not") {
     REQUIRE(!uv);
 }
 
-TEST_CASE("#25: a path array refuses to array the path along itself") {
+TEST_CASE("ARRAY: a path array refuses to array the path along itself") {
     // If the path is also in the selection every copy drags a copy of the path with
     // it, which is never what anyone means.
     GeometryEngine engine;
@@ -326,7 +326,7 @@ TEST_CASE("#25: a path array refuses to array the path along itself") {
     engine.stop();
 }
 
-TEST_CASE("#25: a path array with no curve under the pick says so") {
+TEST_CASE("ARRAY: a path array with no curve under the pick says so") {
     GeometryEngine engine;
     engine.start();
     engine.submit(AddCircleCommand{{0, 50}, 1.0, 1});
@@ -346,7 +346,7 @@ TEST_CASE("#25: a path array with no curve under the pick says so") {
     engine.stop();
 }
 
-TEST_CASE("#25: a path array is one undo group") {
+TEST_CASE("ARRAY: a path array is one undo group") {
     GeometryEngine engine;
     engine.start();
     engine.submit(AddLineCommand{{0, 0}, {100, 0}, 1});
@@ -374,7 +374,7 @@ TEST_CASE("#25: a path array is one undo group") {
 // The command flows
 // ---------------------------------------------------------------------------
 
-TEST_CASE("#25: ARRAY still asks the classic four rectangular prompts") {
+TEST_CASE("ARRAY: ARRAY still asks the classic four rectangular prompts") {
     // The legacy -ARRAY flow is unchanged: rows, columns, row spacing, column spacing,
     // and then it fires. No axis-angle prompt was inserted into it.
     ProcHarness h;
@@ -395,7 +395,7 @@ TEST_CASE("#25: ARRAY still asks the classic four rectangular prompts") {
     REQUIRE(ar->angle == Approx(0.0));
 }
 
-TEST_CASE("#25: ARRAYRECT adds the axis-angle prompt") {
+TEST_CASE("ARRAY: ARRAYRECT adds the axis-angle prompt") {
     ProcHarness h;
     h.proc.set_selection_count(1);
     h.proc.submit_line("ARRAYRECT");
@@ -411,7 +411,7 @@ TEST_CASE("#25: ARRAYRECT adds the axis-angle prompt") {
     REQUIRE(ar->angle == Approx(to_radians(30.0)));
 }
 
-TEST_CASE("#25: ARRAY's PA and PO keywords are told apart, and a bare P is refused") {
+TEST_CASE("ARRAY: ARRAY's PA and PO keywords are told apart, and a bare P is refused") {
     // AutoCAD distinguishes PAth from POlar by two letters; guessing at a bare "P"
     // would silently build the wrong kind of array.
     {
@@ -457,7 +457,7 @@ TEST_CASE("#25: ARRAY's PA and PO keywords are told apart, and a bare P is refus
     }
 }
 
-TEST_CASE("#25: ARRAYPATH's Measure branch carries the spacing through") {
+TEST_CASE("ARRAY: ARRAYPATH's Measure branch carries the spacing through") {
     ProcHarness h;
     h.proc.set_selection_count(1);
     h.proc.submit_line("ARRAYPATH");
@@ -473,7 +473,7 @@ TEST_CASE("#25: ARRAYPATH's Measure branch carries the spacing through") {
     REQUIRE(!ap->align);
 }
 
-TEST_CASE("#25: every array command refuses to start with an empty selection") {
+TEST_CASE("ARRAY: every array command refuses to start with an empty selection") {
     for (const char* alias : {"AR", "ARRAY", "-ARRAY", "ARRAYRECT", "ARRAYPOLAR", "ARRAYPATH"}) {
         ProcHarness h;
         h.proc.set_selection_count(0);
