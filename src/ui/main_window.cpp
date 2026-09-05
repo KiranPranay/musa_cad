@@ -66,6 +66,7 @@
 
 #include "musacad/command/command_processor.hpp"
 #include "musacad/core/command.hpp"
+#include "musacad/core/table_types.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/properties_palette.hpp"
@@ -4332,6 +4333,197 @@ bool MainWindow::selftest_param_dialogs() {
     std::printf("[selftest] CIRCLE radius via typing: %s\n", rad_ok ? "PASS" : "FAIL");
 
     all = all && ribbon_ok && diam_ok && rad_ok;
+    engine_->submit(core::NewDocumentCommand{});
+    return all;
+}
+
+bool MainWindow::selftest_commands() {
+    const auto pump = [](auto pred) {
+        for (int i = 0; i < 1500; ++i) {
+            QCoreApplication::processEvents();
+            if (pred()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    // Every command below is typed into the REAL CommandProcessor, so these exercise
+    // the same route a user's keystrokes take -- prompts, parsing, pick handling -- and
+    // not just the engine underneath.
+    const auto type = [this](const char* line) { processor_->submit_line(line); };
+    const auto clear = [&] {
+        engine_->submit(core::NewDocumentCommand{});
+        return pump([this] { return viewport_->line_vertex_count() == 0; });
+    };
+    const auto bounds = [this](core::Vec2& mn, core::Vec2& mx) {
+        return viewport_->content_bounds(mn, mx);
+    };
+    bool all = true;
+    core::Vec2 mn;
+    core::Vec2 mx;
+
+    // (1) STRETCH, the headline fix, with ORTHO ON -- the setting that used to collapse
+    // the crossing window to zero area so nothing was ever caught. Stretch the RIGHT
+    // half of a 100x50 rectangle by +30 in x: the left edge must stay at 0 and the
+    // right must land at 130.
+    clear();
+    const bool ortho_before = ortho_action_ != nullptr && ortho_action_->isChecked();
+    if (ortho_action_ != nullptr) {
+        ortho_action_->setChecked(true);
+    }
+    type("REC");
+    type("0,0");
+    type("100,50");
+    bool stretch_ok = pump([&] { return bounds(mn, mx) && mx.x > 99.0; });
+    type("S");
+    type("50,-10");  // crossing-window corner 1
+    type("130,60");  // corner 2 -- ortho must NOT flatten this onto y=-10
+    type("100,0");   // base
+    type("130,0");   // displacement: +30 in x
+    stretch_ok = stretch_ok && pump([&] { return bounds(mn, mx) && mx.x > 129.0 && mx.x < 131.0; });
+    stretch_ok = stretch_ok && bounds(mn, mx) && std::abs(mn.x) < 0.001 &&
+                 std::abs(mx.y - 50.0) < 0.001; // the un-windowed half never moved
+    if (ortho_action_ != nullptr) {
+        ortho_action_->setChecked(ortho_before);
+    }
+    std::printf("[selftest] STRETCH with ORTHO on: half moves, half stays: %s\n",
+                stretch_ok ? "PASS" : "FAIL");
+    all = all && stretch_ok;
+
+    // (2) TABLE: place one, then edit a cell through the same route a double-click
+    // takes, and confirm the text reaches the store.
+    clear();
+    type("TABLE");
+    type("2");      // rows
+    type("2");      // columns
+    type("40");     // column width
+    type("8");      // row height
+    type("0,100");  // insertion point
+    bool table_ok = pump([this] { return viewport_->line_vertex_count() > 0; });
+    const std::uint64_t sv = viewport_->status_version();
+    engine_->submit(core::EditTextContentCommand{{20.0, 96.0}, 1.0, "ITEM",
+                                                 processor_->begin_group()});
+    table_ok = table_ok && pump([this, sv] {
+        return viewport_->status_version() != sv &&
+               viewport_->last_status().find("Table cell edited.") != std::string::npos;
+    });
+    std::printf("[selftest] TABLE places and a cell accepts text: %s\n",
+                table_ok ? "PASS" : "FAIL");
+    all = all && table_ok;
+
+    // (2b) A row-boundary grip resizes that row. Selecting the table publishes the grip
+    // set; the row grips are the ones at or past kTableRowGripBase.
+    engine_->submit(core::SelectPickCommand{{20.0, 96.0}, 1.0, false});
+    bool row_ok = pump([this] { return viewport_->grip_count() > 0; });
+    core::GripInfo row_grip{};
+    bool found_row = false;
+    for (int i = 0; i < viewport_->grip_count(); ++i) {
+        const core::GripInfo g = viewport_->grip_info(i);
+        if (g.index >= core::kTableRowGripBase) {
+            row_grip = g;
+            found_row = true;
+            break;
+        }
+    }
+    row_ok = row_ok && found_row;
+    if (found_row) {
+        using G = core::GripDragCommand;
+        using P = G::Phase;
+        engine_->submit(G{P::Begin, row_grip.handle, row_grip.index, {}, 0});
+        engine_->submit(G{P::Commit, {}, 0, {0.0, 85.0}, processor_->begin_group()});
+        // Row 0 grows from 8 to 15, so the table's total height grows by the same 7.
+        row_ok = row_ok && pump([&] { return bounds(mn, mx) && (mx.y - mn.y) > 22.0; });
+    }
+    std::printf("[selftest] TABLE row-boundary grip resizes the row: %s\n",
+                row_ok ? "PASS" : "FAIL");
+    all = all && row_ok;
+
+    // (3) POLYGON: a hexagon inscribed in r=10 spans 20 across its vertices.
+    clear();
+    type("POL");
+    type("6");
+    type("0,0");
+    type("I");
+    type("10,0");
+    const bool poly_ok = pump([&] {
+        return bounds(mn, mx) && std::abs(mx.x - 10.0) < 0.01 && std::abs(mn.x + 10.0) < 0.01;
+    });
+    std::printf("[selftest] POLYGON draws an inscribed hexagon: %s\n", poly_ok ? "PASS" : "FAIL");
+    all = all && poly_ok;
+
+    // (4) DIVIDE: 4 segments on an open line leaves 3 marks.
+    clear();
+    type("LINE");
+    type("0,0");
+    type("100,0");
+    type("");
+    bool div_ok = pump([this] { return viewport_->line_vertex_count() >= 2; });
+    const std::uint64_t sv2 = viewport_->status_version();
+    type("DIV");
+    type("50,0");
+    type("4");
+    div_ok = div_ok && pump([this, sv2] {
+        return viewport_->status_version() != sv2 &&
+               viewport_->last_status().find("Divided: 3 points placed.") != std::string::npos;
+    });
+    std::printf("[selftest] DIVIDE marks an open line n-1 times: %s\n", div_ok ? "PASS" : "FAIL");
+    all = all && div_ok;
+
+    // (5) BREAK: cut the middle out of a line; the gap must really be gone.
+    clear();
+    type("LINE");
+    type("0,0");
+    type("100,0");
+    type("");
+    bool break_ok = pump([this] { return viewport_->line_vertex_count() >= 2; });
+    const std::uint64_t sv3 = viewport_->status_version();
+    type("BR");
+    type("30,0"); // selects AND is the first break point
+    type("70,0");
+    break_ok = break_ok && pump([this, sv3] {
+        return viewport_->status_version() != sv3 &&
+               viewport_->last_status().find("Broke 1 object into 2.") != std::string::npos;
+    });
+    break_ok = break_ok && pump([this] { return viewport_->line_vertex_count() == 4; });
+    std::printf("[selftest] BREAK removes the middle of a line: %s\n", break_ok ? "PASS" : "FAIL");
+    all = all && break_ok;
+
+    // (6) ARRAYPATH: five items along a 100-long path, distributed by Divide.
+    clear();
+    type("LINE");
+    type("0,0");
+    type("100,0");
+    type("");
+    type("CIRCLE");
+    type("0,50");
+    type("2");
+    bool path_ok = pump([this] { return viewport_->line_vertex_count() > 4; });
+    engine_->submit(core::SelectPickCommand{{0.0, 52.0}, 1.5, false}); // the circle only
+    // Wait for the PROCESSOR to see the selection, not just the viewport. The processor's
+    // copy is refreshed by the 100 ms UI timer, and ARRAYPATH gates on that copy, so
+    // watching the viewport's count can fire a beat too early -- a human could never type
+    // a command name inside that window, but this harness can.
+    path_ok = path_ok && pump([this] {
+        return viewport_->selection_count() == 1 && processor_->has_selection();
+    });
+    const std::uint64_t sv4 = viewport_->status_version();
+    type("ARRAYPATH");
+    type("50,0"); // the path
+    type("D");    // Divide
+    type("5");
+    type("N");    // do not align
+    path_ok = path_ok && pump([this, sv4] {
+        return viewport_->status_version() != sv4 &&
+               viewport_->last_status().find("Path array created") != std::string::npos;
+    });
+    // The copies straddle the whole path, so the content now reaches x=102 (the last
+    // circle sits at 100 with radius 2).
+    path_ok = path_ok && pump([&] { return bounds(mn, mx) && mx.x > 101.0; });
+    std::printf("[selftest] ARRAYPATH distributes items along a path: %s\n",
+                path_ok ? "PASS" : "FAIL");
+    all = all && path_ok;
+
     engine_->submit(core::NewDocumentCommand{});
     return all;
 }
