@@ -227,6 +227,8 @@ private:
     void apply_array_path(const ArrayPathCommand& c);
     void apply_divide_measure(const DividePathCommand& c);
     void apply_break(const BreakCommand& c);
+    void apply_align(const AlignSelectionCommand& c);
+    void apply_lengthen(const LengthenCommand& c);
     void apply_array_polar(Vec2 center, int count, double total_angle, bool rotate_items,
                            std::uint64_t group);
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);

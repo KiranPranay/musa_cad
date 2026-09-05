@@ -1055,6 +1055,133 @@ int parse_int(const std::string& t, int fallback) {
 } // namespace
 
 // ---------------------------------------------------------------------------
+// ALIGN: two source/destination pairs, optional uniform scale
+// ---------------------------------------------------------------------------
+void AlignCommand::start(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        ctx.echo("No selection. Select objects first, then run ALIGN.");
+        done_ = true;
+        return;
+    }
+    ctx.clear_last_point();
+    state_ = State::Src1;
+    ctx.set_prompt("Specify first source point: ");
+}
+
+void AlignCommand::input(CommandContext& ctx, const std::string& text) {
+    switch (state_) {
+    case State::Src1:
+        if (const auto p = read_point(ctx, text)) {
+            src1_ = *p;
+            state_ = State::Dst1;
+            ctx.set_prompt("Specify first destination point: ");
+        }
+        return;
+    case State::Dst1:
+        if (const auto p = read_point(ctx, text)) {
+            dst1_ = *p;
+            state_ = State::Src2;
+            ctx.set_prompt("Specify second source point: ");
+        }
+        return;
+    case State::Src2:
+        if (const auto p = read_point(ctx, text)) {
+            src2_ = *p;
+            state_ = State::Dst2;
+            ctx.set_prompt("Specify second destination point: ");
+        }
+        return;
+    case State::Dst2:
+        if (const auto p = read_point(ctx, text)) {
+            dst2_ = *p;
+            state_ = State::Scale;
+            ctx.set_prompt("Scale objects based on alignment points? [Yes/No] <N>: ");
+        }
+        return;
+    case State::Scale: {
+        const std::string u = upper(trimmed(text));
+        core::AlignSelectionCommand cmd;
+        cmd.src1 = src1_;
+        cmd.dst1 = dst1_;
+        cmd.src2 = src2_;
+        cmd.dst2 = dst2_;
+        cmd.scale = (u == "Y" || u == "YES");
+        cmd.group = ctx.group_id();
+        ctx.submit(cmd);
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void AlignCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// LENGTHEN: mode, amount, then the end to move
+// ---------------------------------------------------------------------------
+void LengthenCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Mode;
+    ctx.set_prompt("Enter an option [DElta/Percent/Total] <Total>: ");
+}
+
+void LengthenCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    switch (state_) {
+    case State::Mode: {
+        const std::string u = upper(t);
+        if (u == "DE" || u == "DELTA") {
+            mode_ = core::LengthenCommand::Mode::Delta;
+            ctx.set_prompt("Enter delta length: ");
+        } else if (u == "P" || u == "PERCENT") {
+            mode_ = core::LengthenCommand::Mode::Percent;
+            ctx.set_prompt("Enter percentage length: ");
+        } else {
+            mode_ = core::LengthenCommand::Mode::Total;
+            ctx.set_prompt("Specify total length: ");
+        }
+        state_ = State::Amount;
+        return;
+    }
+    case State::Amount: {
+        if (!parse_number(t, value_)) {
+            ctx.echo("Enter a number.");
+            return;
+        }
+        if (mode_ != core::LengthenCommand::Mode::Delta && value_ <= 0.0) {
+            ctx.echo("Enter a value greater than zero.");
+            return;
+        }
+        state_ = State::Pick;
+        // The pick does double duty: it chooses the object AND, by which end it is
+        // nearer, which end moves. That is AutoCAD's behaviour and worth saying.
+        ctx.set_prompt("Select an object to change (pick near the end to move): ");
+        return;
+    }
+    case State::Pick:
+        if (const auto p = read_point(ctx, text)) {
+            core::LengthenCommand cmd;
+            cmd.pick = *p;
+            cmd.pick_radius = ctx.pick_radius();
+            cmd.mode = mode_;
+            cmd.value = value_;
+            cmd.group = ctx.group_id();
+            ctx.submit(cmd);
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void LengthenCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // BREAK / BREAKATPOINT: cut a piece out of a curve, or just split it
 // ---------------------------------------------------------------------------
 void BreakCommand::start(CommandContext& ctx) {

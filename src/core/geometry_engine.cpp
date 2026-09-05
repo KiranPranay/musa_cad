@@ -1906,6 +1906,146 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
     return true;
 }
 
+void GeometryEngine::apply_align(const AlignSelectionCommand& c) {
+    const std::vector<EntityHandle> sel = selection_;
+    if (sel.empty()) {
+        report("Nothing selected to align.");
+        return;
+    }
+    const Vec2 sv = c.src2 - c.src1;
+    const Vec2 dv = c.dst2 - c.dst1;
+    const double slen = length(sv);
+    if (slen <= 1e-12 || length(dv) <= 1e-12) {
+        report("Align: the two source points and the two destination points must differ.");
+        return;
+    }
+    const double ang = std::atan2(dv.y, dv.x) - std::atan2(sv.y, sv.x);
+    const double f = c.scale ? length(dv) / slen : 1.0;
+
+    // p -> dst1 + f * R(ang) * (p - src1), composed from the existing per-kind
+    // transforms so every entity kind is aligned by the code that already knows how to
+    // rotate and scale it. Order matters: both pivot on src1 before the move.
+    std::vector<EntityHandle> out;
+    for (const EntityHandle h : sel) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        Command result = original;
+        rotate_cmd(result, c.src1, ang);
+        if (c.scale) {
+            scale_cmd(result, c.src1, f);
+        }
+        translate_cmd(result, c.dst1 - c.src1);
+        remove_indexed(h);
+        push_erase_item(c.group, original);
+        const EntityHandle nh = create_indexed(result);
+        push_create_item(c.group, nh, result);
+        out.push_back(nh);
+    }
+    if (!out.empty()) {
+        selection_ = out;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Aligned " + std::to_string(out.size()) +
+           (out.size() == 1 ? " object." : " objects."));
+}
+
+void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    if (h.is_null()) {
+        report("Lengthen: no curve under the pick.");
+        return;
+    }
+    // What the new length should be, given the current one.
+    const auto resolve = [&](double current) {
+        switch (c.mode) {
+        case LengthenCommand::Mode::Delta:
+            return current + c.value;
+        case LengthenCommand::Mode::Percent:
+            return current * c.value / 100.0;
+        case LengthenCommand::Mode::Total:
+            break;
+        }
+        return c.value;
+    };
+
+    Command edited;
+    double before = 0.0;
+    double after = 0.0;
+    switch (h.kind) {
+    case EntityKind::Line: {
+        const LineData* l = store_.line(h);
+        before = length(l->b - l->a);
+        if (before <= 1e-12) {
+            report("Lengthen: that line has no length.");
+            return;
+        }
+        after = resolve(before);
+        if (after <= 1e-9) {
+            report("Lengthen: that would leave nothing of the object.");
+            return;
+        }
+        // AutoCAD moves the end NEARER the pick and anchors the other.
+        const bool move_b = length(c.pick - l->b) <= length(c.pick - l->a);
+        const Vec2 anchor = move_b ? l->a : l->b;
+        const Vec2 dir = (move_b ? l->b - l->a : l->a - l->b) / before;
+        const Vec2 moved = anchor + dir * after;
+        edited = AddLineCommand{move_b ? anchor : moved, move_b ? moved : anchor, 0, l->props};
+        break;
+    }
+    case EntityKind::Arc: {
+        const ArcData* a = store_.arc(h);
+        double sweep = a->end_angle - a->start_angle;
+        while (sweep <= 0.0) {
+            sweep += kTwoPi;
+        }
+        before = sweep * a->radius; // arc LENGTH, so Delta/Total are in drawing units
+        if (before <= 1e-12 || a->radius <= 1e-12) {
+            report("Lengthen: that arc has no length.");
+            return;
+        }
+        after = resolve(before);
+        if (after <= 1e-9) {
+            report("Lengthen: that would leave nothing of the object.");
+            return;
+        }
+        const double new_sweep = std::min(after / a->radius, kTwoPi);
+        const Vec2 start_pt{a->center.x + a->radius * std::cos(a->start_angle),
+                            a->center.y + a->radius * std::sin(a->start_angle)};
+        const Vec2 end_pt{a->center.x + a->radius * std::cos(a->end_angle),
+                          a->center.y + a->radius * std::sin(a->end_angle)};
+        // Grow or shrink from whichever end the pick is nearer, keeping the other fixed.
+        if (length(c.pick - end_pt) <= length(c.pick - start_pt)) {
+            edited = AddArcCommand{a->center, a->radius, a->start_angle,
+                                   a->start_angle + new_sweep, 0, a->props};
+        } else {
+            edited = AddArcCommand{a->center, a->radius, a->end_angle - new_sweep, a->end_angle,
+                                   0, a->props};
+        }
+        break;
+    }
+    default:
+        report("Lengthen: only lines and arcs have an end to move.");
+        return;
+    }
+
+    const Command original = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(c.group, original);
+    const EntityHandle nh = create_indexed(edited);
+    push_create_item(c.group, nh, edited);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "Length changed from %.4g to %.4g.", before, after);
+    report(buf);
+}
+
 void GeometryEngine::apply_break(const BreakCommand& c) {
     const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
     if (h.is_null()) {
@@ -3156,6 +3296,10 @@ void GeometryEngine::apply(const Command& command) {
                 apply_divide_measure(c);
             } else if constexpr (std::is_same_v<T, BreakCommand>) {
                 apply_break(c);
+            } else if constexpr (std::is_same_v<T, AlignSelectionCommand>) {
+                apply_align(c);
+            } else if constexpr (std::is_same_v<T, LengthenCommand>) {
+                apply_lengthen(c);
             } else if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
                 apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group);
             } else if constexpr (std::is_same_v<T, ExtendPickCommand>) {

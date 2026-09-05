@@ -137,6 +137,11 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/rotate.svg", "Rotate selected objects around a base point.");
     reg({"SC", "SCALE"}, [] { return std::make_unique<ScaleCommand>(); }, "assets/ribbon/scale.svg",
         "Resize selected objects uniformly about a base point.");
+    reg({"AL", "ALIGN"}, [] { return std::make_unique<AlignCommand>(); },
+        "assets/ribbon/align.svg",
+        "Move, rotate and optionally scale a selection onto two destination points.");
+    reg({"LEN", "LENGTHEN"}, [] { return std::make_unique<LengthenCommand>(); },
+        "assets/ribbon/lengthen.svg", "Change the length of a line or arc.");
     reg({"BR", "BREAK"}, [] { return std::make_unique<BreakCommand>(false); },
         "assets/ribbon/break.svg", "Break a curve between two points.");
     reg({"BREAKATPOINT"}, [] { return std::make_unique<BreakCommand>(true); },

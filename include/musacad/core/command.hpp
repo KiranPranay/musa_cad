@@ -28,6 +28,32 @@ namespace musacad::core {
 /// Which entities ERASE targets (selection/picking arrives in Phase 5).
 enum class EraseScope : std::uint8_t { Last, All };
 
+/// ALIGN (AutoCAD): move, rotate and optionally uniformly scale the selection so that
+/// `src1` lands on `dst1` and the direction src1->src2 lines up with dst1->dst2. With
+/// `scale` true the distance dst1..dst2 also sets the size, which is how a detail is
+/// fitted between two known points in one step.
+struct AlignSelectionCommand {
+    Vec2 src1;
+    Vec2 dst1;
+    Vec2 src2;
+    Vec2 dst2;
+    bool scale = false;
+    std::uint64_t group = 0;
+};
+
+/// LENGTHEN (AutoCAD): change the length of the open curve under `pick`. The END NEARER
+/// the pick is the one that moves, which is how AutoCAD decides. `mode` selects what
+/// `value` means: Delta adds to the current length, Percent sets it to a percentage of
+/// it, Total sets it outright.
+struct LengthenCommand {
+    enum class Mode : std::uint8_t { Delta = 0, Percent = 1, Total = 2 };
+    Vec2 pick;
+    double pick_radius = 0.0;
+    Mode mode = Mode::Total;
+    double value = 0.0;
+    std::uint64_t group = 0;
+};
+
 /// BREAK (AutoCAD BR): remove the piece of the curve under `pick` that lies between
 /// `p1` and `p2`. When the two points coincide it is BREAK AT POINT (AutoCAD's BREAKATPOINT):
 /// the curve is split in two with no gap. A circle becomes a single arc, since a circle
@@ -764,6 +790,7 @@ using Command =
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
                  ArrayPathCommand, AddPointCommand, DividePathCommand, BreakCommand,
+                 AlignSelectionCommand, LengthenCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,

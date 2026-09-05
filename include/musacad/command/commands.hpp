@@ -441,6 +441,46 @@ private:
     bool done_ = false;
 };
 
+/// ALIGN (AutoCAD AL): fit the selection between two known points in one step, with an
+/// optional uniform scale. Two source/destination pairs, then the scale question --
+/// AutoCAD's 2D flow, without the third pair that only means anything in 3D.
+class AlignCommand final : public ICommand {
+public:
+    std::string name() const override { return "ALIGN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Src1, Dst1, Src2, Dst2, Scale };
+    State state_ = State::Src1;
+    core::Vec2 src1_{};
+    core::Vec2 dst1_{};
+    core::Vec2 src2_{};
+    core::Vec2 dst2_{};
+    bool done_ = false;
+};
+
+/// LENGTHEN (AutoCAD LEN): change the length of a line or arc. The mode is chosen
+/// first, as in AutoCAD, then the amount, then the object -- and the end nearer the
+/// pick is the one that moves.
+class LengthenCommand final : public ICommand {
+public:
+    std::string name() const override { return "LENGTHEN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Mode, Amount, Pick };
+    State state_ = State::Mode;
+    core::LengthenCommand::Mode mode_ = core::LengthenCommand::Mode::Total;
+    double value_ = 0.0;
+    bool done_ = false;
+};
+
 /// BREAK (AutoCAD BR) and BREAKATPOINT.
 ///
 /// AutoCAD's flow is unusual and worth keeping: the pick that SELECTS the object is
