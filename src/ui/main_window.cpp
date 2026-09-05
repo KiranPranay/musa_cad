@@ -2023,8 +2023,10 @@ bool MainWindow::selftest_grips() {
                                               .line_pt = {10, 5}});
     pump([this] { return viewport_->line_vertex_count() > 0; });
     engine_->submit(core::SelectPickCommand{{10, 5}, 2.0, false});
-    // Full set: 2 ext-line origins + 2 dim-line feet + offset midpoint.
-    const bool dim_grips = pump([this] { return viewport_->grip_count() == 5; });
+    // Full set: 2 ext-line origins + 2 dim-line feet + offset midpoint + the label's
+    // own grip (issue #21). This assertion said 5 until the label grip landed, so the
+    // harness had been failing on a count that was simply out of date.
+    const bool dim_grips = pump([this] { return viewport_->grip_count() == 6; });
     std::printf("[selftest] dimension shows full grip set (def + feet + offset): %s\n",
                 dim_grips ? "PASS" : "FAIL");
     all = all && dim_grips;
@@ -4397,7 +4399,7 @@ bool MainWindow::selftest_dwg() {
             "0\nSECTION\n2\nENTITIES\n"
             "0\nLINE\n8\n0\n10\n0\n20\n0\n11\n10\n21\n0\n"
             "0\nLINE\n8\n0\n10\n0\n20\n0\n11\n0\n21\n10\n"
-            "0\nHATCH\n8\n0\n"
+            "0\n3DFACE\n8\n0\n"
             "0\nENDSEC\n0\nEOF\n";
         QFile f(fake_dwg);
         f.open(QIODevice::WriteOnly | QIODevice::Truncate);
@@ -4419,8 +4421,11 @@ bool MainWindow::selftest_dwg() {
     const bool loaded = pump([this] { return viewport_->line_vertex_count() == 4; }); // 2 lines
     pump([this, sv0] { return viewport_->status_version() != sv0; });
     const std::string msg = viewport_->last_status();
+    // 3DFACE stands in for "an entity kind the importer does not handle". It used to be
+    // HATCH, but hatch import landed and the fixture then produced no gap to catalogue,
+    // so this check silently stopped testing anything and started failing.
     const bool catalog_ok = msg.find("skipped") != std::string::npos &&
-                            msg.find("HATCH") != std::string::npos;
+                            msg.find("3DFACE") != std::string::npos;
     std::printf("[selftest] DWG import via converter loads + catalogs gaps (%s): %s\n",
                 msg.c_str(), (conv_ok && loaded && catalog_ok) ? "PASS" : "FAIL");
     all = all && disc_ok && conv_ok && loaded && catalog_ok;
