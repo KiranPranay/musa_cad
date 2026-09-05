@@ -1228,17 +1228,28 @@ void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group) 
     geom_dirty_ = true;
 }
 
-void GeometryEngine::apply_array_rect(int rows, int cols, double dx, double dy,
+void GeometryEngine::apply_array_rect(int rows, int cols, double dx, double dy, double angle,
                                       std::uint64_t group) {
     rows = std::max(rows, 1);
     cols = std::max(cols, 1);
     const std::vector<EntityHandle> sel = selection_;
+    if (sel.empty()) {
+        report("Nothing selected to array.");
+        return;
+    }
+    // AutoCAD's axis angle rotates the ROW/COLUMN DIRECTIONS, not the items: a rotated
+    // rectangular array is a skewed lattice of upright copies.
+    const double cs = std::cos(angle);
+    const double sn = std::sin(angle);
+    int made = 0;
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
             if (r == 0 && c == 0) {
                 continue; // the originals stay in place
             }
-            const Vec2 d{static_cast<double>(c) * dx, static_cast<double>(r) * dy};
+            const double ax = static_cast<double>(c) * dx;
+            const double ay = static_cast<double>(r) * dy;
+            const Vec2 d{ax * cs - ay * sn, ax * sn + ay * cs};
             for (const EntityHandle h : sel) {
                 if (!store_.is_valid(h)) {
                     continue;
@@ -1247,16 +1258,162 @@ void GeometryEngine::apply_array_rect(int rows, int cols, double dx, double dy,
                 translate_cmd(copy, d);
                 const EntityHandle nh = create_indexed(copy);
                 push_create_item(group, nh, copy);
+                ++made;
             }
         }
     }
     redo_.clear();
     geom_dirty_ = true;
+    dirty_ = true;
+    report(made == 0 ? "Array: a 1x1 array adds nothing."
+                     : "Array created: " + std::to_string(made) + " copies.");
+}
+
+void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
+    const std::vector<EntityHandle> sel = selection_;
+    if (sel.empty()) {
+        report("Nothing selected to array.");
+        return;
+    }
+    const EntityHandle path = pick_nearest(c.pick, c.pick_radius);
+    if (path.is_null()) {
+        report("Path array: no curve under the pick.");
+        return;
+    }
+    // The path must not also be part of what is being arrayed, or each copy would drag
+    // a copy of the path along with it.
+    if (std::find(sel.begin(), sel.end(), path) != sel.end()) {
+        report("Path array: the path curve is part of the selection. Deselect it first.");
+        return;
+    }
+
+    // One tessellation is THE path: stations and tangents both come from it, so the
+    // items cannot land somewhere the curve does not go. Fine enough that the chord
+    // error is far below what item placement can show.
+    std::vector<Vec2> pts;
+    kernel_.tessellate(store_, path, std::max(tess_tolerance_ * 0.25, 1e-6), pts);
+    if (pts.size() < 2) {
+        report("Path array: that entity has no length to array along.");
+        return;
+    }
+    std::vector<double> cum(pts.size(), 0.0);
+    for (std::size_t i = 1; i < pts.size(); ++i) {
+        cum[i] = cum[i - 1] + length(pts[i] - pts[i - 1]);
+    }
+    const double total = cum.back();
+    if (total <= 1e-12) {
+        report("Path array: that entity has no length to array along.");
+        return;
+    }
+    const bool closed = length(pts.back() - pts.front()) <= 1e-9;
+
+    // Where the items go. Divide (spacing 0) spreads `count` over the whole path;
+    // Measure steps every `spacing`, with `count` capping how many (0 = as many as fit).
+    std::vector<double> stations;
+    if (c.spacing > 1e-12) {
+        const int cap = c.count > 0 ? c.count : std::numeric_limits<int>::max();
+        for (int i = 0; i < cap; ++i) {
+            const double s = static_cast<double>(i) * c.spacing;
+            if (s > total + 1e-9) {
+                break;
+            }
+            stations.push_back(std::min(s, total));
+        }
+    } else {
+        const int n = std::max(c.count, 1);
+        if (n == 1) {
+            stations.push_back(0.0);
+        } else {
+            // A closed path has no distinct end station -- placing one there would sit
+            // an item on top of the one at the start.
+            const double denom = closed ? static_cast<double>(n) : static_cast<double>(n - 1);
+            for (int i = 0; i < n; ++i) {
+                stations.push_back(total * static_cast<double>(i) / denom);
+            }
+        }
+    }
+    if (stations.size() < 2) {
+        report("Path array: need at least two items.");
+        return;
+    }
+
+    // Position and tangent at an arc length, from the same polyline.
+    const auto at = [&](double s, Vec2& p, double& ang) {
+        std::size_t i = 1;
+        while (i + 1 < pts.size() && cum[i] < s) {
+            ++i;
+        }
+        const double seg = cum[i] - cum[i - 1];
+        const double t = seg > 1e-12 ? (s - cum[i - 1]) / seg : 0.0;
+        const Vec2 d = pts[i] - pts[i - 1];
+        p = pts[i - 1] + d * t;
+        ang = std::atan2(d.y, d.x);
+    };
+
+    // The selection rides the path by ONE shared base point, so a multi-entity
+    // selection keeps its internal arrangement instead of scattering entity by entity.
+    Vec2 base = c.base;
+    if (!c.has_base) {
+        Vec2 lo{0, 0};
+        Vec2 hi{0, 0};
+        bool any = false;
+        for (const EntityHandle h : sel) {
+            Vec2 l;
+            Vec2 g;
+            if (store_.is_valid(h) && entity_aabb(store_, h, l, g)) {
+                lo = any ? Vec2{std::min(lo.x, l.x), std::min(lo.y, l.y)} : l;
+                hi = any ? Vec2{std::max(hi.x, g.x), std::max(hi.y, g.y)} : g;
+                any = true;
+            }
+        }
+        if (!any) {
+            report("Nothing selected to array.");
+            return;
+        }
+        base = {(lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5};
+    }
+
+    double ang0 = 0.0;
+    Vec2 p0;
+    at(stations[0], p0, ang0);
+
+    int made = 0;
+    for (std::size_t i = 0; i < stations.size(); ++i) {
+        Vec2 p;
+        double ang = 0.0;
+        at(stations[i], p, ang);
+        for (const EntityHandle h : sel) {
+            if (!store_.is_valid(h)) {
+                continue;
+            }
+            Command copy = capture_entity(h);
+            if (c.align) {
+                // Turn each copy by how far the tangent has swung since the FIRST
+                // station, about the shared base, so item 0 keeps the orientation the
+                // user drew and the rest follow the curve.
+                rotate_cmd(copy, base, ang - ang0);
+            }
+            translate_cmd(copy, p - base);
+            const EntityHandle nh = create_indexed(copy);
+            push_create_item(c.group, nh, copy);
+            ++made;
+        }
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Path array created: " + std::to_string(made) + " copies along the path.");
 }
 
 void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angle,
                                        bool rotate_items, std::uint64_t group) {
+    const std::vector<EntityHandle> sel = selection_;
+    if (sel.empty()) {
+        report("Nothing selected to array.");
+        return;
+    }
     if (count < 2) {
+        report("Polar array: need at least two items.");
         return;
     }
     // Full circle distributes count items evenly; a partial fill spans the angle
@@ -1264,7 +1421,7 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
     const bool full = std::abs(std::abs(total_angle) - kTwoPi) < 1e-6;
     const double step = full ? total_angle / static_cast<double>(count)
                              : total_angle / static_cast<double>(count - 1);
-    const std::vector<EntityHandle> sel = selection_;
+    int made = 0;
     for (int i = 1; i < count; ++i) {
         const double a = step * static_cast<double>(i);
         for (const EntityHandle h : sel) {
@@ -1285,10 +1442,13 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
             }
             const EntityHandle nh = create_indexed(copy);
             push_create_item(group, nh, copy);
+            ++made;
         }
     }
     redo_.clear();
     geom_dirty_ = true;
+    dirty_ = true;
+    report("Polar array created: " + std::to_string(made) + " copies.");
 }
 
 void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group) {
@@ -2712,7 +2872,9 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, ScaleSelectionCommand>) {
                 apply_scale(c.base, c.factor, c.group);
             } else if constexpr (std::is_same_v<T, ArrayRectCommand>) {
-                apply_array_rect(c.rows, c.cols, c.dx, c.dy, c.group);
+                apply_array_rect(c.rows, c.cols, c.dx, c.dy, c.angle, c.group);
+            } else if constexpr (std::is_same_v<T, ArrayPathCommand>) {
+                apply_array_path(c);
             } else if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
                 apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group);
             } else if constexpr (std::is_same_v<T, ExtendPickCommand>) {

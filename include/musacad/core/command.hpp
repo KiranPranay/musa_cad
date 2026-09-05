@@ -243,6 +243,9 @@ struct ArrayRectCommand {
     int cols = 1;
     double dx = 0.0;
     double dy = 0.0;
+    /// AutoCAD's "Axis angle": rotates the row/column AXES about the base point while
+    /// each copy keeps its own orientation. 0 = world-aligned, the usual case.
+    double angle = 0.0;
     std::uint64_t group = 0;
 };
 
@@ -253,6 +256,27 @@ struct ArrayPolarCommand {
     int count = 1;
     double total_angle = 0.0;
     bool rotate_items = true;
+    std::uint64_t group = 0;
+};
+
+/// Path array of the selection (AutoCAD ARRAYPATH): distribute `count` items along the
+/// entity under `pick`, which may be any tessellable curve (line, arc, circle, polyline,
+/// spline). The path itself is NOT consumed -- it stays in the drawing, as AutoCAD does.
+///
+/// `spacing` selects the two AutoCAD methods, mirroring DIVIDE vs MEASURE:
+///   0  -- Divide:  `count` items spread over the whole path.
+///   >0 -- Measure: items every `spacing` along the path; `count` caps how many (0 = as
+///         many as fit).
+/// `align` rotates each copy to the path tangent; otherwise copies keep their original
+/// orientation and only translate.
+struct ArrayPathCommand {
+    Vec2 pick;                 ///< picks the path curve
+    double pick_radius = 0.0;
+    int count = 0;
+    double spacing = 0.0;
+    bool align = true;
+    Vec2 base;                 ///< the point on the selection that rides the path
+    bool has_base = false;     ///< false = use the selection's own anchor
     std::uint64_t group = 0;
 };
 
@@ -707,6 +731,7 @@ using Command =
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
+                 ArrayPathCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,

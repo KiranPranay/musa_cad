@@ -137,8 +137,20 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/rotate.svg", "Rotate selected objects around a base point.");
     reg({"SC", "SCALE"}, [] { return std::make_unique<ScaleCommand>(); }, "assets/ribbon/scale.svg",
         "Resize selected objects uniformly about a base point.");
-    reg({"AR", "ARRAY"}, [] { return std::make_unique<ArrayCommand>(); }, "assets/ribbon/array.svg",
-        "Create a rectangular or polar pattern of copies.");
+    // The AutoCAD array family. ARRAY/-ARRAY ask for the type; the three ARRAY* forms
+    // go straight to their own prompts. ARRAYEDIT/ARRAYCLOSE are absent by design --
+    // they edit an ASSOCIATIVE array, and these arrays are non-associative (what
+    // AutoCAD's own -ARRAY produces), so there is no association to reopen.
+    reg({"AR", "ARRAY", "-ARRAY"}, [] { return std::make_unique<ArrayCommand>(); },
+        "assets/ribbon/array.svg",
+        "Create a rectangular, path or polar pattern of copies.");
+    reg({"ARRAYRECT"}, [] { return std::make_unique<ArrayCommand>(ArrayCommand::Type::Rect); },
+        "assets/ribbon/array.svg",
+        "Create a rectangular pattern of copies in rows and columns.");
+    reg({"ARRAYPOLAR"}, [] { return std::make_unique<ArrayCommand>(ArrayCommand::Type::Polar); },
+        "assets/ribbon/array.svg", "Create a circular pattern of copies about a centre point.");
+    reg({"ARRAYPATH"}, [] { return std::make_unique<ArrayCommand>(ArrayCommand::Type::Path); },
+        "assets/ribbon/array.svg", "Distribute copies evenly along a path curve.");
     reg({"EX", "EXTEND"}, [] { return std::make_unique<ExtendCommand>(); },
         "assets/ribbon/extend.svg", "Extend objects to meet the edges of other objects.");
     reg({"F", "FILLET"}, [] { return std::make_unique<FilletCommand>(); }, "assets/ribbon/fillet.svg",

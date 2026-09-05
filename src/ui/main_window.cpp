@@ -114,6 +114,7 @@ DialogSpec array_dialog_spec() {
         {"cols", "Columns", FieldType::Integer, 3, {}, 0, false, "Rectangular"},
         {"dx", "Column spacing (X)", FieldType::Number, 10, {}, 0, false, "Rectangular"},
         {"dy", "Row spacing (Y)", FieldType::Number, 10, {}, 0, false, "Rectangular"},
+        {"angle", "Angle of axes (deg)", FieldType::Number, 0, {}, 0, false, "Rectangular"},
         {"cx", "Center X", FieldType::Number, 0, {}, 0, false, "Polar"},
         {"cy", "Center Y", FieldType::Number, 0, {}, 0, false, "Polar"},
         {"count", "Item count", FieldType::Integer, 6, {}, 0, false, "Polar"},
@@ -4521,8 +4522,14 @@ void MainWindow::submit_array_from_dialog(const ParameterDialog& dlg) {
                                                    core::to_radians(dlg.number("fill")),
                                                    dlg.boolean("rotate"), group});
     } else {
-        processor_->submit(core::ArrayRectCommand{dlg.integer("rows"), dlg.integer("cols"),
-                                                  dlg.number("dx"), dlg.number("dy"), group});
+        // Designated, not positional: this struct grew an `angle` before `group`, and a
+        // positional list silently fed the group id in as the axis angle.
+        processor_->submit(core::ArrayRectCommand{.rows = dlg.integer("rows"),
+                                                  .cols = dlg.integer("cols"),
+                                                  .dx = dlg.number("dx"),
+                                                  .dy = dlg.number("dy"),
+                                                  .angle = core::to_radians(dlg.number("angle")),
+                                                  .group = group});
     }
 }
 

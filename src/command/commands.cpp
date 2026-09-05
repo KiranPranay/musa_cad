@@ -1053,30 +1053,64 @@ int parse_int(const std::string& t, int fallback) {
 }
 } // namespace
 
+void ArrayCommand::begin_rect(CommandContext& ctx) {
+    state_ = State::Rows;
+    ctx.set_prompt("Enter number of rows <1>: ");
+}
+
+void ArrayCommand::begin_polar(CommandContext& ctx) {
+    state_ = State::Center;
+    ctx.set_prompt("Specify center point of array: ");
+}
+
+void ArrayCommand::begin_path(CommandContext& ctx) {
+    state_ = State::PathPick;
+    ctx.set_prompt("Select path curve: ");
+}
+
 void ArrayCommand::start(CommandContext& ctx) {
     if (!ctx.has_selection()) {
-        ctx.echo("No selection. Select objects first, then run ARRAY.");
+        ctx.echo("No selection. Select objects first, then run " + name() + ".");
         done_ = true;
         return;
     }
     ctx.clear_last_point();
-    ctx.set_prompt("Enter array type [Rectangular/Polar] <R>: ");
+    switch (type_) {
+    case Type::Rect:
+        begin_rect(ctx);
+        return;
+    case Type::Polar:
+        begin_polar(ctx);
+        return;
+    case Type::Path:
+        begin_path(ctx);
+        return;
+    case Type::Ask:
+        break;
+    }
+    ctx.set_prompt("Enter array type [Rectangular/PAth/POlar] <R>: ");
 }
 
 void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     switch (state_) {
     case State::Type: {
+        // AutoCAD's own capitalisation picks the keywords apart: PA=path, PO=polar,
+        // and a bare P is ambiguous, so it is rejected rather than guessed at.
         const std::string u = upper(t);
-        if (u == "P" || u == "POLAR") {
-            state_ = State::Center;
-            ctx.set_prompt("Specify center point of array: ");
+        if (u == "PA" || u == "PATH") {
+            begin_path(ctx);
+        } else if (u == "PO" || u == "POLAR") {
+            begin_polar(ctx);
+        } else if (u == "P") {
+            ctx.echo("Ambiguous: enter PA for path or PO for polar.");
         } else {
-            state_ = State::Rows;
-            ctx.set_prompt("Enter number of rows <1>: ");
+            begin_rect(ctx);
         }
         return;
     }
+
+    // --- Rectangular ------------------------------------------------------
     case State::Rows:
         rows_ = std::max(1, parse_int(t, 1));
         state_ = State::Cols;
@@ -1096,16 +1130,48 @@ void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
         ctx.set_prompt("Enter column spacing (X): ");
         return;
     case State::ColSpace: {
-        double col_space = 0.0;
-        if (!parse_number(t, col_space)) {
+        if (!parse_number(t, col_space_)) {
             ctx.echo("Enter a number for column spacing.");
             return;
         }
-        ctx.submit(core::ArrayRectCommand{rows_, cols_, col_space, row_space_, ctx.group_id()});
-        ctx.echo("Array created.");
+        // AutoCAD's legacy -ARRAY flow ends here; only the modern ARRAYRECT offers an
+        // axis angle. Keeping the classic four prompts exactly as they were means
+        // existing muscle memory and scripts are untouched.
+        if (type_ != Type::Rect) {
+            core::ArrayRectCommand cmd;
+            cmd.rows = rows_;
+            cmd.cols = cols_;
+            cmd.dx = col_space_;
+            cmd.dy = row_space_;
+            cmd.group = ctx.group_id();
+            ctx.submit(cmd);
+            done_ = true;
+            return;
+        }
+        state_ = State::Angle;
+        ctx.set_prompt("Angle of array axes <0>: ");
+        return;
+    }
+    case State::Angle: {
+        double deg = 0.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            ctx.echo("Enter an angle in degrees.");
+            return;
+        }
+        core::ArrayRectCommand cmd;
+        cmd.rows = rows_;
+        cmd.cols = cols_;
+        cmd.dx = col_space_;
+        cmd.dy = row_space_;
+        cmd.angle = core::to_radians(deg);
+        cmd.group = ctx.group_id();
+        ctx.submit(cmd);
+        // The engine reports how many copies it actually made (Ph10.1).
         done_ = true;
         return;
     }
+
+    // --- Polar ------------------------------------------------------------
     case State::Center:
         if (const auto p = read_point(ctx, text)) {
             center_ = *p;
@@ -1119,13 +1185,10 @@ void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
         ctx.set_prompt("Specify angle to fill in degrees <360>: ");
         return;
     case State::Fill: {
-        const double deg = t.empty() ? 360.0 : [&] {
-            double d = 360.0;
-            if (!parse_number(t, d)) {
-                d = 360.0;
-            }
-            return d;
-        }();
+        double deg = 360.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            deg = 360.0;
+        }
         fill_ = core::to_radians(deg);
         state_ = State::RotateItems;
         ctx.set_prompt("Rotate items as copied? [Yes/No] <Yes>: ");
@@ -1135,7 +1198,54 @@ void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
         const std::string u = upper(t);
         const bool rotate = !(u == "N" || u == "NO");
         ctx.submit(core::ArrayPolarCommand{center_, count_, fill_, rotate, ctx.group_id()});
-        ctx.echo("Polar array created.");
+        done_ = true;
+        return;
+    }
+
+    // --- Path -------------------------------------------------------------
+    case State::PathPick:
+        if (const auto p = read_point(ctx, text)) {
+            path_pick_ = *p;
+            state_ = State::PathMethod;
+            ctx.set_prompt("Method [Divide/Measure] <D>: ");
+        }
+        return;
+    case State::PathMethod: {
+        const std::string u = upper(t);
+        if (u == "M" || u == "MEASURE") {
+            state_ = State::PathSpacing;
+            ctx.set_prompt("Distance between items: ");
+        } else {
+            state_ = State::PathCount;
+            ctx.set_prompt("Number of items to distribute along the path: ");
+        }
+        return;
+    }
+    case State::PathCount:
+        count_ = std::max(2, parse_int(t, 2));
+        path_spacing_ = 0.0; // Divide
+        state_ = State::PathAlign;
+        ctx.set_prompt("Align items with the path? [Yes/No] <Yes>: ");
+        return;
+    case State::PathSpacing:
+        if (!parse_number(t, path_spacing_) || path_spacing_ <= 0.0) {
+            ctx.echo("Enter a positive distance between items.");
+            return;
+        }
+        count_ = 0; // Measure: as many as fit
+        state_ = State::PathAlign;
+        ctx.set_prompt("Align items with the path? [Yes/No] <Yes>: ");
+        return;
+    case State::PathAlign: {
+        const std::string u = upper(t);
+        core::ArrayPathCommand cmd;
+        cmd.pick = path_pick_;
+        cmd.pick_radius = ctx.pick_radius();
+        cmd.count = count_;
+        cmd.spacing = path_spacing_;
+        cmd.align = !(u == "N" || u == "NO");
+        cmd.group = ctx.group_id();
+        ctx.submit(cmd);
         done_ = true;
         return;
     }
@@ -1146,6 +1256,7 @@ void ArrayCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }
+
 
 // ---------------------------------------------------------------------------
 // EXTEND (pick the object to extend; repeats)

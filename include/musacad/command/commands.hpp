@@ -441,23 +441,82 @@ private:
     bool done_ = false;
 };
 
+/// The whole AutoCAD array family in one state machine.
+///
+/// ARRAY (AR) and -ARRAY ask for the type, exactly as AutoCAD does; ARRAYRECT,
+/// ARRAYPOLAR and ARRAYPATH jump straight to their own prompts. One class because the
+/// three types differ only in which prompts they ask -- splitting them would duplicate
+/// the selection guard, the parsing and the cancel path three ways.
+///
+/// ARRAYEDIT and ARRAYCLOSE are deliberately absent: both edit an ASSOCIATIVE array,
+/// which is a parametric entity that remembers its source and parameters. Musa CAD's
+/// arrays are non-associative -- the same thing AutoCAD's own -ARRAY produces -- so
+/// there is no association to reopen. See docs/COMMANDS.md.
 class ArrayCommand final : public ICommand {
 public:
-    std::string name() const override { return "ARRAY"; }
+    /// Which prompts to ask. `Ask` is ARRAY/-ARRAY; the rest are the direct commands.
+    enum class Type { Ask, Rect, Polar, Path };
+
+    explicit ArrayCommand(Type type = Type::Ask) : type_(type) {}
+
+    std::string name() const override {
+        switch (type_) {
+        case Type::Rect:
+            return "ARRAYRECT";
+        case Type::Polar:
+            return "ARRAYPOLAR";
+        case Type::Path:
+            return "ARRAYPATH";
+        case Type::Ask:
+            break;
+        }
+        return "ARRAY";
+    }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// The path pick selects a curve, but it is a COORDINATE pick here (the engine
+    /// resolves the curve from the point), so the normal snap rules apply.
+    bool wants_selection() const override { return false; }
 
 private:
-    enum class State { Type, Rows, Cols, RowSpace, ColSpace, Center, Count, Fill, RotateItems };
+    enum class State {
+        Type,
+        // Rectangular
+        Rows,
+        Cols,
+        RowSpace,
+        ColSpace,
+        Angle,
+        // Polar
+        Center,
+        Count,
+        Fill,
+        RotateItems,
+        // Path
+        PathPick,
+        PathMethod,
+        PathCount,
+        PathSpacing,
+        PathAlign,
+    };
+    void begin_rect(CommandContext& ctx);
+    void begin_polar(CommandContext& ctx);
+    void begin_path(CommandContext& ctx);
+
+    Type type_ = Type::Ask;
     State state_ = State::Type;
     int rows_ = 1;
     int cols_ = 1;
     double row_space_ = 0.0;
+    double col_space_ = 0.0;
     int count_ = 1;
     double fill_ = 0.0;
     core::Vec2 center_{};
+    // Path
+    core::Vec2 path_pick_{};
+    double path_spacing_ = 0.0;
     bool done_ = false;
 };
 
