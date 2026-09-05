@@ -23,6 +23,7 @@
 #include "musacad/core/io/native_format.hpp"
 #include "musacad/core/osnap.hpp"
 #include "musacad/core/scene_snapshot.hpp"
+#include "musacad/core/table.hpp"
 
 namespace musacad::core {
 
@@ -1730,9 +1731,30 @@ void GeometryEngine::apply_text_edit(Vec2 at, double pick_radius, const std::str
     scan(store_.texts(), EntityKind::Text);
     scan(store_.mtexts(), EntityKind::MText);
     scan(store_.mleaders(), EntityKind::MLeader);
+    // A table is text-bearing too: the pick resolves to the CELL under the point, so
+    // the same double-click / DDEDIT gesture that edits a text edits a cell. Scanned
+    // last so a text sitting on top of a table still wins the pick.
+    scan(store_.tables(), EntityKind::Table);
     if (target.is_null()) {
         report("No editable text there.");
         return;
+    }
+    // Which cell was picked? Resolved here, against the SAME derived geometry the
+    // renderer and the picker use, so the cell that lights up is the cell that edits.
+    int cell_index = -1;
+    if (target.kind == EntityKind::Table) {
+        const TableData* td = store_.table(target);
+        const TableStyle* st = store_.table_style(td->style);
+        const TableGeometry g = compute_table_geometry(
+            *td, store_.table_cell_views(*td), store_.table_col_widths(*td),
+            store_.table_row_heights(*td), st != nullptr ? *st : TableStyle{}, Rgb{});
+        cell_index = table_cell_at(g, at);
+        if (cell_index < 0) {
+            // Inside the table's bounding box but not in any cell (the pick landed on
+            // the border of a rotated table). Say so rather than editing a guess.
+            report("Pick inside a cell to edit it.");
+            return;
+        }
     }
     // Capture the entity, change ONLY its content, recommit as one undo group --
     // layer/properties/position are preserved (not a delete+recreate).
@@ -1744,6 +1766,13 @@ void GeometryEngine::apply_text_edit(Vec2 at, double pick_radius, const std::str
                           std::is_same_v<T, AddMTextCommand> ||
                           std::is_same_v<T, AddMLeaderCommand>) {
                 x.content = content;
+            } else if constexpr (std::is_same_v<T, AddTableCommand>) {
+                // Only the picked cell changes; every other cell, both size vectors and
+                // the style come through capture_entity untouched.
+                const auto i = static_cast<std::size_t>(cell_index);
+                if (i < x.texts.size()) {
+                    x.texts[i] = content;
+                }
             }
         },
         edited);
@@ -1756,7 +1785,7 @@ void GeometryEngine::apply_text_edit(Vec2 at, double pick_radius, const std::str
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
-    report("Text edited.");
+    report(target.kind == EntityKind::Table ? "Table cell edited." : "Text edited.");
 }
 
 void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,

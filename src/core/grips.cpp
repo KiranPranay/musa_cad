@@ -402,11 +402,13 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
     }
     case EntityKind::Table: {
         // Insertion point (top-left) moves the table; a grip on each interior column
-        // boundary resizes that column. Row heights follow the style's text height, so
-        // there is nothing useful to drag for them.
+        // boundary resizes that column, and one on each interior row boundary resizes
+        // that row. Both axes are stored per-table (col_widths / row_heights) and both
+        // are what compute_table_geometry lays the grid out from, so both are draggable.
         const TableData* td = store.table(h);
         push(out, td->pos, GripKind::Move, 0);
         const std::span<const double> cw = store.table_col_widths(*td);
+        const std::span<const double> rh = store.table_row_heights(*td);
         const double cs = std::cos(td->rotation);
         const double sn = std::sin(td->rotation);
         double x = 0.0;
@@ -414,6 +416,14 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
             x += cw[i];
             push(out, Vec2{td->pos.x + x * cs, td->pos.y + x * sn}, GripKind::Vertex,
                  static_cast<std::uint32_t>(i + 1));
+        }
+        // Row boundaries sit on the table's LEFT edge. Local y runs DOWN from the
+        // insertion point, which is the -cs/+sn diagonal in world space.
+        double y = 0.0;
+        for (std::size_t j = 0; j + 1 < rh.size(); ++j) {
+            y += rh[j];
+            push(out, Vec2{td->pos.x + y * sn, td->pos.y - y * cs}, GripKind::Vertex,
+                 kTableRowGripBase + static_cast<std::uint32_t>(j));
         }
         break;
     }
@@ -524,14 +534,29 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     x.line_pt = newpos; // dim-line offset / placement
                 }
             } else if constexpr (std::is_same_v<T, AddTableCommand>) {
+                // Both axes measure the drag in the TABLE's own frame, so a rotated
+                // table resizes along its own axes rather than the world ones.
+                const double cs = std::cos(x.rotation);
+                const double sn = std::sin(x.rotation);
+                const Vec2 d = newpos - x.pos;
                 if (grip_index == 0) {
                     x.pos = newpos;
+                } else if (grip_index >= kTableRowGripBase) {
+                    // Row-boundary grip: local y runs DOWN from the insertion point.
+                    const std::size_t j = grip_index - kTableRowGripBase;
+                    if (j < x.row_heights.size()) {
+                        const double down = d.x * sn - d.y * cs;
+                        double before = 0.0;
+                        for (std::size_t i = 0; i < j; ++i) {
+                            before += x.row_heights[i];
+                        }
+                        const double hgt = down - before;
+                        if (hgt > 1e-6) {
+                            x.row_heights[j] = hgt;
+                        }
+                    }
                 } else if (grip_index <= x.col_widths.size()) {
-                    // Column-boundary grip: set that column's width from the drag, in the
-                    // table's own frame so a rotated table resizes along its own axis.
-                    const double cs = std::cos(x.rotation);
-                    const double sn = std::sin(x.rotation);
-                    const Vec2 d = newpos - x.pos;
+                    // Column-boundary grip: set that column's width from the drag.
                     const double along = d.x * cs + d.y * sn;
                     double before = 0.0;
                     for (std::size_t i = 0; i + 1 < grip_index; ++i) {

@@ -283,7 +283,29 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             *td, store.table_cell_views(*td), store.table_col_widths(*td),
             store.table_row_heights(*td), st != nullptr ? *st : TableStyle{}, base);
         add_lines(g.line_color, g.lineweight, g.lines);
+        const std::span<const TableCell> raw_cells = store.table_cells(*td);
         for (std::size_t i = 0; i < g.cell_text.size(); ++i) {
+            // Every VISIBLE cell is a double-click target, empty ones included -- an
+            // empty cell is precisely the one a user wants to type into. The target box
+            // is the cell's own quad, so the click resolves to the cell under the cursor
+            // rather than to the table as a whole.
+            const std::array<Vec2, 4>& q = g.cell_quads[i];
+            Vec2 lo = q[0];
+            Vec2 hi = q[0];
+            for (const Vec2& c : q) {
+                lo = {std::min(lo.x, c.x), std::min(lo.y, c.y)};
+                hi = {std::max(hi.x, c.x), std::max(hi.y, c.y)};
+            }
+            // The RAW stored string, not the code-substituted one: editing must reopen
+            // what the user typed (`%%c`), not the glyph it renders as.
+            const std::uint32_t ci = g.cell_index[i];
+            std::string raw;
+            if (ci < raw_cells.size()) {
+                raw = std::string(store.string_of(raw_cells[ci]));
+            }
+            out.text_edit_targets.push_back(TextEditTarget{h, g.text_pos[i], lo, hi,
+                                                          g.text_height[i], g.rotation,
+                                                          /*multiline=*/false, std::move(raw)});
             if (g.cell_text[i].empty()) {
                 continue;
             }

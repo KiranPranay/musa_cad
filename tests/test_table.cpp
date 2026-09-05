@@ -228,8 +228,9 @@ TEST_CASE("#22: grips move the table and resize a column") {
     const EntityHandle h = make_table(s, 2, 3, {"a", "b", "c", "d", "e", "f"}, 20.0, 8.0);
     std::vector<Grip> grips;
     grips_of(s, h, grips);
-    // Insertion point + one grip per INTERIOR column boundary (2 for 3 columns).
-    REQUIRE(grips.size() == 3);
+    // Insertion point + one grip per INTERIOR column boundary (2 for 3 columns) + one
+    // per interior ROW boundary (1 for 2 rows).
+    REQUIRE(grips.size() == 4);
 
     GeometryStore moved;
     const EntityHandle m =
@@ -242,6 +243,84 @@ TEST_CASE("#22: grips move the table and resize a column") {
         add_command_to_store(sized, edit_for_grip_drag(s, h, 1, {35.0, 100.0}), EntityProps{});
     REQUIRE(sized.table_col_widths(*sized.table(z))[0] == Approx(35.0));
     REQUIRE(sized.table_col_widths(*sized.table(z))[1] == Approx(20.0)); // others untouched
+}
+
+TEST_CASE("#22: a row-boundary grip resizes that row only") {
+    // Rows are stored per-table and are what the grid is laid out from, so they are
+    // draggable on the same footing as columns. The table sits at y=100 and local y
+    // runs DOWN, so dragging the boundary to world y=85 makes row 0 fifteen tall.
+    GeometryStore s;
+    const EntityHandle h = make_table(s, 2, 3, {"a", "b", "c", "d", "e", "f"}, 20.0, 8.0);
+
+    std::vector<Grip> grips;
+    grips_of(s, h, grips);
+    const auto row_grip = std::find_if(grips.begin(), grips.end(), [](const Grip& g) {
+        return g.index >= kTableRowGripBase;
+    });
+    REQUIRE(row_grip != grips.end());
+    REQUIRE(row_grip->index == kTableRowGripBase); // the only interior boundary
+    REQUIRE(row_grip->pos.x == Approx(0.0));       // on the table's left edge
+    REQUIRE(row_grip->pos.y == Approx(92.0));      // 100 - row 0's height of 8
+
+    GeometryStore sized;
+    const EntityHandle z = add_command_to_store(
+        sized, edit_for_grip_drag(s, h, kTableRowGripBase, {0.0, 85.0}), EntityProps{});
+    const std::span<const double> rh = sized.table_row_heights(*sized.table(z));
+    REQUIRE(rh[0] == Approx(15.0));
+    REQUIRE(rh[1] == Approx(8.0)); // the row below is untouched
+    // Columns are not disturbed by a row drag.
+    REQUIRE(sized.table_col_widths(*sized.table(z))[0] == Approx(20.0));
+}
+
+TEST_CASE("#22: row and column grips follow a ROTATED table's own axes") {
+    // Both axes measure the drag in the table's frame, so a rotated table resizes
+    // along itself rather than along the world axes.
+    GeometryStore s;
+    std::vector<TableCell> cells(4);
+    const double a = kPi / 2.0; // +90 degrees: local +x points along world +y
+    const EntityHandle h =
+        s.add_table(2, 2, cells, {20.0, 20.0}, {8.0, 8.0}, {0.0, 0.0}, a, 0, false, false);
+
+    std::vector<Grip> grips;
+    grips_of(s, h, grips);
+    // Column boundary at local x=20 -> world (0,20); row boundary at local y=8 ->
+    // world (8,0), because local +y (down the page) rotates onto world +x.
+    const auto col = std::find_if(grips.begin(), grips.end(),
+                                  [](const Grip& g) { return g.index == 1; });
+    const auto row = std::find_if(grips.begin(), grips.end(), [](const Grip& g) {
+        return g.index == kTableRowGripBase;
+    });
+    REQUIRE(col != grips.end());
+    REQUIRE(row != grips.end());
+    REQUIRE(col->pos.x == Approx(0.0).margin(1e-9));
+    REQUIRE(col->pos.y == Approx(20.0));
+    REQUIRE(row->pos.x == Approx(8.0));
+    REQUIRE(row->pos.y == Approx(0.0).margin(1e-9));
+
+    // Drag the row boundary out to local y=20, i.e. world (20,0).
+    GeometryStore sized;
+    const EntityHandle z = add_command_to_store(
+        sized, edit_for_grip_drag(s, h, kTableRowGripBase, {20.0, 0.0}), EntityProps{});
+    REQUIRE(sized.table_row_heights(*sized.table(z))[0] == Approx(20.0));
+    REQUIRE(sized.table_col_widths(*sized.table(z))[0] == Approx(20.0)); // unchanged
+}
+
+TEST_CASE("#22: a grip drag can never collapse a row or column to zero") {
+    // Guarded the same way as the column path: a drag that would produce a
+    // non-positive size is ignored, so a table cannot be grip-dragged into a
+    // degenerate grid that draws nothing.
+    GeometryStore s;
+    const EntityHandle h = make_table(s, 2, 3, {"a", "b", "c", "d", "e", "f"}, 20.0, 8.0);
+
+    GeometryStore r;
+    const EntityHandle zr = add_command_to_store(
+        r, edit_for_grip_drag(s, h, kTableRowGripBase, {0.0, 100.0}), EntityProps{});
+    REQUIRE(r.table_row_heights(*r.table(zr))[0] == Approx(8.0)); // refused, kept
+
+    GeometryStore c;
+    const EntityHandle zc =
+        add_command_to_store(c, edit_for_grip_drag(s, h, 1, {0.0, 100.0}), EntityProps{});
+    REQUIRE(c.table_col_widths(*c.table(zc))[0] == Approx(20.0)); // refused, kept
 }
 
 TEST_CASE("#22: capture -> recreate preserves cells, sizes and spans") {
@@ -332,4 +411,196 @@ TEST_CASE("#22: struct sizes -- tables live in a cold arena, hot structs untouch
     static_assert(sizeof(TableCell) == 16, "TableCell is a pooled record -- keep it small");
     static_assert(sizeof(TableData) == 56, "TableData size changed -- update the docs too");
     SUCCEED();
+}
+
+// ---------------------------------------------------------------------------
+// Cell text (issue #22 follow-up). A table was placeable but not fillable: the
+// cells existed and rendered, but nothing in the app could put text in one.
+//
+// Editing rides the SAME path as TEXT/MTEXT/MLEADER rather than growing a
+// parallel one -- EditTextContentCommand resolves the picked point to a cell and
+// rewrites only that cell, so the existing double-click gesture and DDEDIT both
+// work on tables for free, and the capture/recommit shape keeps it one undo group
+// with layer, position, sizes and style preserved.
+// ---------------------------------------------------------------------------
+
+#include <chrono>
+#include <thread>
+
+#include "musacad/core/geometry_engine.hpp"
+
+namespace {
+template <class Pred>
+bool wait_for(GeometryEngine& e, Pred pred) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        e.consume_snapshot();
+        if (pred(e.snapshot())) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+}
+
+/// The 2x2 table used by the cell-editing cases: 40 wide, 8 tall, at (0,100).
+/// Cell centres are therefore (20,96) (40,96) / (20,88) (60,88)... see each test.
+AddTableCommand two_by_two() {
+    AddTableCommand c;
+    c.rows = 2;
+    c.cols = 2;
+    c.cells.assign(4, TableCell{});
+    c.texts = {"", "", "", ""};
+    c.col_widths = {40.0, 40.0};
+    c.row_heights = {8.0, 8.0};
+    c.pos = {0.0, 100.0};
+    return c;
+}
+
+/// The stored text of every cell, in the order the snapshot publishes them.
+std::vector<std::string> cell_texts(const RenderSnapshot& s) {
+    std::vector<std::string> out;
+    for (const TextEditTarget& t : s.text_edit_targets) {
+        out.push_back(t.content);
+    }
+    return out;
+}
+} // namespace
+
+TEST_CASE("#22: every cell is a text-edit target, empty ones included") {
+    // An empty cell is exactly the one a user wants to type into, so it must still be
+    // offered as a double-click target -- otherwise a fresh table is uneditable.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(two_by_two());
+    REQUIRE(wait_for(engine, [](const auto& s) { return s.text_edit_targets.size() == 4; }));
+    for (const std::string& t : cell_texts(engine.snapshot())) {
+        REQUIRE(t.empty());
+    }
+    engine.stop();
+}
+
+TEST_CASE("#22: editing a cell rewrites only that cell") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(two_by_two());
+    REQUIRE(wait_for(engine, [](const auto& s) { return s.text_edit_targets.size() == 4; }));
+
+    // Row 0 spans y=100..92, row 1 y=92..84; column 0 x=0..40, column 1 x=40..80.
+    // Pick the middle of the top-left cell.
+    engine.submit(EditTextContentCommand{{20.0, 96.0}, 1.0, "ITEM", 7});
+    REQUIRE(wait_for(engine, [](const auto& s) {
+        return s.status.find("Table cell edited.") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    std::vector<std::string> texts = cell_texts(engine.snapshot());
+    REQUIRE(texts.size() == 4);
+    REQUIRE(texts[0] == "ITEM");
+    REQUIRE(texts[1].empty());
+    REQUIRE(texts[2].empty());
+    REQUIRE(texts[3].empty());
+
+    // A second cell, to prove the first survives and the pick maps to the right cell.
+    engine.submit(EditTextContentCommand{{60.0, 88.0}, 1.0, "12", 8});
+    REQUIRE(wait_for(engine, [](const auto& s) {
+        std::vector<std::string> t = cell_texts(s);
+        return t.size() == 4 && t[3] == "12";
+    }));
+    engine.consume_snapshot();
+    texts = cell_texts(engine.snapshot());
+    REQUIRE(texts[0] == "ITEM"); // untouched by the second edit
+    REQUIRE(texts[3] == "12");
+    engine.stop();
+}
+
+TEST_CASE("#22: a cell edit preserves the table's sizes, style and position") {
+    // The capture -> change -> recommit shape must not quietly reset anything: this is
+    // why editing goes through capture_entity rather than delete + recreate.
+    GeometryEngine engine;
+    engine.start();
+    AddTableCommand c = two_by_two();
+    c.col_widths = {30.0, 55.0};
+    c.row_heights = {6.0, 11.0};
+    c.rotation = 0.0;
+    c.has_title = true;
+    engine.submit(c);
+    REQUIRE(wait_for(engine, [](const auto& s) { return s.text_edit_targets.size() == 4; }));
+    const Vec2 bmin_before = engine.snapshot().bounds_min;
+    const Vec2 bmax_before = engine.snapshot().bounds_max;
+
+    engine.submit(EditTextContentCommand{{15.0, 97.0}, 1.0, "TITLE", 7});
+    REQUIRE(wait_for(engine, [](const auto& s) {
+        return s.status.find("Table cell edited.") != std::string::npos;
+    }));
+    engine.consume_snapshot();
+    // Identical extent => widths, heights, position and rotation all came through.
+    REQUIRE(engine.snapshot().bounds_min.x == Approx(bmin_before.x));
+    REQUIRE(engine.snapshot().bounds_min.y == Approx(bmin_before.y));
+    REQUIRE(engine.snapshot().bounds_max.x == Approx(bmax_before.x));
+    REQUIRE(engine.snapshot().bounds_max.y == Approx(bmax_before.y));
+    engine.stop();
+}
+
+TEST_CASE("#22: a cell edit is one undo group") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(two_by_two());
+    REQUIRE(wait_for(engine, [](const auto& s) { return s.text_edit_targets.size() == 4; }));
+    engine.submit(EditTextContentCommand{{20.0, 96.0}, 1.0, "QTY", 9});
+    REQUIRE(wait_for(engine, [](const auto& s) {
+        std::vector<std::string> t = cell_texts(s);
+        return !t.empty() && t[0] == "QTY";
+    }));
+    engine.submit(UndoLastGroupCommand{});
+    REQUIRE(wait_for(engine, [](const auto& s) {
+        std::vector<std::string> t = cell_texts(s);
+        return t.size() == 4 && t[0].empty(); // the whole table came back, empty again
+    }));
+    engine.stop();
+}
+
+TEST_CASE("#22: a cell keeps the RAW string so editing reopens what was typed") {
+    // Cell text goes through the same control-code expansion as any other text. The
+    // edit target must carry the raw `%%c`, not the diameter glyph it renders as, or a
+    // round trip through the editor would silently rewrite the user's content.
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(two_by_two());
+    REQUIRE(wait_for(engine, [](const auto& s) { return s.text_edit_targets.size() == 4; }));
+    engine.submit(EditTextContentCommand{{20.0, 96.0}, 1.0, "%%c25", 7});
+    REQUIRE(wait_for(engine, [](const auto& s) {
+        std::vector<std::string> t = cell_texts(s);
+        return !t.empty() && !t[0].empty();
+    }));
+    engine.consume_snapshot();
+    REQUIRE(cell_texts(engine.snapshot())[0] == "%%c25");
+    engine.stop();
+}
+
+TEST_CASE("#22: a cell edit survives a save/load round trip") {
+    GeometryEngine engine;
+    engine.start();
+    engine.submit(two_by_two());
+    REQUIRE(wait_for(engine, [](const auto& s) { return s.text_edit_targets.size() == 4; }));
+    engine.submit(EditTextContentCommand{{20.0, 96.0}, 1.0, "M6 BOLT", 7});
+    REQUIRE(wait_for(engine, [](const auto& s) {
+        std::vector<std::string> t = cell_texts(s);
+        return !t.empty() && t[0] == "M6 BOLT";
+    }));
+
+    const std::filesystem::path p =
+        std::filesystem::temp_directory_path() / "musacad_table_cell_edit.musa";
+    engine.submit(SaveDocumentCommand{p.string(), false});
+    REQUIRE(wait_for(engine, [](const auto& s) {
+        return s.status.find("Saved") != std::string::npos;
+    }));
+    engine.submit(NewDocumentCommand{});
+    REQUIRE(wait_for(engine, [](const auto& s) { return s.text_edit_targets.empty(); }));
+    engine.submit(OpenDocumentCommand{p.string()});
+    REQUIRE(wait_for(engine, [](const auto& s) {
+        std::vector<std::string> t = cell_texts(s);
+        return t.size() == 4 && t[0] == "M6 BOLT";
+    }));
+    engine.stop();
+    std::filesystem::remove(p);
 }
