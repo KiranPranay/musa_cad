@@ -384,7 +384,9 @@ bool stretch_cmd(Command& c, Vec2 d, Vec2 mn, Vec2 mx) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                pull(x.p);
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 pull(x.a);
                 pull(x.b);
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
@@ -427,7 +429,9 @@ void translate_cmd(Command& c, Vec2 d) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                x.p += d;
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a += d;
                 x.b += d;
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
@@ -481,7 +485,9 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                x.p = refl(x.p);
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = refl(x.a);
                 x.b = refl(x.b);
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
@@ -547,7 +553,9 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                x.p = rot(x.p);
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = rot(x.a);
                 x.b = rot(x.b);
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
@@ -618,7 +626,9 @@ Vec2 command_anchor(const Command& c) {
     std::visit(
         [&](const auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                out = x.p;
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 out = x.a;
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
                 out = x.center;
@@ -652,7 +662,9 @@ void scale_cmd(Command& c, Vec2 base, double f) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                x.p = scl(x.p);
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = scl(x.a);
                 x.b = scl(x.b);
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
@@ -1228,6 +1240,45 @@ void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group) 
     geom_dirty_ = true;
 }
 
+namespace {
+
+/// A curve flattened to a polyline, with cumulative arc length: THE way a station and a
+/// tangent are found along a path. Shared by ARRAYPATH, DIVIDE and MEASURE so the three
+/// cannot disagree about where "40% along this arc" is.
+struct PathSampler {
+    std::vector<Vec2> pts;
+    std::vector<double> cum;
+    double total = 0.0;
+    bool closed = false;
+
+    [[nodiscard]] bool valid() const { return pts.size() >= 2 && total > 1e-12; }
+
+    void build(std::vector<Vec2> polyline) {
+        pts = std::move(polyline);
+        cum.assign(pts.size(), 0.0);
+        for (std::size_t i = 1; i < pts.size(); ++i) {
+            cum[i] = cum[i - 1] + length(pts[i] - pts[i - 1]);
+        }
+        total = cum.empty() ? 0.0 : cum.back();
+        closed = pts.size() >= 2 && length(pts.back() - pts.front()) <= 1e-9;
+    }
+
+    /// Position and tangent direction at arc length `s`.
+    void at(double s, Vec2& p, double& ang) const {
+        std::size_t i = 1;
+        while (i + 1 < pts.size() && cum[i] < s) {
+            ++i;
+        }
+        const double seg = cum[i] - cum[i - 1];
+        const double t = seg > 1e-12 ? (s - cum[i - 1]) / seg : 0.0;
+        const Vec2 d = pts[i] - pts[i - 1];
+        p = pts[i - 1] + d * t;
+        ang = std::atan2(d.y, d.x);
+    }
+};
+
+} // namespace
+
 void GeometryEngine::apply_array_rect(int rows, int cols, double dx, double dy, double angle,
                                       std::uint64_t group) {
     rows = std::max(rows, 1);
@@ -1290,22 +1341,16 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
     // One tessellation is THE path: stations and tangents both come from it, so the
     // items cannot land somewhere the curve does not go. Fine enough that the chord
     // error is far below what item placement can show.
-    std::vector<Vec2> pts;
-    kernel_.tessellate(store_, path, std::max(tess_tolerance_ * 0.25, 1e-6), pts);
-    if (pts.size() < 2) {
+    std::vector<Vec2> flat;
+    kernel_.tessellate(store_, path, std::max(tess_tolerance_ * 0.25, 1e-6), flat);
+    PathSampler sampler;
+    sampler.build(std::move(flat));
+    if (!sampler.valid()) {
         report("Path array: that entity has no length to array along.");
         return;
     }
-    std::vector<double> cum(pts.size(), 0.0);
-    for (std::size_t i = 1; i < pts.size(); ++i) {
-        cum[i] = cum[i - 1] + length(pts[i] - pts[i - 1]);
-    }
-    const double total = cum.back();
-    if (total <= 1e-12) {
-        report("Path array: that entity has no length to array along.");
-        return;
-    }
-    const bool closed = length(pts.back() - pts.front()) <= 1e-9;
+    const double total = sampler.total;
+    const bool closed = sampler.closed;
 
     // Where the items go. Divide (spacing 0) spreads `count` over the whole path;
     // Measure steps every `spacing`, with `count` capping how many (0 = as many as fit).
@@ -1337,19 +1382,6 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
         return;
     }
 
-    // Position and tangent at an arc length, from the same polyline.
-    const auto at = [&](double s, Vec2& p, double& ang) {
-        std::size_t i = 1;
-        while (i + 1 < pts.size() && cum[i] < s) {
-            ++i;
-        }
-        const double seg = cum[i] - cum[i - 1];
-        const double t = seg > 1e-12 ? (s - cum[i - 1]) / seg : 0.0;
-        const Vec2 d = pts[i] - pts[i - 1];
-        p = pts[i - 1] + d * t;
-        ang = std::atan2(d.y, d.x);
-    };
-
     // The selection rides the path by ONE shared base point, so a multi-entity
     // selection keeps its internal arrangement instead of scattering entity by entity.
     Vec2 base = c.base;
@@ -1375,13 +1407,13 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
 
     double ang0 = 0.0;
     Vec2 p0;
-    at(stations[0], p0, ang0);
+    sampler.at(stations[0], p0, ang0);
 
     int made = 0;
     for (std::size_t i = 0; i < stations.size(); ++i) {
         Vec2 p;
         double ang = 0.0;
-        at(stations[i], p, ang);
+        sampler.at(stations[i], p, ang);
         for (const EntityHandle h : sel) {
             if (!store_.is_valid(h)) {
                 continue;
@@ -1403,6 +1435,68 @@ void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
     geom_dirty_ = true;
     dirty_ = true;
     report("Path array created: " + std::to_string(made) + " copies along the path.");
+}
+
+void GeometryEngine::apply_divide_measure(const DividePathCommand& c) {
+    const bool divide = c.segments > 0;
+    const EntityHandle path = pick_nearest(c.pick, c.pick_radius);
+    if (path.is_null()) {
+        report(divide ? "Divide: no curve under the pick." : "Measure: no curve under the pick.");
+        return;
+    }
+    std::vector<Vec2> flat;
+    kernel_.tessellate(store_, path, std::max(tess_tolerance_ * 0.25, 1e-6), flat);
+    PathSampler sampler;
+    sampler.build(std::move(flat));
+    if (!sampler.valid()) {
+        report("That entity has no length to divide.");
+        return;
+    }
+
+    // AutoCAD's placement rules differ between the two, and the difference is the whole
+    // point of having both:
+    //   DIVIDE  n segments -> n-1 points on an OPEN curve (the ends already divide it),
+    //           but n points on a CLOSED one, where there is no free end.
+    //   MEASURE d          -> a point every d from the start, never one AT the start.
+    std::vector<double> stations;
+    if (divide) {
+        const int n = c.segments;
+        const int first = sampler.closed ? 0 : 1;
+        const int last = sampler.closed ? n - 1 : n - 1;
+        for (int i = first; i <= last; ++i) {
+            stations.push_back(sampler.total * static_cast<double>(i) / static_cast<double>(n));
+        }
+    } else {
+        if (c.distance <= 1e-12) {
+            report("Measure: the segment length must be positive.");
+            return;
+        }
+        for (double d = c.distance; d <= sampler.total + 1e-9; d += c.distance) {
+            stations.push_back(std::min(d, sampler.total));
+        }
+    }
+    if (stations.empty()) {
+        report(divide ? "Divide: that needs at least two segments."
+                      : "Measure: the segment length is longer than the curve.");
+        return;
+    }
+
+    // The marks are ordinary POINT entities, exactly as in AutoCAD: they snap with
+    // Node, they select, they erase, and the curve itself is left alone. Props are left
+    // unset so each mark lands on the CURRENT layer, like any other fresh draw.
+    for (const double st : stations) {
+        Vec2 p;
+        double ang = 0.0;
+        sampler.at(st, p, ang);
+        Command mark = AddPointCommand{p, c.group, {}};
+        const EntityHandle nh = create_indexed(mark);
+        push_create_item(c.group, nh, mark);
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report((divide ? "Divided: " : "Measured: ") + std::to_string(stations.size()) +
+           " points placed.");
 }
 
 void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angle,
@@ -2143,7 +2237,8 @@ void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand> ||
+            if constexpr (std::is_same_v<T, AddPointCommand> ||
+                          std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> || std::is_same_v<T, AddArcCommand> ||
                           std::is_same_v<T, AddTextCommand> || std::is_same_v<T, AddDimensionCommand> ||
@@ -2760,7 +2855,8 @@ void GeometryEngine::apply(const Command& command) {
     std::visit(
         [this, &command](const auto& c) {
             using T = std::decay_t<decltype(c)>;
-            if constexpr (std::is_same_v<T, AddLineCommand> ||
+            if constexpr (std::is_same_v<T, AddPointCommand> ||
+                          std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> ||
                           std::is_same_v<T, AddArcCommand> || std::is_same_v<T, AddTextCommand> ||
@@ -2875,6 +2971,8 @@ void GeometryEngine::apply(const Command& command) {
                 apply_array_rect(c.rows, c.cols, c.dx, c.dy, c.angle, c.group);
             } else if constexpr (std::is_same_v<T, ArrayPathCommand>) {
                 apply_array_path(c);
+            } else if constexpr (std::is_same_v<T, DividePathCommand>) {
+                apply_divide_measure(c);
             } else if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
                 apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group);
             } else if constexpr (std::is_same_v<T, ExtendPickCommand>) {

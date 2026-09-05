@@ -28,6 +28,26 @@ namespace musacad::core {
 /// Which entities ERASE targets (selection/picking arrives in Phase 5).
 enum class EraseScope : std::uint8_t { Last, All };
 
+/// DIVIDE and MEASURE (AutoCAD): place POINT entities along the curve under `pick`.
+/// `segments` > 0 selects DIVIDE (that many equal parts); otherwise `distance` selects
+/// MEASURE (a point every `distance` along the curve). The curve itself is not changed.
+struct DividePathCommand {
+    Vec2 pick;
+    double pick_radius = 0.0;
+    int segments = 0;
+    double distance = 0.0;
+    std::uint64_t group = 0;
+};
+
+/// A POINT entity (AutoCAD POINT). Points are already stored, drawn, picked, bounded
+/// and persisted; this is the command that creates one, which is what the POINT command
+/// and DIVIDE/MEASURE all needed.
+struct AddPointCommand {
+    Vec2 p;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
 // Add* commands carry an optional EntityProps. Empty => the engine stamps the
 // current layer (a fresh user draw); set => exact props (capture/undo/move,
 // preserving layer + overrides).
@@ -731,7 +751,7 @@ using Command =
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
-                 ArrayPathCommand,
+                 ArrayPathCommand, AddPointCommand, DividePathCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,

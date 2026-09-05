@@ -137,6 +137,12 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/rotate.svg", "Rotate selected objects around a base point.");
     reg({"SC", "SCALE"}, [] { return std::make_unique<ScaleCommand>(); }, "assets/ribbon/scale.svg",
         "Resize selected objects uniformly about a base point.");
+    reg({"PO", "POINT"}, [] { return std::make_unique<PointCommand>(); },
+        "assets/ribbon/point.svg", "Place point objects; Esc ends.");
+    reg({"DIV", "DIVIDE"}, [] { return std::make_unique<DivideCommand>(false); },
+        "assets/ribbon/divide.svg", "Mark a curve into a number of equal segments with points.");
+    reg({"ME", "MEASURE"}, [] { return std::make_unique<DivideCommand>(true); },
+        "assets/ribbon/measure.svg", "Mark a curve at set intervals with points.");
     // The AutoCAD array family. ARRAY/-ARRAY ask for the type; the three ARRAY* forms
     // go straight to their own prompts. ARRAYEDIT/ARRAYCLOSE are absent by design --
     // they edit an ASSOCIATIVE array, and these arrays are non-associative (what

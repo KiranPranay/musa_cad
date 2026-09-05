@@ -441,6 +441,42 @@ private:
     bool done_ = false;
 };
 
+/// POINT (AutoCAD PO). Places a POINT entity at each pick and keeps going until Esc,
+/// which is what AutoCAD does -- points are almost always placed in groups.
+class PointCommand final : public ICommand {
+public:
+    std::string name() const override { return "POINT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// DIVIDE and MEASURE (AutoCAD DIV / ME). Both pick a curve and then place POINT marks
+/// along it; they differ only in whether the second answer is a segment COUNT or a
+/// segment LENGTH, so they share one state machine.
+class DivideCommand final : public ICommand {
+public:
+    /// `measure` false = DIVIDE (into N equal parts), true = MEASURE (every N units).
+    explicit DivideCommand(bool measure = false) : measure_(measure) {}
+
+    std::string name() const override { return measure_ ? "MEASURE" : "DIVIDE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Pick, Amount };
+    bool measure_ = false;
+    State state_ = State::Pick;
+    core::Vec2 pick_{};
+    bool done_ = false;
+};
+
 /// The whole AutoCAD array family in one state machine.
 ///
 /// ARRAY (AR) and -ARRAY ask for the type, exactly as AutoCAD does; ARRAYRECT,

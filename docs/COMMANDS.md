@@ -38,6 +38,9 @@ commands (Ribbon Phase A):
 | ARRAYRECT | Create a rectangular pattern of copies in rows and columns. |
 | ARRAYPOLAR | Create a circular pattern of copies about a centre point. |
 | ARRAYPATH | Distribute copies evenly along a path curve. |
+| POINT (PO) | Place point objects; Esc ends. |
+| DIVIDE (DIV) | Mark a curve into a number of equal segments with points. |
+| MEASURE (ME) | Mark a curve at set intervals with points. |
 | EXTEND (EX) | Extend objects to meet the edges of other objects. |
 | FILLET (F) | Round corners between two intersecting lines, arcs, or polylines. |
 | CHAMFER (CHA) | Bevel corners between two intersecting lines. |
@@ -99,6 +102,9 @@ commands (Ribbon Phase A):
 | ARRAYPOLAR (centre, count, fill angle, rotate items) | ARRAYPOLAR | Implemented |
 | ARRAYPATH (Divide / Measure, align to path) | ARRAYPATH | Implemented |
 | ARRAYEDIT / ARRAYCLOSE | - | Not applicable (arrays are non-associative -- see below) |
+| POINT | PO | Implemented |
+| DIVIDE (n equal segments) | DIV | Implemented |
+| MEASURE (fixed interval) | ME | Implemented |
 | TRIM a line (cut by line/circle/arc edges) | TR | Implemented |
 | TRIM an arc/circle/polyline *entity* | TR | Partial (line entities only; curve entities deferred) |
 | EXTEND a line (to line/circle/arc boundary) | EX | Implemented |

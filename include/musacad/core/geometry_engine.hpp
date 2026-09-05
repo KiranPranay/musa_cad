@@ -225,6 +225,7 @@ private:
     void apply_array_rect(int rows, int cols, double dx, double dy, double angle,
                           std::uint64_t group);
     void apply_array_path(const ArrayPathCommand& c);
+    void apply_divide_measure(const DividePathCommand& c);
     void apply_array_polar(Vec2 center, int count, double total_angle, bool rotate_items,
                            std::uint64_t group);
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);

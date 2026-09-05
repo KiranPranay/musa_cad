@@ -172,6 +172,7 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                im->clip_u1,  im->clip_v1, 0,           im->props};
     }
     case EntityKind::Point:
+        return AddPointCommand{store.point(h)->p, 0, store.point(h)->props};
     case EntityKind::Spline:
         break;
     }
@@ -184,7 +185,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
     std::visit(
         [&](const auto& c) {
             using T = std::decay_t<decltype(c)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                handle = store.add_point(c.p, props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 handle = store.add_line(c.a, c.b, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {

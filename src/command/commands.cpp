@@ -1053,6 +1053,81 @@ int parse_int(const std::string& t, int fallback) {
 }
 } // namespace
 
+// ---------------------------------------------------------------------------
+// POINT: place a point at each pick until Esc
+// ---------------------------------------------------------------------------
+void PointCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify a point: ");
+}
+
+void PointCommand::input(CommandContext& ctx, const std::string& text) {
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::AddPointCommand{*p, ctx.group_id(), {}});
+        ctx.set_last_point(*p);
+        // Stay open for the next one, like AutoCAD: points come in groups.
+        ctx.set_prompt("Specify a point: ");
+    }
+}
+
+void PointCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// DIVIDE / MEASURE: mark a curve with points
+// ---------------------------------------------------------------------------
+void DivideCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Pick;
+    ctx.set_prompt(measure_ ? "Select object to measure: " : "Select object to divide: ");
+}
+
+void DivideCommand::input(CommandContext& ctx, const std::string& text) {
+    switch (state_) {
+    case State::Pick:
+        if (const auto p = read_point(ctx, text)) {
+            pick_ = *p;
+            state_ = State::Amount;
+            ctx.set_prompt(measure_ ? "Specify length of segment: "
+                                    : "Enter the number of segments: ");
+        }
+        return;
+    case State::Amount: {
+        const std::string t = trimmed(text);
+        core::DividePathCommand cmd;
+        cmd.pick = pick_;
+        cmd.pick_radius = ctx.pick_radius();
+        cmd.group = ctx.group_id();
+        if (measure_) {
+            double d = 0.0;
+            if (!parse_number(t, d) || d <= 0.0) {
+                ctx.echo("Enter a positive segment length.");
+                return;
+            }
+            cmd.distance = d;
+        } else {
+            const int n = parse_int(t, 0);
+            if (n < 2) {
+                ctx.echo("Enter a number of segments of 2 or more.");
+                return;
+            }
+            cmd.segments = n;
+        }
+        ctx.submit(cmd);
+        // The engine reports how many marks it actually placed (Ph10.1).
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void DivideCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
 void ArrayCommand::begin_rect(CommandContext& ctx) {
     state_ = State::Rows;
     ctx.set_prompt("Enter number of rows <1>: ");
