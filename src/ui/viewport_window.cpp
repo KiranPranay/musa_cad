@@ -733,7 +733,10 @@ void ViewportWindow::rebuild_overlay() {
             snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
                               snap_y_.load(std::memory_order_relaxed)};
         }
-        const core::Vec2 cur = processor_->resolve_pick(raw, snap);
+        // A selection-window corner takes the raw cursor, so the rubber band outlines the
+        // region the pick will actually use (ortho would otherwise flatten the band).
+        const core::Vec2 cur =
+            processor_->wants_window() ? raw : processor_->resolve_pick(raw, snap);
         dyn_cursor_ = cur; // for composing a typed value on Enter
         Q_EMIT constrainedCursorMoved(cur.x, cur.y); // DYN live values read this
         const command::PreviewSpec& pv = processor_->preview();

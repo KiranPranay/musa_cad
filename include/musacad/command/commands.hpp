@@ -371,6 +371,10 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// The two crossing-window corners are region picks: no osnap, no ortho/polar.
+    bool wants_window() const override {
+        return mode_ == Mode::Corner1 || mode_ == Mode::Corner2;
+    }
 
 private:
     enum class Mode { Corner1, Corner2, Base, Displacement };

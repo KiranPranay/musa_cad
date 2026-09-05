@@ -1744,13 +1744,20 @@ void StretchCommand::input(CommandContext& ctx, const std::string& text) {
             c1_ = *p;
             ctx.set_last_point(*p);
             mode_ = Mode::Corner2;
+            // Rubber-band the crossing window so the region is visible while it is
+            // dragged out -- without it the user is picking two invisible corners and
+            // can only guess which vertices the stretch will catch.
+            ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {c1_}});
             ctx.set_prompt("Specify opposite corner: ");
         }
         return;
     case Mode::Corner2:
         if (const auto p = read_point(ctx, text)) {
             c2_ = *p;
-            ctx.set_last_point(*p);
+            ctx.clear_preview();
+            // The base point is a real coordinate again (osnap/ortho apply), so seed
+            // ortho from it rather than from the window corner.
+            ctx.clear_last_point();
             mode_ = Mode::Base;
             ctx.set_prompt("Specify base point: ");
         }
@@ -1760,6 +1767,10 @@ void StretchCommand::input(CommandContext& ctx, const std::string& text) {
             base_ = *p;
             ctx.set_last_point(*p);
             mode_ = Mode::Displacement;
+            // A rubber line from the base point to the cursor: the displacement vector.
+            // Deliberately NOT a Move ghost -- a stretch drags only the caught vertices,
+            // so ghosting the whole entity would show the wrong result.
+            ctx.set_preview(PreviewSpec{PreviewKind::Segment, {base_}});
             ctx.set_prompt("Specify second point: ");
         }
         return;
@@ -1767,6 +1778,7 @@ void StretchCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             const core::Vec2 mn{std::min(c1_.x, c2_.x), std::min(c1_.y, c2_.y)};
             const core::Vec2 mx{std::max(c1_.x, c2_.x), std::max(c1_.y, c2_.y)};
+            ctx.clear_preview();
             ctx.submit(core::StretchSelectionCommand{mn, mx, *p - base_, ctx.group_id()});
             // The engine reports what it actually did (Ph10.1 honest feedback), so the
             // command does not guess a success message here.
@@ -1777,6 +1789,7 @@ void StretchCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void StretchCommand::cancel(CommandContext& ctx) {
+    ctx.clear_preview();
     ctx.echo("*Cancel*");
     done_ = true;
 }

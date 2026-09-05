@@ -95,6 +95,13 @@
 namespace musacad::ui {
 
 namespace {
+/// Dynamic Input ships ON: Musa CAD is canvas-first out of the box (on-canvas command
+/// entry, sub-prompts and dimension fields), with F12 as the fallback to the classic
+/// bottom command line. Named once so the startup read and the self-test's
+/// save/restore can never drift -- they had: startup defaulted ON while the self-test
+/// restored OFF, so running the harness on a fresh profile silently persisted DYN off.
+constexpr bool kDynDefaultEnabled = true;
+
 /// The declarative spec for the ARRAY dialog: a Type selector that gates the
 /// Rectangular vs Polar parameter sets.
 DialogSpec array_dialog_spec() {
@@ -966,7 +973,8 @@ void MainWindow::build_status_bar() {
     // Default ON: the app is canvas-only out of the box (on-canvas command entry,
     // sub-prompts and dimension fields). F12 OFF reverts to the classic bottom
     // command-line bar -- the toggleable fallback.
-    const bool dyn_initial = QSettings().value(QStringLiteral("dyn/enabled"), true).toBool();
+    const bool dyn_initial =
+        QSettings().value(QStringLiteral("dyn/enabled"), kDynDefaultEnabled).toBool();
     dyn_action_ = make_mode_action(QStringLiteral("DYN"), Qt::Key_F12, dyn_initial,
                                    QStringLiteral("Show command input and prompts at the cursor "
                                                   "(Dynamic Input)."));
@@ -2481,7 +2489,21 @@ bool MainWindow::selftest_dyn() {
         QCoreApplication::processEvents();
     };
     bool all = true;
-    const bool saved_pref = QSettings().value(QStringLiteral("dyn/enabled"), false).toBool();
+    const bool saved_pref =
+        QSettings().value(QStringLiteral("dyn/enabled"), kDynDefaultEnabled).toBool();
+
+    // (0) The shipped default: with no stored preference at all, DYN resolves ON. This
+    // is the canvas-first promise -- a fresh profile must land in canvas mode, not on
+    // the classic bottom command line. Asserted on the real key so a future edit to
+    // either read site (startup, or the restore below) trips this immediately.
+    {
+        QSettings st;
+        st.remove(QStringLiteral("dyn/enabled"));
+        const bool default_on = st.value(QStringLiteral("dyn/enabled"), kDynDefaultEnabled).toBool();
+        std::printf("[selftest] DYN default (fresh profile) is ON: %s\n",
+                    default_on ? "PASS" : "FAIL");
+        all = all && default_on;
+    }
 
     // (1) F12 on -> canvas-only mode: the bottom command-line bar hides (the on-canvas
     // surfaces are the input) and the preference persists.
