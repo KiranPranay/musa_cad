@@ -420,8 +420,16 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                 snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
                                   snap_y_.load(std::memory_order_relaxed)};
             }
+            // Was this pick the FIRST corner of a selection window? If so, arm a drag:
+            // releasing away from here delivers the opposite corner, so the window can be
+            // dragged out in one gesture (AutoCAD) as well as clicked corner-to-corner.
+            const bool window_pick = processor_->wants_window();
             processor_->set_pick_radius(10.0 * dpr / scale);
             processor_->pick_point(world, snap);
+            if (window_pick) {
+                window_drag_ = true;
+                sel_start_screen_ = screen_px;
+            }
             rebuild_overlay();
         } else if (const int gi = grip_at(world, 10.0 * dpr / scale); gi >= 0) {
             // Idle press on a grip of a selected entity: begin a direct-manipulation
@@ -586,6 +594,25 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
             core::GripDragCommand{core::GripDragCommand::Phase::Commit, {}, 0, target, group});
         processor_->clear_last_point();
         rebuild_overlay();
+        return;
+    }
+    if (event->button() == Qt::LeftButton && window_drag_) {
+        window_drag_ = false;
+        const double dpr = devicePixelRatio();
+        const core::Vec2 rel_screen{event->position().x() * dpr, event->position().y() * dpr};
+        // A real drag delivers the opposite corner now; a press-in-place is left alone so
+        // the classic click-click flow still works and a stray click cannot collapse the
+        // window onto its own first corner.
+        if (processor_ != nullptr && processor_->wants_window() &&
+            core::length(rel_screen - sel_start_screen_) >= 4.0 * dpr) {
+            core::Vec2 world;
+            {
+                std::scoped_lock lock(camera_mutex_);
+                world = camera_.screen_to_world(rel_screen);
+            }
+            processor_->pick_point(world, std::nullopt); // window corners ignore osnap
+            rebuild_overlay();
+        }
         return;
     }
     if (event->button() == Qt::LeftButton && selecting_) {
