@@ -57,4 +57,15 @@ struct TableCellView {
     std::uint8_t align = static_cast<std::uint8_t>(CellAlign::Center);
 };
 
+/// Grip index layout for a table.
+///
+///   0                        -- the insertion point: moves the whole table.
+///   1 .. cols-1              -- interior COLUMN boundary i, which sizes column i-1.
+///   kTableRowGripBase + j    -- interior ROW boundary j, which sizes row j.
+///
+/// A base rather than one contiguous run so the two families can never be confused
+/// as the column count changes, and so a grip index captured before an edit cannot
+/// silently come to mean a different axis after it. Mirrors DimData::kTextGripIndex.
+inline constexpr std::uint32_t kTableRowGripBase = 1000;
+
 } // namespace musacad::core

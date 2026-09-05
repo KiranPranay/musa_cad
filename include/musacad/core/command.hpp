@@ -28,6 +28,64 @@ namespace musacad::core {
 /// Which entities ERASE targets (selection/picking arrives in Phase 5).
 enum class EraseScope : std::uint8_t { Last, All };
 
+/// ALIGN (AutoCAD): move, rotate and optionally uniformly scale the selection so that
+/// `src1` lands on `dst1` and the direction src1->src2 lines up with dst1->dst2. With
+/// `scale` true the distance dst1..dst2 also sets the size, which is how a detail is
+/// fitted between two known points in one step.
+struct AlignSelectionCommand {
+    Vec2 src1;
+    Vec2 dst1;
+    Vec2 src2;
+    Vec2 dst2;
+    bool scale = false;
+    std::uint64_t group = 0;
+};
+
+/// LENGTHEN (AutoCAD): change the length of the open curve under `pick`. The END NEARER
+/// the pick is the one that moves, which is how AutoCAD decides. `mode` selects what
+/// `value` means: Delta adds to the current length, Percent sets it to a percentage of
+/// it, Total sets it outright.
+struct LengthenCommand {
+    enum class Mode : std::uint8_t { Delta = 0, Percent = 1, Total = 2 };
+    Vec2 pick;
+    double pick_radius = 0.0;
+    Mode mode = Mode::Total;
+    double value = 0.0;
+    std::uint64_t group = 0;
+};
+
+/// BREAK (AutoCAD BR): remove the piece of the curve under `pick` that lies between
+/// `p1` and `p2`. When the two points coincide it is BREAK AT POINT (AutoCAD's BREAKATPOINT):
+/// the curve is split in two with no gap. A circle becomes a single arc, since a circle
+/// with a piece missing is an arc.
+struct BreakCommand {
+    Vec2 pick;
+    double pick_radius = 0.0;
+    Vec2 p1;
+    Vec2 p2;
+    std::uint64_t group = 0;
+};
+
+/// DIVIDE and MEASURE (AutoCAD): place POINT entities along the curve under `pick`.
+/// `segments` > 0 selects DIVIDE (that many equal parts); otherwise `distance` selects
+/// MEASURE (a point every `distance` along the curve). The curve itself is not changed.
+struct DividePathCommand {
+    Vec2 pick;
+    double pick_radius = 0.0;
+    int segments = 0;
+    double distance = 0.0;
+    std::uint64_t group = 0;
+};
+
+/// A POINT entity (AutoCAD POINT). Points are already stored, drawn, picked, bounded
+/// and persisted; this is the command that creates one, which is what the POINT command
+/// and DIVIDE/MEASURE all needed.
+struct AddPointCommand {
+    Vec2 p;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
 // Add* commands carry an optional EntityProps. Empty => the engine stamps the
 // current layer (a fresh user draw); set => exact props (capture/undo/move,
 // preserving layer + overrides).
@@ -243,6 +301,9 @@ struct ArrayRectCommand {
     int cols = 1;
     double dx = 0.0;
     double dy = 0.0;
+    /// AutoCAD's "Axis angle": rotates the row/column AXES about the base point while
+    /// each copy keeps its own orientation. 0 = world-aligned, the usual case.
+    double angle = 0.0;
     std::uint64_t group = 0;
 };
 
@@ -253,6 +314,27 @@ struct ArrayPolarCommand {
     int count = 1;
     double total_angle = 0.0;
     bool rotate_items = true;
+    std::uint64_t group = 0;
+};
+
+/// Path array of the selection (AutoCAD ARRAYPATH): distribute `count` items along the
+/// entity under `pick`, which may be any tessellable curve (line, arc, circle, polyline,
+/// spline). The path itself is NOT consumed -- it stays in the drawing, as AutoCAD does.
+///
+/// `spacing` selects the two AutoCAD methods, mirroring DIVIDE vs MEASURE:
+///   0  -- Divide:  `count` items spread over the whole path.
+///   >0 -- Measure: items every `spacing` along the path; `count` caps how many (0 = as
+///         many as fit).
+/// `align` rotates each copy to the path tangent; otherwise copies keep their original
+/// orientation and only translate.
+struct ArrayPathCommand {
+    Vec2 pick;                 ///< picks the path curve
+    double pick_radius = 0.0;
+    int count = 0;
+    double spacing = 0.0;
+    bool align = true;
+    Vec2 base;                 ///< the point on the selection that rides the path
+    bool has_base = false;     ///< false = use the selection's own anchor
     std::uint64_t group = 0;
 };
 
@@ -707,6 +789,8 @@ using Command =
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
+                 ArrayPathCommand, AddPointCommand, DividePathCommand, BreakCommand,
+                 AlignSelectionCommand, LengthenCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,

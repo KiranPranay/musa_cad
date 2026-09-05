@@ -23,6 +23,7 @@
 #include "musacad/core/io/native_format.hpp"
 #include "musacad/core/osnap.hpp"
 #include "musacad/core/scene_snapshot.hpp"
+#include "musacad/core/table.hpp"
 
 namespace musacad::core {
 
@@ -383,7 +384,9 @@ bool stretch_cmd(Command& c, Vec2 d, Vec2 mn, Vec2 mx) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                pull(x.p);
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 pull(x.a);
                 pull(x.b);
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
@@ -426,7 +429,9 @@ void translate_cmd(Command& c, Vec2 d) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                x.p += d;
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a += d;
                 x.b += d;
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
@@ -480,7 +485,9 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                x.p = refl(x.p);
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = refl(x.a);
                 x.b = refl(x.b);
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
@@ -546,7 +553,9 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                x.p = rot(x.p);
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = rot(x.a);
                 x.b = rot(x.b);
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
@@ -617,7 +626,9 @@ Vec2 command_anchor(const Command& c) {
     std::visit(
         [&](const auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                out = x.p;
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 out = x.a;
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
                 out = x.center;
@@ -651,7 +662,9 @@ void scale_cmd(Command& c, Vec2 base, double f) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddPointCommand>) {
+                x.p = scl(x.p);
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = scl(x.a);
                 x.b = scl(x.b);
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
@@ -1227,17 +1240,67 @@ void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group) 
     geom_dirty_ = true;
 }
 
-void GeometryEngine::apply_array_rect(int rows, int cols, double dx, double dy,
+namespace {
+
+/// A curve flattened to a polyline, with cumulative arc length: THE way a station and a
+/// tangent are found along a path. Shared by ARRAYPATH, DIVIDE and MEASURE so the three
+/// cannot disagree about where "40% along this arc" is.
+struct PathSampler {
+    std::vector<Vec2> pts;
+    std::vector<double> cum;
+    double total = 0.0;
+    bool closed = false;
+
+    [[nodiscard]] bool valid() const { return pts.size() >= 2 && total > 1e-12; }
+
+    void build(std::vector<Vec2> polyline) {
+        pts = std::move(polyline);
+        cum.assign(pts.size(), 0.0);
+        for (std::size_t i = 1; i < pts.size(); ++i) {
+            cum[i] = cum[i - 1] + length(pts[i] - pts[i - 1]);
+        }
+        total = cum.empty() ? 0.0 : cum.back();
+        closed = pts.size() >= 2 && length(pts.back() - pts.front()) <= 1e-9;
+    }
+
+    /// Position and tangent direction at arc length `s`.
+    void at(double s, Vec2& p, double& ang) const {
+        std::size_t i = 1;
+        while (i + 1 < pts.size() && cum[i] < s) {
+            ++i;
+        }
+        const double seg = cum[i] - cum[i - 1];
+        const double t = seg > 1e-12 ? (s - cum[i - 1]) / seg : 0.0;
+        const Vec2 d = pts[i] - pts[i - 1];
+        p = pts[i - 1] + d * t;
+        ang = std::atan2(d.y, d.x);
+    }
+};
+
+} // namespace
+
+void GeometryEngine::apply_array_rect(int rows, int cols, double dx, double dy, double angle,
                                       std::uint64_t group) {
     rows = std::max(rows, 1);
     cols = std::max(cols, 1);
     const std::vector<EntityHandle> sel = selection_;
+    if (sel.empty()) {
+        report("Nothing selected to array.");
+        return;
+    }
+    // AutoCAD's axis angle rotates the ROW/COLUMN DIRECTIONS, not the items: a rotated
+    // rectangular array is a skewed lattice of upright copies.
+    const double cs = std::cos(angle);
+    const double sn = std::sin(angle);
+    int made = 0;
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
             if (r == 0 && c == 0) {
                 continue; // the originals stay in place
             }
-            const Vec2 d{static_cast<double>(c) * dx, static_cast<double>(r) * dy};
+            const double ax = static_cast<double>(c) * dx;
+            const double ay = static_cast<double>(r) * dy;
+            const Vec2 d{ax * cs - ay * sn, ax * sn + ay * cs};
             for (const EntityHandle h : sel) {
                 if (!store_.is_valid(h)) {
                     continue;
@@ -1246,16 +1309,205 @@ void GeometryEngine::apply_array_rect(int rows, int cols, double dx, double dy,
                 translate_cmd(copy, d);
                 const EntityHandle nh = create_indexed(copy);
                 push_create_item(group, nh, copy);
+                ++made;
             }
         }
     }
     redo_.clear();
     geom_dirty_ = true;
+    dirty_ = true;
+    report(made == 0 ? "Array: a 1x1 array adds nothing."
+                     : "Array created: " + std::to_string(made) + " copies.");
+}
+
+void GeometryEngine::apply_array_path(const ArrayPathCommand& c) {
+    const std::vector<EntityHandle> sel = selection_;
+    if (sel.empty()) {
+        report("Nothing selected to array.");
+        return;
+    }
+    const EntityHandle path = pick_nearest(c.pick, c.pick_radius);
+    if (path.is_null()) {
+        report("Path array: no curve under the pick.");
+        return;
+    }
+    // The path must not also be part of what is being arrayed, or each copy would drag
+    // a copy of the path along with it.
+    if (std::find(sel.begin(), sel.end(), path) != sel.end()) {
+        report("Path array: the path curve is part of the selection. Deselect it first.");
+        return;
+    }
+
+    // One tessellation is THE path: stations and tangents both come from it, so the
+    // items cannot land somewhere the curve does not go. Fine enough that the chord
+    // error is far below what item placement can show.
+    std::vector<Vec2> flat;
+    kernel_.tessellate(store_, path, std::max(tess_tolerance_ * 0.25, 1e-6), flat);
+    PathSampler sampler;
+    sampler.build(std::move(flat));
+    if (!sampler.valid()) {
+        report("Path array: that entity has no length to array along.");
+        return;
+    }
+    const double total = sampler.total;
+    const bool closed = sampler.closed;
+
+    // Where the items go. Divide (spacing 0) spreads `count` over the whole path;
+    // Measure steps every `spacing`, with `count` capping how many (0 = as many as fit).
+    std::vector<double> stations;
+    if (c.spacing > 1e-12) {
+        const int cap = c.count > 0 ? c.count : std::numeric_limits<int>::max();
+        for (int i = 0; i < cap; ++i) {
+            const double s = static_cast<double>(i) * c.spacing;
+            if (s > total + 1e-9) {
+                break;
+            }
+            stations.push_back(std::min(s, total));
+        }
+    } else {
+        const int n = std::max(c.count, 1);
+        if (n == 1) {
+            stations.push_back(0.0);
+        } else {
+            // A closed path has no distinct end station -- placing one there would sit
+            // an item on top of the one at the start.
+            const double denom = closed ? static_cast<double>(n) : static_cast<double>(n - 1);
+            for (int i = 0; i < n; ++i) {
+                stations.push_back(total * static_cast<double>(i) / denom);
+            }
+        }
+    }
+    if (stations.size() < 2) {
+        report("Path array: need at least two items.");
+        return;
+    }
+
+    // The selection rides the path by ONE shared base point, so a multi-entity
+    // selection keeps its internal arrangement instead of scattering entity by entity.
+    Vec2 base = c.base;
+    if (!c.has_base) {
+        Vec2 lo{0, 0};
+        Vec2 hi{0, 0};
+        bool any = false;
+        for (const EntityHandle h : sel) {
+            Vec2 l;
+            Vec2 g;
+            if (store_.is_valid(h) && entity_aabb(store_, h, l, g)) {
+                lo = any ? Vec2{std::min(lo.x, l.x), std::min(lo.y, l.y)} : l;
+                hi = any ? Vec2{std::max(hi.x, g.x), std::max(hi.y, g.y)} : g;
+                any = true;
+            }
+        }
+        if (!any) {
+            report("Nothing selected to array.");
+            return;
+        }
+        base = {(lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5};
+    }
+
+    double ang0 = 0.0;
+    Vec2 p0;
+    sampler.at(stations[0], p0, ang0);
+
+    int made = 0;
+    for (std::size_t i = 0; i < stations.size(); ++i) {
+        Vec2 p;
+        double ang = 0.0;
+        sampler.at(stations[i], p, ang);
+        for (const EntityHandle h : sel) {
+            if (!store_.is_valid(h)) {
+                continue;
+            }
+            Command copy = capture_entity(h);
+            if (c.align) {
+                // Turn each copy by how far the tangent has swung since the FIRST
+                // station, about the shared base, so item 0 keeps the orientation the
+                // user drew and the rest follow the curve.
+                rotate_cmd(copy, base, ang - ang0);
+            }
+            translate_cmd(copy, p - base);
+            const EntityHandle nh = create_indexed(copy);
+            push_create_item(c.group, nh, copy);
+            ++made;
+        }
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Path array created: " + std::to_string(made) + " copies along the path.");
+}
+
+void GeometryEngine::apply_divide_measure(const DividePathCommand& c) {
+    const bool divide = c.segments > 0;
+    const EntityHandle path = pick_nearest(c.pick, c.pick_radius);
+    if (path.is_null()) {
+        report(divide ? "Divide: no curve under the pick." : "Measure: no curve under the pick.");
+        return;
+    }
+    std::vector<Vec2> flat;
+    kernel_.tessellate(store_, path, std::max(tess_tolerance_ * 0.25, 1e-6), flat);
+    PathSampler sampler;
+    sampler.build(std::move(flat));
+    if (!sampler.valid()) {
+        report("That entity has no length to divide.");
+        return;
+    }
+
+    // AutoCAD's placement rules differ between the two, and the difference is the whole
+    // point of having both:
+    //   DIVIDE  n segments -> n-1 points on an OPEN curve (the ends already divide it),
+    //           but n points on a CLOSED one, where there is no free end.
+    //   MEASURE d          -> a point every d from the start, never one AT the start.
+    std::vector<double> stations;
+    if (divide) {
+        const int n = c.segments;
+        const int first = sampler.closed ? 0 : 1;
+        const int last = sampler.closed ? n - 1 : n - 1;
+        for (int i = first; i <= last; ++i) {
+            stations.push_back(sampler.total * static_cast<double>(i) / static_cast<double>(n));
+        }
+    } else {
+        if (c.distance <= 1e-12) {
+            report("Measure: the segment length must be positive.");
+            return;
+        }
+        for (double d = c.distance; d <= sampler.total + 1e-9; d += c.distance) {
+            stations.push_back(std::min(d, sampler.total));
+        }
+    }
+    if (stations.empty()) {
+        report(divide ? "Divide: that needs at least two segments."
+                      : "Measure: the segment length is longer than the curve.");
+        return;
+    }
+
+    // The marks are ordinary POINT entities, exactly as in AutoCAD: they snap with
+    // Node, they select, they erase, and the curve itself is left alone. Props are left
+    // unset so each mark lands on the CURRENT layer, like any other fresh draw.
+    for (const double st : stations) {
+        Vec2 p;
+        double ang = 0.0;
+        sampler.at(st, p, ang);
+        Command mark = AddPointCommand{p, c.group, {}};
+        const EntityHandle nh = create_indexed(mark);
+        push_create_item(c.group, nh, mark);
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report((divide ? "Divided: " : "Measured: ") + std::to_string(stations.size()) +
+           " points placed.");
 }
 
 void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angle,
                                        bool rotate_items, std::uint64_t group) {
+    const std::vector<EntityHandle> sel = selection_;
+    if (sel.empty()) {
+        report("Nothing selected to array.");
+        return;
+    }
     if (count < 2) {
+        report("Polar array: need at least two items.");
         return;
     }
     // Full circle distributes count items evenly; a partial fill spans the angle
@@ -1263,7 +1515,7 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
     const bool full = std::abs(std::abs(total_angle) - kTwoPi) < 1e-6;
     const double step = full ? total_angle / static_cast<double>(count)
                              : total_angle / static_cast<double>(count - 1);
-    const std::vector<EntityHandle> sel = selection_;
+    int made = 0;
     for (int i = 1; i < count; ++i) {
         const double a = step * static_cast<double>(i);
         for (const EntityHandle h : sel) {
@@ -1284,10 +1536,13 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
             }
             const EntityHandle nh = create_indexed(copy);
             push_create_item(group, nh, copy);
+            ++made;
         }
     }
     redo_.clear();
     geom_dirty_ = true;
+    dirty_ = true;
+    report("Polar array created: " + std::to_string(made) + " copies.");
 }
 
 void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group) {
@@ -1651,6 +1906,327 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
     return true;
 }
 
+void GeometryEngine::apply_align(const AlignSelectionCommand& c) {
+    const std::vector<EntityHandle> sel = selection_;
+    if (sel.empty()) {
+        report("Nothing selected to align.");
+        return;
+    }
+    const Vec2 sv = c.src2 - c.src1;
+    const Vec2 dv = c.dst2 - c.dst1;
+    const double slen = length(sv);
+    if (slen <= 1e-12 || length(dv) <= 1e-12) {
+        report("Align: the two source points and the two destination points must differ.");
+        return;
+    }
+    const double ang = std::atan2(dv.y, dv.x) - std::atan2(sv.y, sv.x);
+    const double f = c.scale ? length(dv) / slen : 1.0;
+
+    // p -> dst1 + f * R(ang) * (p - src1), composed from the existing per-kind
+    // transforms so every entity kind is aligned by the code that already knows how to
+    // rotate and scale it. Order matters: both pivot on src1 before the move.
+    std::vector<EntityHandle> out;
+    for (const EntityHandle h : sel) {
+        if (!store_.is_valid(h)) {
+            continue;
+        }
+        const Command original = capture_entity(h);
+        Command result = original;
+        rotate_cmd(result, c.src1, ang);
+        if (c.scale) {
+            scale_cmd(result, c.src1, f);
+        }
+        translate_cmd(result, c.dst1 - c.src1);
+        remove_indexed(h);
+        push_erase_item(c.group, original);
+        const EntityHandle nh = create_indexed(result);
+        push_create_item(c.group, nh, result);
+        out.push_back(nh);
+    }
+    if (!out.empty()) {
+        selection_ = out;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Aligned " + std::to_string(out.size()) +
+           (out.size() == 1 ? " object." : " objects."));
+}
+
+void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    if (h.is_null()) {
+        report("Lengthen: no curve under the pick.");
+        return;
+    }
+    // What the new length should be, given the current one.
+    const auto resolve = [&](double current) {
+        switch (c.mode) {
+        case LengthenCommand::Mode::Delta:
+            return current + c.value;
+        case LengthenCommand::Mode::Percent:
+            return current * c.value / 100.0;
+        case LengthenCommand::Mode::Total:
+            break;
+        }
+        return c.value;
+    };
+
+    Command edited;
+    double before = 0.0;
+    double after = 0.0;
+    switch (h.kind) {
+    case EntityKind::Line: {
+        const LineData* l = store_.line(h);
+        before = length(l->b - l->a);
+        if (before <= 1e-12) {
+            report("Lengthen: that line has no length.");
+            return;
+        }
+        after = resolve(before);
+        if (after <= 1e-9) {
+            report("Lengthen: that would leave nothing of the object.");
+            return;
+        }
+        // AutoCAD moves the end NEARER the pick and anchors the other.
+        const bool move_b = length(c.pick - l->b) <= length(c.pick - l->a);
+        const Vec2 anchor = move_b ? l->a : l->b;
+        const Vec2 dir = (move_b ? l->b - l->a : l->a - l->b) / before;
+        const Vec2 moved = anchor + dir * after;
+        edited = AddLineCommand{move_b ? anchor : moved, move_b ? moved : anchor, 0, l->props};
+        break;
+    }
+    case EntityKind::Arc: {
+        const ArcData* a = store_.arc(h);
+        double sweep = a->end_angle - a->start_angle;
+        while (sweep <= 0.0) {
+            sweep += kTwoPi;
+        }
+        before = sweep * a->radius; // arc LENGTH, so Delta/Total are in drawing units
+        if (before <= 1e-12 || a->radius <= 1e-12) {
+            report("Lengthen: that arc has no length.");
+            return;
+        }
+        after = resolve(before);
+        if (after <= 1e-9) {
+            report("Lengthen: that would leave nothing of the object.");
+            return;
+        }
+        const double new_sweep = std::min(after / a->radius, kTwoPi);
+        const Vec2 start_pt{a->center.x + a->radius * std::cos(a->start_angle),
+                            a->center.y + a->radius * std::sin(a->start_angle)};
+        const Vec2 end_pt{a->center.x + a->radius * std::cos(a->end_angle),
+                          a->center.y + a->radius * std::sin(a->end_angle)};
+        // Grow or shrink from whichever end the pick is nearer, keeping the other fixed.
+        if (length(c.pick - end_pt) <= length(c.pick - start_pt)) {
+            edited = AddArcCommand{a->center, a->radius, a->start_angle,
+                                   a->start_angle + new_sweep, 0, a->props};
+        } else {
+            edited = AddArcCommand{a->center, a->radius, a->end_angle - new_sweep, a->end_angle,
+                                   0, a->props};
+        }
+        break;
+    }
+    default:
+        report("Lengthen: only lines and arcs have an end to move.");
+        return;
+    }
+
+    const Command original = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(c.group, original);
+    const EntityHandle nh = create_indexed(edited);
+    push_create_item(c.group, nh, edited);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "Length changed from %.4g to %.4g.", before, after);
+    report(buf);
+}
+
+void GeometryEngine::apply_break(const BreakCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    if (h.is_null()) {
+        report("Break: no curve under the pick.");
+        return;
+    }
+    // BREAK AT POINT: the two points coincide, so nothing is removed and the curve is
+    // simply split. A closed shape has no free end to split at, so it is refused.
+    const bool at_point = length(c.p2 - c.p1) <= 1e-9;
+
+    // Each case builds the REPLACEMENT pieces; the shared tail below swaps them in as
+    // one undo group, so no case has to repeat the erase/create bookkeeping.
+    std::vector<Command> pieces;
+    const auto keep_line = [&](Vec2 a, Vec2 b) {
+        if (length(b - a) > 1e-9) {
+            pieces.push_back(AddLineCommand{a, b, 0, store_.line(h)->props});
+        }
+    };
+
+    switch (h.kind) {
+    case EntityKind::Line: {
+        const LineData* l = store_.line(h);
+        const Vec2 d = l->b - l->a;
+        const double len2 = length_squared(d);
+        if (len2 <= 1e-18) {
+            report("Break: that line has no length.");
+            return;
+        }
+        // Project both points onto the line and order them along it.
+        double t1 = dot(c.p1 - l->a, d) / len2;
+        double t2 = at_point ? t1 : dot(c.p2 - l->a, d) / len2;
+        if (t1 > t2) {
+            std::swap(t1, t2);
+        }
+        t1 = std::clamp(t1, 0.0, 1.0);
+        t2 = std::clamp(t2, 0.0, 1.0);
+        keep_line(l->a, l->a + d * t1);
+        keep_line(l->a + d * t2, l->b);
+        break;
+    }
+    case EntityKind::Arc: {
+        const ArcData* a = store_.arc(h);
+        // Sweep from start to end, always increasing, so a break point's position is a
+        // single number and the two kept pieces are just the ends of that sweep.
+        const auto sweep_to = [&](Vec2 p) {
+            const double ang = std::atan2(p.y - a->center.y, p.x - a->center.x);
+            double s = ang - a->start_angle;
+            while (s < 0.0) {
+                s += kTwoPi;
+            }
+            return s;
+        };
+        double total = a->end_angle - a->start_angle;
+        while (total <= 0.0) {
+            total += kTwoPi;
+        }
+        double s1 = sweep_to(c.p1);
+        double s2 = at_point ? s1 : sweep_to(c.p2);
+        if (s1 > s2) {
+            std::swap(s1, s2);
+        }
+        s1 = std::clamp(s1, 0.0, total);
+        s2 = std::clamp(s2, 0.0, total);
+        const auto keep_arc = [&](double from, double to) {
+            if (to - from > 1e-9) {
+                pieces.push_back(AddArcCommand{a->center, a->radius, a->start_angle + from,
+                                               a->start_angle + to, 0, a->props});
+            }
+        };
+        keep_arc(0.0, s1);
+        keep_arc(s2, total);
+        break;
+    }
+    case EntityKind::Circle: {
+        if (at_point) {
+            report("Break: a circle needs two different break points.");
+            return;
+        }
+        const CircleData* ci = store_.circle(h);
+        // AutoCAD removes the piece running COUNTER-CLOCKWISE from the first point to
+        // the second, so what survives is the arc from p2 round to p1.
+        const double a1 = std::atan2(c.p1.y - ci->center.y, c.p1.x - ci->center.x);
+        const double a2 = std::atan2(c.p2.y - ci->center.y, c.p2.x - ci->center.x);
+        pieces.push_back(AddArcCommand{ci->center, ci->radius, a2, a1, 0, ci->props});
+        break;
+    }
+    case EntityKind::Polyline: {
+        const PolylineData* pl = store_.polyline(h);
+        const std::span<const Vec2> v = store_.vertices_of(*pl);
+        if (v.size() < 2) {
+            report("Break: that polyline has no length.");
+            return;
+        }
+        // Position along the polyline as (segment index + fraction), which orders the
+        // two break points even when they fall on different segments.
+        const auto locate = [&](Vec2 p) {
+            const int si = nearest_pl_segment(v, pl->closed, p);
+            if (si < 0) {
+                return 0.0;
+            }
+            const std::size_t i = static_cast<std::size_t>(si);
+            const Vec2 a = v[i];
+            const Vec2 b = v[(i + 1) % v.size()];
+            const Vec2 d = b - a;
+            const double len2 = length_squared(d);
+            const double t = len2 > 1e-18 ? std::clamp(dot(p - a, d) / len2, 0.0, 1.0) : 0.0;
+            return static_cast<double>(si) + t;
+        };
+        const auto point_at = [&](double u) {
+            const std::size_t i = static_cast<std::size_t>(std::floor(u));
+            const double t = u - static_cast<double>(i);
+            const Vec2 a = v[std::min(i, v.size() - 1)];
+            const Vec2 b = v[(i + 1) % v.size()];
+            return a + (b - a) * t;
+        };
+        double u1 = locate(c.p1);
+        double u2 = at_point ? u1 : locate(c.p2);
+        if (u1 > u2) {
+            std::swap(u1, u2);
+        }
+        // A closed polyline breaks into ONE open run: the part that survives is the
+        // stretch from the second point round to the first.
+        const auto emit = [&](std::vector<Vec2> pts) {
+            if (pts.size() >= 2) {
+                AddPolylineCommand pc;
+                pc.points = std::move(pts);
+                pc.closed = false;
+                pc.props = pl->props;
+                pieces.push_back(std::move(pc));
+            }
+        };
+        if (pl->closed) {
+            std::vector<Vec2> run{point_at(u2)};
+            for (std::size_t k = static_cast<std::size_t>(std::floor(u2)) + 1;
+                 k <= static_cast<std::size_t>(std::floor(u1)) + v.size(); ++k) {
+                run.push_back(v[k % v.size()]);
+            }
+            run.push_back(point_at(u1));
+            emit(std::move(run));
+        } else {
+            std::vector<Vec2> head(v.begin(),
+                                   v.begin() + static_cast<std::ptrdiff_t>(
+                                                   std::floor(u1)) + 1);
+            head.push_back(point_at(u1));
+            emit(std::move(head));
+
+            std::vector<Vec2> tail{point_at(u2)};
+            for (std::size_t k = static_cast<std::size_t>(std::floor(u2)) + 1; k < v.size();
+                 ++k) {
+                tail.push_back(v[k]);
+            }
+            emit(std::move(tail));
+        }
+        break;
+    }
+    default:
+        report("Break: that entity kind cannot be broken.");
+        return;
+    }
+
+    if (pieces.empty()) {
+        report("Break: that would remove the whole object -- use ERASE.");
+        return;
+    }
+    const Command original = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(c.group, original);
+    std::vector<EntityHandle> made;
+    for (const Command& piece : pieces) {
+        const EntityHandle nh = create_indexed(piece);
+        push_create_item(c.group, nh, piece);
+        made.push_back(nh);
+    }
+    selection_ = made;
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(at_point ? "Split into " + std::to_string(pieces.size()) + " objects."
+                    : "Broke 1 object into " + std::to_string(pieces.size()) + ".");
+}
+
 void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 pick2,
                                             double radius, std::uint16_t style,
                                             std::uint64_t group) {
@@ -1730,9 +2306,30 @@ void GeometryEngine::apply_text_edit(Vec2 at, double pick_radius, const std::str
     scan(store_.texts(), EntityKind::Text);
     scan(store_.mtexts(), EntityKind::MText);
     scan(store_.mleaders(), EntityKind::MLeader);
+    // A table is text-bearing too: the pick resolves to the CELL under the point, so
+    // the same double-click / DDEDIT gesture that edits a text edits a cell. Scanned
+    // last so a text sitting on top of a table still wins the pick.
+    scan(store_.tables(), EntityKind::Table);
     if (target.is_null()) {
         report("No editable text there.");
         return;
+    }
+    // Which cell was picked? Resolved here, against the SAME derived geometry the
+    // renderer and the picker use, so the cell that lights up is the cell that edits.
+    int cell_index = -1;
+    if (target.kind == EntityKind::Table) {
+        const TableData* td = store_.table(target);
+        const TableStyle* st = store_.table_style(td->style);
+        const TableGeometry g = compute_table_geometry(
+            *td, store_.table_cell_views(*td), store_.table_col_widths(*td),
+            store_.table_row_heights(*td), st != nullptr ? *st : TableStyle{}, Rgb{});
+        cell_index = table_cell_at(g, at);
+        if (cell_index < 0) {
+            // Inside the table's bounding box but not in any cell (the pick landed on
+            // the border of a rotated table). Say so rather than editing a guess.
+            report("Pick inside a cell to edit it.");
+            return;
+        }
     }
     // Capture the entity, change ONLY its content, recommit as one undo group --
     // layer/properties/position are preserved (not a delete+recreate).
@@ -1744,6 +2341,13 @@ void GeometryEngine::apply_text_edit(Vec2 at, double pick_radius, const std::str
                           std::is_same_v<T, AddMTextCommand> ||
                           std::is_same_v<T, AddMLeaderCommand>) {
                 x.content = content;
+            } else if constexpr (std::is_same_v<T, AddTableCommand>) {
+                // Only the picked cell changes; every other cell, both size vectors and
+                // the style come through capture_entity untouched.
+                const auto i = static_cast<std::size_t>(cell_index);
+                if (i < x.texts.size()) {
+                    x.texts[i] = content;
+                }
             }
         },
         edited);
@@ -1756,7 +2360,7 @@ void GeometryEngine::apply_text_edit(Vec2 at, double pick_radius, const std::str
     redo_.clear();
     geom_dirty_ = true;
     dirty_ = true;
-    report("Text edited.");
+    report(target.kind == EntityKind::Table ? "Table cell edited." : "Text edited.");
 }
 
 void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
@@ -1954,7 +2558,8 @@ void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand> ||
+            if constexpr (std::is_same_v<T, AddPointCommand> ||
+                          std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> || std::is_same_v<T, AddArcCommand> ||
                           std::is_same_v<T, AddTextCommand> || std::is_same_v<T, AddDimensionCommand> ||
@@ -2571,7 +3176,8 @@ void GeometryEngine::apply(const Command& command) {
     std::visit(
         [this, &command](const auto& c) {
             using T = std::decay_t<decltype(c)>;
-            if constexpr (std::is_same_v<T, AddLineCommand> ||
+            if constexpr (std::is_same_v<T, AddPointCommand> ||
+                          std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> ||
                           std::is_same_v<T, AddArcCommand> || std::is_same_v<T, AddTextCommand> ||
@@ -2683,7 +3289,17 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, ScaleSelectionCommand>) {
                 apply_scale(c.base, c.factor, c.group);
             } else if constexpr (std::is_same_v<T, ArrayRectCommand>) {
-                apply_array_rect(c.rows, c.cols, c.dx, c.dy, c.group);
+                apply_array_rect(c.rows, c.cols, c.dx, c.dy, c.angle, c.group);
+            } else if constexpr (std::is_same_v<T, ArrayPathCommand>) {
+                apply_array_path(c);
+            } else if constexpr (std::is_same_v<T, DividePathCommand>) {
+                apply_divide_measure(c);
+            } else if constexpr (std::is_same_v<T, BreakCommand>) {
+                apply_break(c);
+            } else if constexpr (std::is_same_v<T, AlignSelectionCommand>) {
+                apply_align(c);
+            } else if constexpr (std::is_same_v<T, LengthenCommand>) {
+                apply_lengthen(c);
             } else if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
                 apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group);
             } else if constexpr (std::is_same_v<T, ExtendPickCommand>) {

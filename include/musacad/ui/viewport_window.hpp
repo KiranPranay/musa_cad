@@ -441,6 +441,12 @@ private:
     std::function<void(bool, core::Vec2, core::Vec2)> plot_pick_callback_; // armed window pick
     bool plot_picking_ = false;
     bool dragging_grip_ = false;
+    /// Armed on press when the active command's pick was a selection-window corner
+    /// (STRETCH). Lets the window be dragged out press-drag-release the way AutoCAD
+    /// does, while a press-with-no-drag still falls through to the classic
+    /// click-click-two-corners flow. The band drawn during the drag is the command's
+    /// own Rectangle preview, so there is no second rubber-band path to keep in sync.
+    bool window_drag_ = false;
     core::Vec2 grip_origin_{};
 
     // Published layer table + current layer (for the Layer Manager / ribbon combo).

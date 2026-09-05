@@ -84,7 +84,8 @@ TEST_CASE("ARRAY rectangular replicates the selection on a grid; undo restores")
     REQUIRE(wait_until(engine, [](const auto& s) { return s.selection.size() == 1; }));
 
     // 2 rows x 3 cols, spacing 10 -> 6 lines total (original + 5 copies).
-    engine.submit(ArrayRectCommand{2, 3, 10.0, 10.0, 10});
+    engine.submit(
+        ArrayRectCommand{.rows = 2, .cols = 3, .dx = 10.0, .dy = 10.0, .angle = 0.0, .group = 10});
     REQUIRE(wait_until(engine, [](const auto& s) { return s.line_vertices.size() == 12; }));
     REQUIRE(has_segment(engine.snapshot(), {0, 0}, {1, 0}));     // original
     REQUIRE(has_segment(engine.snapshot(), {20, 10}, {21, 10})); // row 1, col 2

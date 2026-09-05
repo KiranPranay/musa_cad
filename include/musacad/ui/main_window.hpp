@@ -105,6 +105,12 @@ public:
     /// Real-window self-test: Dynamic Input (toggle, type-at-cursor, exact length,
     /// and THE focus rule -- Delete/typing-guard/Esc still correct with DYN on).
     bool selftest_dyn();
+    /// Real-window self-test for the commands added in the STRETCH/tables/arrays pass:
+    /// STRETCH through the GUI with ORTHO ON (the setting that used to defeat it),
+    /// table cell editing and row resize, POLYGON, DIVIDE, BREAK and ARRAYPATH. Each is
+    /// driven through the real CommandProcessor, so it exercises the same path a user's
+    /// keystrokes take rather than submitting engine commands directly.
+    bool selftest_commands();
     /// Real-window capture: drive a RECTANGLE/LINE/CIRCLE rubber-band with DYN on,
     /// print the anchor->project->tip-geometry diagnostic, and grab the app region to
     /// `out_png` for eyes-on verification of the on-geometry tooltips. `kind`: 0 REC,

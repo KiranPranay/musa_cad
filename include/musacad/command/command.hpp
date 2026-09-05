@@ -37,6 +37,15 @@ public:
     /// True if the command consumes cursor picks as object selection (e.g.
     /// ERASE) rather than as coordinate input.
     [[nodiscard]] virtual bool wants_selection() const { return false; }
+
+    /// True while the NEXT pick is a corner of a selection window (STRETCH's crossing
+    /// window). A selection window is a screen region, not geometry, so AutoCAD applies
+    /// neither object snap nor ortho/polar to its corners -- and it must not, because
+    /// ortho collapses the second corner onto an axis through the first, which makes the
+    /// window zero-area and catches nothing, while osnap yanks a corner onto a vertex of
+    /// the very object being windowed. State-dependent by design: the same command's
+    /// later base/displacement picks DO want ortho.
+    [[nodiscard]] virtual bool wants_window() const { return false; }
 };
 
 } // namespace musacad::command

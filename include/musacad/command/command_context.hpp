@@ -29,6 +29,7 @@ enum class PreviewKind {
     Rotate,     ///< ghost of the selection rotated about points[0] by angle to cursor
     Scale,      ///< ghost of the selection scaled about points[0] by |cursor - base|
     Dimension,  ///< full dimension rubber-band following the cursor to its placement
+    Polygon,    ///< regular n-gon about points[0], sized by the cursor (POLYGON)
 };
 
 struct PreviewSpec {
@@ -43,6 +44,11 @@ struct PreviewSpec {
     double fixed_w = 0.0;
     double fixed_h = 0.0;
     double rect_rotation = 0.0;
+    /// Polygon preview: how many sides, and whether the cursor distance is the
+    /// circumradius (inscribed) or the apothem (circumscribed). Parameterises the
+    /// PreviewKind::Polygon path the same way fixed_w/fixed_h parameterise Rectangle.
+    int sides = 4;
+    bool inscribed = true;
     // True while the command is awaiting a single scalar/keyword at a value sub-prompt
     // (RECTANGLE Dimensions length/width, Area, Rotation) rather than the two-field
     // corner drag. With Dynamic Input on this routes the step to the at-cursor

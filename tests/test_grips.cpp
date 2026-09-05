@@ -125,8 +125,12 @@ TEST_CASE("Grip drag is a transient preview; commits as one undo group on releas
     // Begin + drag endpoint b toward (10,10) -- preview only.
     engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, gb.handle, gb.index, {}, 0});
     engine.submit(GripDragCommand{GripDragCommand::Phase::Move, {}, 0, {10, 10}, 0});
-    REQUIRE(wait_until(engine,
-                       [](const auto& s) { return !s.grip_preview_segments.empty(); }));
+    // Wait for the preview to reflect the MOVE, not merely to exist: Begin publishes a
+    // preview of its own at the grip's original position, so "non-empty" can be true one
+    // snapshot before the drag has been applied.
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return verts_near(s, s.grip_preview_segments, {10, 10}, 0.1) > 0;
+    }));
     {
         const RenderSnapshot& s = engine.snapshot();
         // Preview shows the dragged endpoint at (10,10)...
@@ -179,8 +183,10 @@ TEST_CASE("Dimension: a non-centre grip is grabbable; dim-line drag moves it fre
     // Drag it far away -> the whole dim line slides there (transient preview only).
     engine.submit(GripDragCommand{GripDragCommand::Phase::Begin, foot.handle, foot.index, {}, 0});
     engine.submit(GripDragCommand{GripDragCommand::Phase::Move, {}, 0, {5, 12}, 0});
-    REQUIRE(wait_until(engine,
-                       [](const auto& s) { return !s.grip_preview_segments.empty(); }));
+    // As above: wait for the preview to show the dragged position, not just to appear.
+    REQUIRE(wait_until(engine, [](const auto& s) {
+        return verts_near(s, s.grip_preview_segments, {10, 12}, 0.3) > 0;
+    }));
     {
         const RenderSnapshot& s = engine.snapshot();
         REQUIRE(s.geometry_version == gv);                                // zero churn

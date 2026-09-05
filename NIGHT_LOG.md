@@ -386,3 +386,39 @@ or revert commits on a shared branch — both are the operator's call. Flagged a
 
 **Lesson:** "merge to local main" meant local. I should have pushed only the feature
 branches, which is exactly what §8 said.
+
+---
+
+# 2026-09-05/06 run — STRETCH, tables, arrays, issues
+
+Objectives: (1) DYN on by default, (2) resize table rows/columns, (3) text into tables,
+(4) STRETCH not working as intended, (5) all AutoCAD array commands, (6) analyse and fix
+all issues. Everything tested by script or GUI control. No release.
+
+- **STRETCH diagnosed.** Engine and command-processor paths both proved correct in
+  isolation. Root cause was `resolve_pick()` applying OSNAP **and ortho/polar** to the
+  crossing-window corners: ortho collapsed corner 2 onto an axis through corner 1, so the
+  window had zero area. Added `ICommand::wants_window()`, scoped so the later base and
+  displacement picks still snap. Verified by reverting the fix — 3 tests fail, and the
+  end-to-end case never reaches "Stretched".
+- STRETCH rubber band (crossing window + displacement line) and press-drag-release.
+- **DYN**: the default was written twice and the copies disagreed; `selftest_dyn()`
+  restored it with a `false` default, persisting DYN off on a fresh profile. One constant
+  now; new self-test asserts the shipped default.
+- **Tables**: row-boundary grips (the "row heights follow text height" comment was wrong —
+  they are stored and drive the grid); cell text via the existing `EditTextContentCommand`
+  path, so double-click and DDEDIT work with no new UI.
+- **Arrays**: ARRAYPATH (Divide/Measure, align), ARRAYRECT axis angle, ARRAYRECT /
+  ARRAYPOLAR / ARRAYPATH / -ARRAY registered. Caught a bug my own change introduced —
+  adding `angle` before `group` shifted two positional initialisers, one in the GUI dialog.
+- **New commands**: POINT, DIVIDE, MEASURE, POLYGON, BREAK, BREAKATPOINT, ALIGN, LENGTHEN.
+  `AddPointCommand` wired through capture, store, property fan-out and all five transforms.
+- **Flaky test fixed** — a genuine race, not a slow timeout: the grip tests waited for the
+  preview to be non-empty, but `Begin` publishes one at the original position. 12
+  consecutive full runs at -j32 green.
+- **GUI self-test had been failing since two features landed** (dimension grip count 5→6
+  after #21; the DWG gap catalogue used HATCH, which became supported). Fixed; added a new
+  section covering tonight's commands through the real CommandProcessor.
+- 526/526 unit tests; GUI harness `overall: PASS`.
+- Deliberately not done, with reasons in NIGHT_REPORT.md: DONUT (needs polyline width),
+  ELLIPSE (deserves a real entity), ARRAYEDIT/ARRAYCLOSE (need associative arrays).

@@ -11,6 +11,7 @@
 
 #include "musacad/command/coordinate.hpp"
 #include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/polygon.hpp"
 
 namespace musacad::command {
 
@@ -1053,30 +1054,458 @@ int parse_int(const std::string& t, int fallback) {
 }
 } // namespace
 
-void ArrayCommand::start(CommandContext& ctx) {
+// ---------------------------------------------------------------------------
+// ALIGN: two source/destination pairs, optional uniform scale
+// ---------------------------------------------------------------------------
+void AlignCommand::start(CommandContext& ctx) {
     if (!ctx.has_selection()) {
-        ctx.echo("No selection. Select objects first, then run ARRAY.");
+        ctx.echo("No selection. Select objects first, then run ALIGN.");
         done_ = true;
         return;
     }
     ctx.clear_last_point();
-    ctx.set_prompt("Enter array type [Rectangular/Polar] <R>: ");
+    state_ = State::Src1;
+    ctx.set_prompt("Specify first source point: ");
+}
+
+void AlignCommand::input(CommandContext& ctx, const std::string& text) {
+    switch (state_) {
+    case State::Src1:
+        if (const auto p = read_point(ctx, text)) {
+            src1_ = *p;
+            state_ = State::Dst1;
+            ctx.set_prompt("Specify first destination point: ");
+        }
+        return;
+    case State::Dst1:
+        if (const auto p = read_point(ctx, text)) {
+            dst1_ = *p;
+            state_ = State::Src2;
+            ctx.set_prompt("Specify second source point: ");
+        }
+        return;
+    case State::Src2:
+        if (const auto p = read_point(ctx, text)) {
+            src2_ = *p;
+            state_ = State::Dst2;
+            ctx.set_prompt("Specify second destination point: ");
+        }
+        return;
+    case State::Dst2:
+        if (const auto p = read_point(ctx, text)) {
+            dst2_ = *p;
+            state_ = State::Scale;
+            ctx.set_prompt("Scale objects based on alignment points? [Yes/No] <N>: ");
+        }
+        return;
+    case State::Scale: {
+        const std::string u = upper(trimmed(text));
+        core::AlignSelectionCommand cmd;
+        cmd.src1 = src1_;
+        cmd.dst1 = dst1_;
+        cmd.src2 = src2_;
+        cmd.dst2 = dst2_;
+        cmd.scale = (u == "Y" || u == "YES");
+        cmd.group = ctx.group_id();
+        ctx.submit(cmd);
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void AlignCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// LENGTHEN: mode, amount, then the end to move
+// ---------------------------------------------------------------------------
+void LengthenCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Mode;
+    ctx.set_prompt("Enter an option [DElta/Percent/Total] <Total>: ");
+}
+
+void LengthenCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    switch (state_) {
+    case State::Mode: {
+        const std::string u = upper(t);
+        if (u == "DE" || u == "DELTA") {
+            mode_ = core::LengthenCommand::Mode::Delta;
+            ctx.set_prompt("Enter delta length: ");
+        } else if (u == "P" || u == "PERCENT") {
+            mode_ = core::LengthenCommand::Mode::Percent;
+            ctx.set_prompt("Enter percentage length: ");
+        } else {
+            mode_ = core::LengthenCommand::Mode::Total;
+            ctx.set_prompt("Specify total length: ");
+        }
+        state_ = State::Amount;
+        return;
+    }
+    case State::Amount: {
+        if (!parse_number(t, value_)) {
+            ctx.echo("Enter a number.");
+            return;
+        }
+        if (mode_ != core::LengthenCommand::Mode::Delta && value_ <= 0.0) {
+            ctx.echo("Enter a value greater than zero.");
+            return;
+        }
+        state_ = State::Pick;
+        // The pick does double duty: it chooses the object AND, by which end it is
+        // nearer, which end moves. That is AutoCAD's behaviour and worth saying.
+        ctx.set_prompt("Select an object to change (pick near the end to move): ");
+        return;
+    }
+    case State::Pick:
+        if (const auto p = read_point(ctx, text)) {
+            core::LengthenCommand cmd;
+            cmd.pick = *p;
+            cmd.pick_radius = ctx.pick_radius();
+            cmd.mode = mode_;
+            cmd.value = value_;
+            cmd.group = ctx.group_id();
+            ctx.submit(cmd);
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void LengthenCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// BREAK / BREAKATPOINT: cut a piece out of a curve, or just split it
+// ---------------------------------------------------------------------------
+void BreakCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Select;
+    ctx.set_prompt("Select object: ");
+}
+
+void BreakCommand::input(CommandContext& ctx, const std::string& text) {
+    const auto fire = [&](core::Vec2 a, core::Vec2 b) {
+        core::BreakCommand cmd;
+        cmd.pick = pick_;
+        cmd.pick_radius = ctx.pick_radius();
+        cmd.p1 = a;
+        cmd.p2 = b;
+        cmd.group = ctx.group_id();
+        ctx.submit(cmd);
+        // The engine reports what it actually did (Ph10.1).
+        done_ = true;
+    };
+    switch (state_) {
+    case State::Select:
+        if (const auto p = read_point(ctx, text)) {
+            // AutoCAD: the selecting click doubles as the first break point.
+            pick_ = *p;
+            p1_ = *p;
+            if (at_point_) {
+                fire(p1_, p1_); // BREAKATPOINT needs nothing more
+                return;
+            }
+            state_ = State::Second;
+            ctx.set_prompt("Specify second break point or [First point]: ");
+        }
+        return;
+    case State::Second: {
+        if (upper(trimmed(text)) == "F" || upper(trimmed(text)) == "FIRST") {
+            state_ = State::FirstAgain;
+            ctx.set_prompt("Specify first break point: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            fire(p1_, *p);
+        }
+        return;
+    }
+    case State::FirstAgain:
+        if (const auto p = read_point(ctx, text)) {
+            p1_ = *p;
+            state_ = State::Second;
+            ctx.set_prompt("Specify second break point: ");
+        }
+        return;
+    }
+}
+
+void BreakCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// POLYGON: n sides, sized about a centre (inscribed/circumscribed) or by one edge
+// ---------------------------------------------------------------------------
+void PolygonCommand::refresh_preview(CommandContext& ctx) {
+    PreviewSpec pv{PreviewKind::Polygon, {center_}};
+    pv.sides = sides_;
+    pv.inscribed = inscribed_;
+    ctx.set_preview(pv);
+}
+
+void PolygonCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Sides;
+    ctx.set_prompt("Enter number of sides <4>: ");
+}
+
+void PolygonCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    switch (state_) {
+    case State::Sides: {
+        if (!t.empty()) {
+            const int n = parse_int(t, 0);
+            if (n < 3) {
+                ctx.echo("A polygon needs at least 3 sides.");
+                return;
+            }
+            sides_ = n;
+        }
+        state_ = State::Center;
+        ctx.set_prompt("Specify center of polygon or [Edge]: ");
+        return;
+    }
+    case State::Center: {
+        if (upper(t) == "E" || upper(t) == "EDGE") {
+            state_ = State::Edge1;
+            ctx.set_prompt("Specify first endpoint of edge: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            center_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Fit;
+            ctx.set_prompt("Enter an option [Inscribed in circle/Circumscribed about circle] <I>: ");
+        }
+        return;
+    }
+    case State::Fit: {
+        const std::string u = upper(t);
+        inscribed_ = !(u == "C" || u == "CIRCUMSCRIBED");
+        state_ = State::Radius;
+        refresh_preview(ctx);
+        ctx.set_prompt("Specify radius of circle: ");
+        return;
+    }
+    case State::Radius: {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        // A typed bare number is a radius along +X; a picked point also fixes the
+        // orientation, which is why the reference ANGLE comes from the pick.
+        const core::Vec2 r = *p - center_;
+        const double dist = core::length(r);
+        if (dist <= 1e-12) {
+            ctx.echo("The radius must be greater than zero.");
+            return;
+        }
+        const std::vector<core::Vec2> v = core::polygon_vertices(
+            center_, dist, sides_, inscribed_, std::atan2(r.y, r.x));
+        ctx.clear_preview();
+        core::AddPolylineCommand poly;
+        poly.points = v;
+        poly.closed = true;
+        poly.group = ctx.group_id();
+        ctx.submit(poly);
+        ctx.echo("Polygon created.");
+        done_ = true;
+        return;
+    }
+    case State::Edge1:
+        if (const auto p = read_point(ctx, text)) {
+            edge1_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Edge2;
+            ctx.set_prompt("Specify second endpoint of edge: ");
+        }
+        return;
+    case State::Edge2: {
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        const core::Vec2 e = *p - edge1_;
+        const double side = core::length(e);
+        if (side <= 1e-12) {
+            ctx.echo("The two edge endpoints must differ.");
+            return;
+        }
+        // Edge mode: the two picks ARE one side. The centre sits on the edge's
+        // perpendicular bisector, an apothem away, on the left of edge1->edge2 -- the
+        // side AutoCAD builds towards.
+        const double n = static_cast<double>(sides_);
+        const double apothem = side / (2.0 * std::tan(core::kPi / n));
+        const core::Vec2 mid{(edge1_.x + p->x) * 0.5, (edge1_.y + p->y) * 0.5};
+        const core::Vec2 dir{e.x / side, e.y / side};
+        const core::Vec2 left{-dir.y, dir.x};
+        const core::Vec2 c{mid.x + left.x * apothem, mid.y + left.y * apothem};
+        // Generated by the same rule as centre mode: edge1 is a VERTEX, so this is the
+        // inscribed case with the angle pointing at it.
+        const core::Vec2 rad = edge1_ - c;
+        const std::vector<core::Vec2> v = core::polygon_vertices(
+            c, core::length(rad), sides_, true, std::atan2(rad.y, rad.x));
+        ctx.clear_preview();
+        core::AddPolylineCommand poly;
+        poly.points = v;
+        poly.closed = true;
+        poly.group = ctx.group_id();
+        ctx.submit(poly);
+        ctx.echo("Polygon created.");
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void PolygonCommand::cancel(CommandContext& ctx) {
+    ctx.clear_preview();
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// POINT: place a point at each pick until Esc
+// ---------------------------------------------------------------------------
+void PointCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Specify a point: ");
+}
+
+void PointCommand::input(CommandContext& ctx, const std::string& text) {
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::AddPointCommand{*p, ctx.group_id(), {}});
+        ctx.set_last_point(*p);
+        // Stay open for the next one, like AutoCAD: points come in groups.
+        ctx.set_prompt("Specify a point: ");
+    }
+}
+
+void PointCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// DIVIDE / MEASURE: mark a curve with points
+// ---------------------------------------------------------------------------
+void DivideCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Pick;
+    ctx.set_prompt(measure_ ? "Select object to measure: " : "Select object to divide: ");
+}
+
+void DivideCommand::input(CommandContext& ctx, const std::string& text) {
+    switch (state_) {
+    case State::Pick:
+        if (const auto p = read_point(ctx, text)) {
+            pick_ = *p;
+            state_ = State::Amount;
+            ctx.set_prompt(measure_ ? "Specify length of segment: "
+                                    : "Enter the number of segments: ");
+        }
+        return;
+    case State::Amount: {
+        const std::string t = trimmed(text);
+        core::DividePathCommand cmd;
+        cmd.pick = pick_;
+        cmd.pick_radius = ctx.pick_radius();
+        cmd.group = ctx.group_id();
+        if (measure_) {
+            double d = 0.0;
+            if (!parse_number(t, d) || d <= 0.0) {
+                ctx.echo("Enter a positive segment length.");
+                return;
+            }
+            cmd.distance = d;
+        } else {
+            const int n = parse_int(t, 0);
+            if (n < 2) {
+                ctx.echo("Enter a number of segments of 2 or more.");
+                return;
+            }
+            cmd.segments = n;
+        }
+        ctx.submit(cmd);
+        // The engine reports how many marks it actually placed (Ph10.1).
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void DivideCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ArrayCommand::begin_rect(CommandContext& ctx) {
+    state_ = State::Rows;
+    ctx.set_prompt("Enter number of rows <1>: ");
+}
+
+void ArrayCommand::begin_polar(CommandContext& ctx) {
+    state_ = State::Center;
+    ctx.set_prompt("Specify center point of array: ");
+}
+
+void ArrayCommand::begin_path(CommandContext& ctx) {
+    state_ = State::PathPick;
+    ctx.set_prompt("Select path curve: ");
+}
+
+void ArrayCommand::start(CommandContext& ctx) {
+    if (!ctx.has_selection()) {
+        ctx.echo("No selection. Select objects first, then run " + name() + ".");
+        done_ = true;
+        return;
+    }
+    ctx.clear_last_point();
+    switch (type_) {
+    case Type::Rect:
+        begin_rect(ctx);
+        return;
+    case Type::Polar:
+        begin_polar(ctx);
+        return;
+    case Type::Path:
+        begin_path(ctx);
+        return;
+    case Type::Ask:
+        break;
+    }
+    ctx.set_prompt("Enter array type [Rectangular/PAth/POlar] <R>: ");
 }
 
 void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
     const std::string t = trimmed(text);
     switch (state_) {
     case State::Type: {
+        // AutoCAD's own capitalisation picks the keywords apart: PA=path, PO=polar,
+        // and a bare P is ambiguous, so it is rejected rather than guessed at.
         const std::string u = upper(t);
-        if (u == "P" || u == "POLAR") {
-            state_ = State::Center;
-            ctx.set_prompt("Specify center point of array: ");
+        if (u == "PA" || u == "PATH") {
+            begin_path(ctx);
+        } else if (u == "PO" || u == "POLAR") {
+            begin_polar(ctx);
+        } else if (u == "P") {
+            ctx.echo("Ambiguous: enter PA for path or PO for polar.");
         } else {
-            state_ = State::Rows;
-            ctx.set_prompt("Enter number of rows <1>: ");
+            begin_rect(ctx);
         }
         return;
     }
+
+    // --- Rectangular ------------------------------------------------------
     case State::Rows:
         rows_ = std::max(1, parse_int(t, 1));
         state_ = State::Cols;
@@ -1096,16 +1525,48 @@ void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
         ctx.set_prompt("Enter column spacing (X): ");
         return;
     case State::ColSpace: {
-        double col_space = 0.0;
-        if (!parse_number(t, col_space)) {
+        if (!parse_number(t, col_space_)) {
             ctx.echo("Enter a number for column spacing.");
             return;
         }
-        ctx.submit(core::ArrayRectCommand{rows_, cols_, col_space, row_space_, ctx.group_id()});
-        ctx.echo("Array created.");
+        // AutoCAD's legacy -ARRAY flow ends here; only the modern ARRAYRECT offers an
+        // axis angle. Keeping the classic four prompts exactly as they were means
+        // existing muscle memory and scripts are untouched.
+        if (type_ != Type::Rect) {
+            core::ArrayRectCommand cmd;
+            cmd.rows = rows_;
+            cmd.cols = cols_;
+            cmd.dx = col_space_;
+            cmd.dy = row_space_;
+            cmd.group = ctx.group_id();
+            ctx.submit(cmd);
+            done_ = true;
+            return;
+        }
+        state_ = State::Angle;
+        ctx.set_prompt("Angle of array axes <0>: ");
+        return;
+    }
+    case State::Angle: {
+        double deg = 0.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            ctx.echo("Enter an angle in degrees.");
+            return;
+        }
+        core::ArrayRectCommand cmd;
+        cmd.rows = rows_;
+        cmd.cols = cols_;
+        cmd.dx = col_space_;
+        cmd.dy = row_space_;
+        cmd.angle = core::to_radians(deg);
+        cmd.group = ctx.group_id();
+        ctx.submit(cmd);
+        // The engine reports how many copies it actually made (Ph10.1).
         done_ = true;
         return;
     }
+
+    // --- Polar ------------------------------------------------------------
     case State::Center:
         if (const auto p = read_point(ctx, text)) {
             center_ = *p;
@@ -1119,13 +1580,10 @@ void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
         ctx.set_prompt("Specify angle to fill in degrees <360>: ");
         return;
     case State::Fill: {
-        const double deg = t.empty() ? 360.0 : [&] {
-            double d = 360.0;
-            if (!parse_number(t, d)) {
-                d = 360.0;
-            }
-            return d;
-        }();
+        double deg = 360.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            deg = 360.0;
+        }
         fill_ = core::to_radians(deg);
         state_ = State::RotateItems;
         ctx.set_prompt("Rotate items as copied? [Yes/No] <Yes>: ");
@@ -1135,7 +1593,54 @@ void ArrayCommand::input(CommandContext& ctx, const std::string& text) {
         const std::string u = upper(t);
         const bool rotate = !(u == "N" || u == "NO");
         ctx.submit(core::ArrayPolarCommand{center_, count_, fill_, rotate, ctx.group_id()});
-        ctx.echo("Polar array created.");
+        done_ = true;
+        return;
+    }
+
+    // --- Path -------------------------------------------------------------
+    case State::PathPick:
+        if (const auto p = read_point(ctx, text)) {
+            path_pick_ = *p;
+            state_ = State::PathMethod;
+            ctx.set_prompt("Method [Divide/Measure] <D>: ");
+        }
+        return;
+    case State::PathMethod: {
+        const std::string u = upper(t);
+        if (u == "M" || u == "MEASURE") {
+            state_ = State::PathSpacing;
+            ctx.set_prompt("Distance between items: ");
+        } else {
+            state_ = State::PathCount;
+            ctx.set_prompt("Number of items to distribute along the path: ");
+        }
+        return;
+    }
+    case State::PathCount:
+        count_ = std::max(2, parse_int(t, 2));
+        path_spacing_ = 0.0; // Divide
+        state_ = State::PathAlign;
+        ctx.set_prompt("Align items with the path? [Yes/No] <Yes>: ");
+        return;
+    case State::PathSpacing:
+        if (!parse_number(t, path_spacing_) || path_spacing_ <= 0.0) {
+            ctx.echo("Enter a positive distance between items.");
+            return;
+        }
+        count_ = 0; // Measure: as many as fit
+        state_ = State::PathAlign;
+        ctx.set_prompt("Align items with the path? [Yes/No] <Yes>: ");
+        return;
+    case State::PathAlign: {
+        const std::string u = upper(t);
+        core::ArrayPathCommand cmd;
+        cmd.pick = path_pick_;
+        cmd.pick_radius = ctx.pick_radius();
+        cmd.count = count_;
+        cmd.spacing = path_spacing_;
+        cmd.align = !(u == "N" || u == "NO");
+        cmd.group = ctx.group_id();
+        ctx.submit(cmd);
         done_ = true;
         return;
     }
@@ -1146,6 +1651,7 @@ void ArrayCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }
+
 
 // ---------------------------------------------------------------------------
 // EXTEND (pick the object to extend; repeats)
@@ -1744,13 +2250,20 @@ void StretchCommand::input(CommandContext& ctx, const std::string& text) {
             c1_ = *p;
             ctx.set_last_point(*p);
             mode_ = Mode::Corner2;
+            // Rubber-band the crossing window so the region is visible while it is
+            // dragged out -- without it the user is picking two invisible corners and
+            // can only guess which vertices the stretch will catch.
+            ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {c1_}});
             ctx.set_prompt("Specify opposite corner: ");
         }
         return;
     case Mode::Corner2:
         if (const auto p = read_point(ctx, text)) {
             c2_ = *p;
-            ctx.set_last_point(*p);
+            ctx.clear_preview();
+            // The base point is a real coordinate again (osnap/ortho apply), so seed
+            // ortho from it rather than from the window corner.
+            ctx.clear_last_point();
             mode_ = Mode::Base;
             ctx.set_prompt("Specify base point: ");
         }
@@ -1760,6 +2273,10 @@ void StretchCommand::input(CommandContext& ctx, const std::string& text) {
             base_ = *p;
             ctx.set_last_point(*p);
             mode_ = Mode::Displacement;
+            // A rubber line from the base point to the cursor: the displacement vector.
+            // Deliberately NOT a Move ghost -- a stretch drags only the caught vertices,
+            // so ghosting the whole entity would show the wrong result.
+            ctx.set_preview(PreviewSpec{PreviewKind::Segment, {base_}});
             ctx.set_prompt("Specify second point: ");
         }
         return;
@@ -1767,6 +2284,7 @@ void StretchCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             const core::Vec2 mn{std::min(c1_.x, c2_.x), std::min(c1_.y, c2_.y)};
             const core::Vec2 mx{std::max(c1_.x, c2_.x), std::max(c1_.y, c2_.y)};
+            ctx.clear_preview();
             ctx.submit(core::StretchSelectionCommand{mn, mx, *p - base_, ctx.group_id()});
             // The engine reports what it actually did (Ph10.1 honest feedback), so the
             // command does not guess a success message here.
@@ -1777,6 +2295,7 @@ void StretchCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void StretchCommand::cancel(CommandContext& ctx) {
+    ctx.clear_preview();
     ctx.echo("*Cancel*");
     done_ = true;
 }

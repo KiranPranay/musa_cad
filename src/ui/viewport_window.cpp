@@ -17,6 +17,7 @@
 #include "musacad/core/font_engine.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/polygon.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
 #include <QCursor>
@@ -420,8 +421,16 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
                 snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
                                   snap_y_.load(std::memory_order_relaxed)};
             }
+            // Was this pick the FIRST corner of a selection window? If so, arm a drag:
+            // releasing away from here delivers the opposite corner, so the window can be
+            // dragged out in one gesture (AutoCAD) as well as clicked corner-to-corner.
+            const bool window_pick = processor_->wants_window();
             processor_->set_pick_radius(10.0 * dpr / scale);
             processor_->pick_point(world, snap);
+            if (window_pick) {
+                window_drag_ = true;
+                sel_start_screen_ = screen_px;
+            }
             rebuild_overlay();
         } else if (const int gi = grip_at(world, 10.0 * dpr / scale); gi >= 0) {
             // Idle press on a grip of a selected entity: begin a direct-manipulation
@@ -588,6 +597,25 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
         rebuild_overlay();
         return;
     }
+    if (event->button() == Qt::LeftButton && window_drag_) {
+        window_drag_ = false;
+        const double dpr = devicePixelRatio();
+        const core::Vec2 rel_screen{event->position().x() * dpr, event->position().y() * dpr};
+        // A real drag delivers the opposite corner now; a press-in-place is left alone so
+        // the classic click-click flow still works and a stray click cannot collapse the
+        // window onto its own first corner.
+        if (processor_ != nullptr && processor_->wants_window() &&
+            core::length(rel_screen - sel_start_screen_) >= 4.0 * dpr) {
+            core::Vec2 world;
+            {
+                std::scoped_lock lock(camera_mutex_);
+                world = camera_.screen_to_world(rel_screen);
+            }
+            processor_->pick_point(world, std::nullopt); // window corners ignore osnap
+            rebuild_overlay();
+        }
+        return;
+    }
     if (event->button() == Qt::LeftButton && selecting_) {
         selecting_ = false;
         const double dpr = devicePixelRatio();
@@ -733,7 +761,10 @@ void ViewportWindow::rebuild_overlay() {
             snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
                               snap_y_.load(std::memory_order_relaxed)};
         }
-        const core::Vec2 cur = processor_->resolve_pick(raw, snap);
+        // A selection-window corner takes the raw cursor, so the rubber band outlines the
+        // region the pick will actually use (ortho would otherwise flatten the band).
+        const core::Vec2 cur =
+            processor_->wants_window() ? raw : processor_->resolve_pick(raw, snap);
         dyn_cursor_ = cur; // for composing a typed value on Enter
         Q_EMIT constrainedCursorMoved(cur.x, cur.y); // DYN live values read this
         const command::PreviewSpec& pv = processor_->preview();
@@ -796,6 +827,21 @@ void ViewportWindow::rebuild_overlay() {
         case command::PreviewKind::Circle:
             if (!pts.empty()) {
                 tess_circle(pts[0], core::distance(pts[0], cur_eff), seg);
+            }
+            break;
+        case command::PreviewKind::Polygon:
+            if (!pts.empty() && pv.sides >= 3) {
+                // Built by the SAME rule the command commits with, so what is dragged
+                // out is what lands: the cursor fixes one vertex when inscribed, or the
+                // midpoint of one edge when circumscribed.
+                const core::Vec2 c = pts[0];
+                const core::Vec2 r = cur_eff - c;
+                const std::vector<core::Vec2> v = core::polygon_vertices(
+                    c, core::length(r), pv.sides, pv.inscribed, std::atan2(r.y, r.x));
+                for (std::size_t i = 0; i < v.size(); ++i) {
+                    seg.push_back(v[i]);
+                    seg.push_back(v[(i + 1) % v.size()]);
+                }
             }
             break;
         case command::PreviewKind::Arc:

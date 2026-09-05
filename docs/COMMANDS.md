@@ -34,7 +34,18 @@ commands (Ribbon Phase A):
 | JOIN (J) | Join collinear or connected objects into a single object. |
 | ROTATE (RO) | Rotate selected objects around a base point. |
 | SCALE (SC) | Resize selected objects uniformly about a base point. |
-| ARRAY (AR) | Create a rectangular or polar pattern of copies. |
+| ARRAY (AR), -ARRAY | Create a rectangular, path or polar pattern of copies. |
+| ARRAYRECT | Create a rectangular pattern of copies in rows and columns. |
+| ARRAYPOLAR | Create a circular pattern of copies about a centre point. |
+| ARRAYPATH | Distribute copies evenly along a path curve. |
+| POLYGON (POL) | Draw a regular polygon by centre or by one edge. |
+| ALIGN (AL) | Move, rotate and optionally scale a selection onto two destination points. |
+| LENGTHEN (LEN) | Change the length of a line or arc. |
+| BREAK (BR) | Break a curve between two points. |
+| BREAKATPOINT | Split a curve at one point, leaving no gap. |
+| POINT (PO) | Place point objects; Esc ends. |
+| DIVIDE (DIV) | Mark a curve into a number of equal segments with points. |
+| MEASURE (ME) | Mark a curve at set intervals with points. |
 | EXTEND (EX) | Extend objects to meet the edges of other objects. |
 | FILLET (F) | Round corners between two intersecting lines, arcs, or polylines. |
 | CHAMFER (CHA) | Bevel corners between two intersecting lines. |
@@ -91,7 +102,19 @@ commands (Ribbon Phase A):
 | OFFSET (polyline, incl. closed rectangles + bulged/filleted corners) — each segment offset (lines parallel, arcs concentric with the bulge preserved) and **corners re-mitered** as the intersection of adjacent offset curves (line/line, line/arc, arc/arc via the shared line_line / line_circle / circle_circle primitives), so edges stay at distance d with clean corners (no trapezoid). Over-large offsets that would fold the shape fail gracefully ("Offset distance too large for this polyline.") leaving the geometry unchanged | O | Implemented |
 | ROTATE | RO | Implemented |
 | SCALE | SC | Implemented |
-| ARRAY (rectangular + polar, command-line) | AR | Implemented |
+| ARRAY (asks the type: Rectangular / PAth / POlar) | AR, -ARRAY | Implemented |
+| ARRAYRECT (rows, columns, spacings, angle of axes) | ARRAYRECT | Implemented |
+| ARRAYPOLAR (centre, count, fill angle, rotate items) | ARRAYPOLAR | Implemented |
+| ARRAYPATH (Divide / Measure, align to path) | ARRAYPATH | Implemented |
+| ARRAYEDIT / ARRAYCLOSE | - | Not applicable (arrays are non-associative -- see below) |
+| POLYGON (centre: Inscribed/Circumscribed; Edge) | POL | Implemented |
+| ALIGN (2 point pairs, optional uniform scale) | AL | Implemented |
+| LENGTHEN (DElta / Percent / Total; lines + arcs) | LEN | Implemented |
+| BREAK (line, arc, circle, open + closed polyline) | BR | Implemented |
+| BREAKATPOINT (split, no gap) | BREAKATPOINT | Implemented |
+| POINT | PO | Implemented |
+| DIVIDE (n equal segments) | DIV | Implemented |
+| MEASURE (fixed interval) | ME | Implemented |
 | TRIM a line (cut by line/circle/arc edges) | TR | Implemented |
 | TRIM an arc/circle/polyline *entity* | TR | Partial (line entities only; curve entities deferred) |
 | EXTEND a line (to line/circle/arc boundary) | EX | Implemented |
@@ -111,6 +134,39 @@ commands (Ribbon Phase A):
 | **LIST (LI)** — an object's type, layer and defining parameters. A dimension reports its MEASURED value, which by construction cannot have been authored | LI | Implemented (issue #30) |
 | EXPLODE | X | Planned (Phase 13) |
 | JOIN | J | Planned (Phase 13) |
+
+### The ARRAY family, and why ARRAYEDIT is absent
+
+AutoCAD ships seven array commands. Four of them create an array and are implemented
+here in full: `ARRAY`/`-ARRAY` (which ask for the type), `ARRAYRECT`, `ARRAYPOLAR` and
+`ARRAYPATH`. As in AutoCAD, `PA` selects Path and `PO` selects Polar; a bare `P` is
+ambiguous and is refused rather than guessed at.
+
+`ARRAY` keeps AutoCAD's legacy four rectangular prompts (rows, columns, row spacing,
+column spacing) unchanged. The axis angle is offered by the modern `ARRAYRECT`, which
+matches where AutoCAD puts it and leaves existing muscle memory alone. The angle
+rotates the row/column **axes**, not the items: a rotated rectangular array is a skewed
+lattice of upright copies.
+
+`ARRAYPATH` supports both of AutoCAD's distribution methods:
+
+- **Divide** -- spread N items over the whole path. On an open path the first and last
+  items sit on the endpoints; on a closed path the items divide by N rather than N-1, so
+  nothing is doubled at the seam.
+- **Measure** -- place an item every given distance, optionally capped by an item count.
+  Stations never run past the end of the path.
+
+Aligned items turn to follow the path tangent, measured relative to the tangent at the
+first station, so item 1 keeps the orientation you drew and the rest follow the curve.
+The path curve is left in the drawing and may not itself be part of the selection.
+
+The remaining two, `ARRAYEDIT` and `ARRAYCLOSE`, edit an **associative** array -- a
+parametric entity that remembers its source objects and parameters so the pattern can be
+re-driven later. Musa CAD's arrays are non-associative: they produce ordinary
+independent copies, exactly as AutoCAD's own `-ARRAY` does. There is therefore no
+association for `ARRAYEDIT` to reopen and no array-editing state for `ARRAYCLOSE` to
+leave. Adding them means adding associative arrays first, which is a data-model change
+(a new parametric entity kind), not a command.
 
 ## Annotate / Dimensions
 

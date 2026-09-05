@@ -371,6 +371,10 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
+    /// The two crossing-window corners are region picks: no osnap, no ortho/polar.
+    bool wants_window() const override {
+        return mode_ == Mode::Corner1 || mode_ == Mode::Corner2;
+    }
 
 private:
     enum class Mode { Corner1, Corner2, Base, Displacement };
@@ -437,23 +441,208 @@ private:
     bool done_ = false;
 };
 
-class ArrayCommand final : public ICommand {
+/// ALIGN (AutoCAD AL): fit the selection between two known points in one step, with an
+/// optional uniform scale. Two source/destination pairs, then the scale question --
+/// AutoCAD's 2D flow, without the third pair that only means anything in 3D.
+class AlignCommand final : public ICommand {
 public:
-    std::string name() const override { return "ARRAY"; }
+    std::string name() const override { return "ALIGN"; }
     void start(CommandContext& ctx) override;
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
 
 private:
-    enum class State { Type, Rows, Cols, RowSpace, ColSpace, Center, Count, Fill, RotateItems };
+    enum class State { Src1, Dst1, Src2, Dst2, Scale };
+    State state_ = State::Src1;
+    core::Vec2 src1_{};
+    core::Vec2 dst1_{};
+    core::Vec2 src2_{};
+    core::Vec2 dst2_{};
+    bool done_ = false;
+};
+
+/// LENGTHEN (AutoCAD LEN): change the length of a line or arc. The mode is chosen
+/// first, as in AutoCAD, then the amount, then the object -- and the end nearer the
+/// pick is the one that moves.
+class LengthenCommand final : public ICommand {
+public:
+    std::string name() const override { return "LENGTHEN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Mode, Amount, Pick };
+    State state_ = State::Mode;
+    core::LengthenCommand::Mode mode_ = core::LengthenCommand::Mode::Total;
+    double value_ = 0.0;
+    bool done_ = false;
+};
+
+/// BREAK (AutoCAD BR) and BREAKATPOINT.
+///
+/// AutoCAD's flow is unusual and worth keeping: the pick that SELECTS the object is
+/// also the first break point, so the common case is two clicks. `First point` re-asks
+/// for it when the selecting click was not where the break should be.
+class BreakCommand final : public ICommand {
+public:
+    /// `at_point` true = BREAKATPOINT: split with no gap, one point only.
+    explicit BreakCommand(bool at_point = false) : at_point_(at_point) {}
+
+    std::string name() const override { return at_point_ ? "BREAKATPOINT" : "BREAK"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Select, Second, FirstAgain };
+    bool at_point_ = false;
+    State state_ = State::Select;
+    core::Vec2 pick_{};
+    core::Vec2 p1_{};
+    bool done_ = false;
+};
+
+/// POLYGON (AutoCAD POL). A regular n-gon, committed as an ordinary closed polyline.
+///
+/// Follows AutoCAD's two ways of sizing one: about a CENTRE, where the cursor distance
+/// is either the circumradius (Inscribed) or the apothem (Circumscribed), or by one
+/// EDGE, where two picks give a side and the polygon is built to its left.
+class PolygonCommand final : public ICommand {
+public:
+    std::string name() const override { return "POLYGON"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Sides, Center, Fit, Radius, Edge1, Edge2 };
+    void refresh_preview(CommandContext& ctx);
+
+    State state_ = State::Sides;
+    int sides_ = 4;
+    bool inscribed_ = true;
+    core::Vec2 center_{};
+    core::Vec2 edge1_{};
+    bool done_ = false;
+};
+
+/// POINT (AutoCAD PO). Places a POINT entity at each pick and keeps going until Esc,
+/// which is what AutoCAD does -- points are almost always placed in groups.
+class PointCommand final : public ICommand {
+public:
+    std::string name() const override { return "POINT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// DIVIDE and MEASURE (AutoCAD DIV / ME). Both pick a curve and then place POINT marks
+/// along it; they differ only in whether the second answer is a segment COUNT or a
+/// segment LENGTH, so they share one state machine.
+class DivideCommand final : public ICommand {
+public:
+    /// `measure` false = DIVIDE (into N equal parts), true = MEASURE (every N units).
+    explicit DivideCommand(bool measure = false) : measure_(measure) {}
+
+    std::string name() const override { return measure_ ? "MEASURE" : "DIVIDE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Pick, Amount };
+    bool measure_ = false;
+    State state_ = State::Pick;
+    core::Vec2 pick_{};
+    bool done_ = false;
+};
+
+/// The whole AutoCAD array family in one state machine.
+///
+/// ARRAY (AR) and -ARRAY ask for the type, exactly as AutoCAD does; ARRAYRECT,
+/// ARRAYPOLAR and ARRAYPATH jump straight to their own prompts. One class because the
+/// three types differ only in which prompts they ask -- splitting them would duplicate
+/// the selection guard, the parsing and the cancel path three ways.
+///
+/// ARRAYEDIT and ARRAYCLOSE are deliberately absent: both edit an ASSOCIATIVE array,
+/// which is a parametric entity that remembers its source and parameters. Musa CAD's
+/// arrays are non-associative -- the same thing AutoCAD's own -ARRAY produces -- so
+/// there is no association to reopen. See docs/COMMANDS.md.
+class ArrayCommand final : public ICommand {
+public:
+    /// Which prompts to ask. `Ask` is ARRAY/-ARRAY; the rest are the direct commands.
+    enum class Type { Ask, Rect, Polar, Path };
+
+    explicit ArrayCommand(Type type = Type::Ask) : type_(type) {}
+
+    std::string name() const override {
+        switch (type_) {
+        case Type::Rect:
+            return "ARRAYRECT";
+        case Type::Polar:
+            return "ARRAYPOLAR";
+        case Type::Path:
+            return "ARRAYPATH";
+        case Type::Ask:
+            break;
+        }
+        return "ARRAY";
+    }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    /// The path pick selects a curve, but it is a COORDINATE pick here (the engine
+    /// resolves the curve from the point), so the normal snap rules apply.
+    bool wants_selection() const override { return false; }
+
+private:
+    enum class State {
+        Type,
+        // Rectangular
+        Rows,
+        Cols,
+        RowSpace,
+        ColSpace,
+        Angle,
+        // Polar
+        Center,
+        Count,
+        Fill,
+        RotateItems,
+        // Path
+        PathPick,
+        PathMethod,
+        PathCount,
+        PathSpacing,
+        PathAlign,
+    };
+    void begin_rect(CommandContext& ctx);
+    void begin_polar(CommandContext& ctx);
+    void begin_path(CommandContext& ctx);
+
+    Type type_ = Type::Ask;
     State state_ = State::Type;
     int rows_ = 1;
     int cols_ = 1;
     double row_space_ = 0.0;
+    double col_space_ = 0.0;
     int count_ = 1;
     double fill_ = 0.0;
     core::Vec2 center_{};
+    // Path
+    core::Vec2 path_pick_{};
+    double path_spacing_ = 0.0;
     bool done_ = false;
 };
 

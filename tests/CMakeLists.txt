@@ -85,6 +85,11 @@ add_executable(musacad_tests
     test_selection.cpp
     test_modify.cpp
     test_stretch.cpp
+    test_array.cpp
+    test_divide.cpp
+    test_polygon.cpp
+    test_break.cpp
+    test_align_lengthen.cpp
     test_inquiry.cpp
     test_multidoc.cpp
     test_kernel_offset.cpp

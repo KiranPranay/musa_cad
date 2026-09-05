@@ -115,7 +115,11 @@ void CommandProcessor::pick_point(core::Vec2 world, std::optional<core::Vec2> sn
         finalize_if_done();
         return;
     }
-    const core::Vec2 p = resolve_pick(world, snap);
+    // A selection-window corner is a screen region, not a coordinate: AutoCAD applies
+    // neither object snap nor ortho/polar to it. Honouring them here is what broke
+    // STRETCH -- ortho collapsed the second corner onto an axis through the first, so
+    // the crossing window had zero area and caught nothing.
+    const core::Vec2 p = wants_window() ? world : resolve_pick(world, snap);
     char buf[64];
     std::snprintf(buf, sizeof(buf), "%.10g,%.10g", p.x, p.y);
     submit_line(buf); // feed as an absolute coordinate to the active command
