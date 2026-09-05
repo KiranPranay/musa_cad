@@ -1055,6 +1055,67 @@ int parse_int(const std::string& t, int fallback) {
 } // namespace
 
 // ---------------------------------------------------------------------------
+// BREAK / BREAKATPOINT: cut a piece out of a curve, or just split it
+// ---------------------------------------------------------------------------
+void BreakCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Select;
+    ctx.set_prompt("Select object: ");
+}
+
+void BreakCommand::input(CommandContext& ctx, const std::string& text) {
+    const auto fire = [&](core::Vec2 a, core::Vec2 b) {
+        core::BreakCommand cmd;
+        cmd.pick = pick_;
+        cmd.pick_radius = ctx.pick_radius();
+        cmd.p1 = a;
+        cmd.p2 = b;
+        cmd.group = ctx.group_id();
+        ctx.submit(cmd);
+        // The engine reports what it actually did (Ph10.1).
+        done_ = true;
+    };
+    switch (state_) {
+    case State::Select:
+        if (const auto p = read_point(ctx, text)) {
+            // AutoCAD: the selecting click doubles as the first break point.
+            pick_ = *p;
+            p1_ = *p;
+            if (at_point_) {
+                fire(p1_, p1_); // BREAKATPOINT needs nothing more
+                return;
+            }
+            state_ = State::Second;
+            ctx.set_prompt("Specify second break point or [First point]: ");
+        }
+        return;
+    case State::Second: {
+        if (upper(trimmed(text)) == "F" || upper(trimmed(text)) == "FIRST") {
+            state_ = State::FirstAgain;
+            ctx.set_prompt("Specify first break point: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            fire(p1_, *p);
+        }
+        return;
+    }
+    case State::FirstAgain:
+        if (const auto p = read_point(ctx, text)) {
+            p1_ = *p;
+            state_ = State::Second;
+            ctx.set_prompt("Specify second break point: ");
+        }
+        return;
+    }
+}
+
+void BreakCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // POLYGON: n sides, sized about a centre (inscribed/circumscribed) or by one edge
 // ---------------------------------------------------------------------------
 void PolygonCommand::refresh_preview(CommandContext& ctx) {

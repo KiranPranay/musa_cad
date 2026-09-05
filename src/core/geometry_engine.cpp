@@ -1906,6 +1906,187 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
     return true;
 }
 
+void GeometryEngine::apply_break(const BreakCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    if (h.is_null()) {
+        report("Break: no curve under the pick.");
+        return;
+    }
+    // BREAK AT POINT: the two points coincide, so nothing is removed and the curve is
+    // simply split. A closed shape has no free end to split at, so it is refused.
+    const bool at_point = length(c.p2 - c.p1) <= 1e-9;
+
+    // Each case builds the REPLACEMENT pieces; the shared tail below swaps them in as
+    // one undo group, so no case has to repeat the erase/create bookkeeping.
+    std::vector<Command> pieces;
+    const auto keep_line = [&](Vec2 a, Vec2 b) {
+        if (length(b - a) > 1e-9) {
+            pieces.push_back(AddLineCommand{a, b, 0, store_.line(h)->props});
+        }
+    };
+
+    switch (h.kind) {
+    case EntityKind::Line: {
+        const LineData* l = store_.line(h);
+        const Vec2 d = l->b - l->a;
+        const double len2 = length_squared(d);
+        if (len2 <= 1e-18) {
+            report("Break: that line has no length.");
+            return;
+        }
+        // Project both points onto the line and order them along it.
+        double t1 = dot(c.p1 - l->a, d) / len2;
+        double t2 = at_point ? t1 : dot(c.p2 - l->a, d) / len2;
+        if (t1 > t2) {
+            std::swap(t1, t2);
+        }
+        t1 = std::clamp(t1, 0.0, 1.0);
+        t2 = std::clamp(t2, 0.0, 1.0);
+        keep_line(l->a, l->a + d * t1);
+        keep_line(l->a + d * t2, l->b);
+        break;
+    }
+    case EntityKind::Arc: {
+        const ArcData* a = store_.arc(h);
+        // Sweep from start to end, always increasing, so a break point's position is a
+        // single number and the two kept pieces are just the ends of that sweep.
+        const auto sweep_to = [&](Vec2 p) {
+            const double ang = std::atan2(p.y - a->center.y, p.x - a->center.x);
+            double s = ang - a->start_angle;
+            while (s < 0.0) {
+                s += kTwoPi;
+            }
+            return s;
+        };
+        double total = a->end_angle - a->start_angle;
+        while (total <= 0.0) {
+            total += kTwoPi;
+        }
+        double s1 = sweep_to(c.p1);
+        double s2 = at_point ? s1 : sweep_to(c.p2);
+        if (s1 > s2) {
+            std::swap(s1, s2);
+        }
+        s1 = std::clamp(s1, 0.0, total);
+        s2 = std::clamp(s2, 0.0, total);
+        const auto keep_arc = [&](double from, double to) {
+            if (to - from > 1e-9) {
+                pieces.push_back(AddArcCommand{a->center, a->radius, a->start_angle + from,
+                                               a->start_angle + to, 0, a->props});
+            }
+        };
+        keep_arc(0.0, s1);
+        keep_arc(s2, total);
+        break;
+    }
+    case EntityKind::Circle: {
+        if (at_point) {
+            report("Break: a circle needs two different break points.");
+            return;
+        }
+        const CircleData* ci = store_.circle(h);
+        // AutoCAD removes the piece running COUNTER-CLOCKWISE from the first point to
+        // the second, so what survives is the arc from p2 round to p1.
+        const double a1 = std::atan2(c.p1.y - ci->center.y, c.p1.x - ci->center.x);
+        const double a2 = std::atan2(c.p2.y - ci->center.y, c.p2.x - ci->center.x);
+        pieces.push_back(AddArcCommand{ci->center, ci->radius, a2, a1, 0, ci->props});
+        break;
+    }
+    case EntityKind::Polyline: {
+        const PolylineData* pl = store_.polyline(h);
+        const std::span<const Vec2> v = store_.vertices_of(*pl);
+        if (v.size() < 2) {
+            report("Break: that polyline has no length.");
+            return;
+        }
+        // Position along the polyline as (segment index + fraction), which orders the
+        // two break points even when they fall on different segments.
+        const auto locate = [&](Vec2 p) {
+            const int si = nearest_pl_segment(v, pl->closed, p);
+            if (si < 0) {
+                return 0.0;
+            }
+            const std::size_t i = static_cast<std::size_t>(si);
+            const Vec2 a = v[i];
+            const Vec2 b = v[(i + 1) % v.size()];
+            const Vec2 d = b - a;
+            const double len2 = length_squared(d);
+            const double t = len2 > 1e-18 ? std::clamp(dot(p - a, d) / len2, 0.0, 1.0) : 0.0;
+            return static_cast<double>(si) + t;
+        };
+        const auto point_at = [&](double u) {
+            const std::size_t i = static_cast<std::size_t>(std::floor(u));
+            const double t = u - static_cast<double>(i);
+            const Vec2 a = v[std::min(i, v.size() - 1)];
+            const Vec2 b = v[(i + 1) % v.size()];
+            return a + (b - a) * t;
+        };
+        double u1 = locate(c.p1);
+        double u2 = at_point ? u1 : locate(c.p2);
+        if (u1 > u2) {
+            std::swap(u1, u2);
+        }
+        // A closed polyline breaks into ONE open run: the part that survives is the
+        // stretch from the second point round to the first.
+        const auto emit = [&](std::vector<Vec2> pts) {
+            if (pts.size() >= 2) {
+                AddPolylineCommand pc;
+                pc.points = std::move(pts);
+                pc.closed = false;
+                pc.props = pl->props;
+                pieces.push_back(std::move(pc));
+            }
+        };
+        if (pl->closed) {
+            std::vector<Vec2> run{point_at(u2)};
+            for (std::size_t k = static_cast<std::size_t>(std::floor(u2)) + 1;
+                 k <= static_cast<std::size_t>(std::floor(u1)) + v.size(); ++k) {
+                run.push_back(v[k % v.size()]);
+            }
+            run.push_back(point_at(u1));
+            emit(std::move(run));
+        } else {
+            std::vector<Vec2> head(v.begin(),
+                                   v.begin() + static_cast<std::ptrdiff_t>(
+                                                   std::floor(u1)) + 1);
+            head.push_back(point_at(u1));
+            emit(std::move(head));
+
+            std::vector<Vec2> tail{point_at(u2)};
+            for (std::size_t k = static_cast<std::size_t>(std::floor(u2)) + 1; k < v.size();
+                 ++k) {
+                tail.push_back(v[k]);
+            }
+            emit(std::move(tail));
+        }
+        break;
+    }
+    default:
+        report("Break: that entity kind cannot be broken.");
+        return;
+    }
+
+    if (pieces.empty()) {
+        report("Break: that would remove the whole object -- use ERASE.");
+        return;
+    }
+    const Command original = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(c.group, original);
+    std::vector<EntityHandle> made;
+    for (const Command& piece : pieces) {
+        const EntityHandle nh = create_indexed(piece);
+        push_create_item(c.group, nh, piece);
+        made.push_back(nh);
+    }
+    selection_ = made;
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report(at_point ? "Split into " + std::to_string(pieces.size()) + " objects."
+                    : "Broke 1 object into " + std::to_string(pieces.size()) + ".");
+}
+
 void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 pick2,
                                             double radius, std::uint16_t style,
                                             std::uint64_t group) {
@@ -2973,6 +3154,8 @@ void GeometryEngine::apply(const Command& command) {
                 apply_array_path(c);
             } else if constexpr (std::is_same_v<T, DividePathCommand>) {
                 apply_divide_measure(c);
+            } else if constexpr (std::is_same_v<T, BreakCommand>) {
+                apply_break(c);
             } else if constexpr (std::is_same_v<T, ArrayPolarCommand>) {
                 apply_array_polar(c.center, c.count, c.total_angle, c.rotate_items, c.group);
             } else if constexpr (std::is_same_v<T, ExtendPickCommand>) {

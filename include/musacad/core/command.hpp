@@ -28,6 +28,18 @@ namespace musacad::core {
 /// Which entities ERASE targets (selection/picking arrives in Phase 5).
 enum class EraseScope : std::uint8_t { Last, All };
 
+/// BREAK (AutoCAD BR): remove the piece of the curve under `pick` that lies between
+/// `p1` and `p2`. When the two points coincide it is BREAK AT POINT (AutoCAD's BREAKATPOINT):
+/// the curve is split in two with no gap. A circle becomes a single arc, since a circle
+/// with a piece missing is an arc.
+struct BreakCommand {
+    Vec2 pick;
+    double pick_radius = 0.0;
+    Vec2 p1;
+    Vec2 p2;
+    std::uint64_t group = 0;
+};
+
 /// DIVIDE and MEASURE (AutoCAD): place POINT entities along the curve under `pick`.
 /// `segments` > 0 selects DIVIDE (that many equal parts); otherwise `distance` selects
 /// MEASURE (a point every `distance` along the curve). The curve itself is not changed.
@@ -751,7 +763,7 @@ using Command =
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
-                 ArrayPathCommand, AddPointCommand, DividePathCommand,
+                 ArrayPathCommand, AddPointCommand, DividePathCommand, BreakCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,

@@ -441,6 +441,31 @@ private:
     bool done_ = false;
 };
 
+/// BREAK (AutoCAD BR) and BREAKATPOINT.
+///
+/// AutoCAD's flow is unusual and worth keeping: the pick that SELECTS the object is
+/// also the first break point, so the common case is two clicks. `First point` re-asks
+/// for it when the selecting click was not where the break should be.
+class BreakCommand final : public ICommand {
+public:
+    /// `at_point` true = BREAKATPOINT: split with no gap, one point only.
+    explicit BreakCommand(bool at_point = false) : at_point_(at_point) {}
+
+    std::string name() const override { return at_point_ ? "BREAKATPOINT" : "BREAK"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Select, Second, FirstAgain };
+    bool at_point_ = false;
+    State state_ = State::Select;
+    core::Vec2 pick_{};
+    core::Vec2 p1_{};
+    bool done_ = false;
+};
+
 /// POLYGON (AutoCAD POL). A regular n-gon, committed as an ordinary closed polyline.
 ///
 /// Follows AutoCAD's two ways of sizing one: about a CENTRE, where the cursor distance
