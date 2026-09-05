@@ -137,6 +137,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/rotate.svg", "Rotate selected objects around a base point.");
     reg({"SC", "SCALE"}, [] { return std::make_unique<ScaleCommand>(); }, "assets/ribbon/scale.svg",
         "Resize selected objects uniformly about a base point.");
+    reg({"POL", "POLYGON"}, [] { return std::make_unique<PolygonCommand>(); },
+        "assets/ribbon/polygon.svg", "Draw a regular polygon by centre or by one edge.");
     reg({"PO", "POINT"}, [] { return std::make_unique<PointCommand>(); },
         "assets/ribbon/point.svg", "Place point objects; Esc ends.");
     reg({"DIV", "DIVIDE"}, [] { return std::make_unique<DivideCommand>(false); },

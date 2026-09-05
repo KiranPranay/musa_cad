@@ -17,6 +17,7 @@
 #include "musacad/core/font_engine.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/polygon.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
 #include <QCursor>
@@ -826,6 +827,21 @@ void ViewportWindow::rebuild_overlay() {
         case command::PreviewKind::Circle:
             if (!pts.empty()) {
                 tess_circle(pts[0], core::distance(pts[0], cur_eff), seg);
+            }
+            break;
+        case command::PreviewKind::Polygon:
+            if (!pts.empty() && pv.sides >= 3) {
+                // Built by the SAME rule the command commits with, so what is dragged
+                // out is what lands: the cursor fixes one vertex when inscribed, or the
+                // midpoint of one edge when circumscribed.
+                const core::Vec2 c = pts[0];
+                const core::Vec2 r = cur_eff - c;
+                const std::vector<core::Vec2> v = core::polygon_vertices(
+                    c, core::length(r), pv.sides, pv.inscribed, std::atan2(r.y, r.x));
+                for (std::size_t i = 0; i < v.size(); ++i) {
+                    seg.push_back(v[i]);
+                    seg.push_back(v[(i + 1) % v.size()]);
+                }
             }
             break;
         case command::PreviewKind::Arc:

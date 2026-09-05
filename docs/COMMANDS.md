@@ -38,6 +38,7 @@ commands (Ribbon Phase A):
 | ARRAYRECT | Create a rectangular pattern of copies in rows and columns. |
 | ARRAYPOLAR | Create a circular pattern of copies about a centre point. |
 | ARRAYPATH | Distribute copies evenly along a path curve. |
+| POLYGON (POL) | Draw a regular polygon by centre or by one edge. |
 | POINT (PO) | Place point objects; Esc ends. |
 | DIVIDE (DIV) | Mark a curve into a number of equal segments with points. |
 | MEASURE (ME) | Mark a curve at set intervals with points. |
@@ -102,6 +103,7 @@ commands (Ribbon Phase A):
 | ARRAYPOLAR (centre, count, fill angle, rotate items) | ARRAYPOLAR | Implemented |
 | ARRAYPATH (Divide / Measure, align to path) | ARRAYPATH | Implemented |
 | ARRAYEDIT / ARRAYCLOSE | - | Not applicable (arrays are non-associative -- see below) |
+| POLYGON (centre: Inscribed/Circumscribed; Edge) | POL | Implemented |
 | POINT | PO | Implemented |
 | DIVIDE (n equal segments) | DIV | Implemented |
 | MEASURE (fixed interval) | ME | Implemented |

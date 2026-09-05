@@ -441,6 +441,31 @@ private:
     bool done_ = false;
 };
 
+/// POLYGON (AutoCAD POL). A regular n-gon, committed as an ordinary closed polyline.
+///
+/// Follows AutoCAD's two ways of sizing one: about a CENTRE, where the cursor distance
+/// is either the circumradius (Inscribed) or the apothem (Circumscribed), or by one
+/// EDGE, where two picks give a side and the polygon is built to its left.
+class PolygonCommand final : public ICommand {
+public:
+    std::string name() const override { return "POLYGON"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Sides, Center, Fit, Radius, Edge1, Edge2 };
+    void refresh_preview(CommandContext& ctx);
+
+    State state_ = State::Sides;
+    int sides_ = 4;
+    bool inscribed_ = true;
+    core::Vec2 center_{};
+    core::Vec2 edge1_{};
+    bool done_ = false;
+};
+
 /// POINT (AutoCAD PO). Places a POINT entity at each pick and keeps going until Esc,
 /// which is what AutoCAD does -- points are almost always placed in groups.
 class PointCommand final : public ICommand {
