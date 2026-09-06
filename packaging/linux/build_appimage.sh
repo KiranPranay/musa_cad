@@ -84,12 +84,34 @@ export EXTRA_PLATFORM_PLUGINS="libqxcb.so;libqwayland-generic.so;libqwayland-egl
 export EXTRA_QT_PLUGINS="svg;imageformats/qsvg;iconengines/qsvgicon;styles;wayland-shell-integration;wayland-graphics-integration-client;wayland-decoration-client"
 export OUTPUT="$OUT"
 rm -f "$REPO_ROOT/$OUT"
+# Pass 1: deploy the app, Qt, and the plugins the qt plugin knows how to copy.
 "$TOOLS_DIR/linuxdeploy-${ARCH}.AppImage" \
   --appdir "$APPDIR" \
   --executable "$APPDIR/usr/bin/musacad_app" \
   --desktop-file "$APPDIR/usr/share/applications/musacad.desktop" \
   --icon-file "$APPDIR/usr/share/icons/hicolor/scalable/apps/musacad.svg" \
-  --plugin qt \
+  --plugin qt
+
+# The Wayland CLIENT BUFFER integration is what lets a GL context exist under native
+# Wayland, and linuxdeploy-plugin-qt does not bundle that directory (it copies the
+# shell and decoration ones). Without it Qt logs `Failed to load client buffer
+# integration: "wayland-egl"`, the GL viewport cannot be created, and the app is blank
+# -- found by running the GUI self-test from the built AppImage under
+# QT_QPA_PLATFORM=wayland, which is now part of the release check. Copy it in from the
+# host Qt; its own libraries (WaylandEglClientHwIntegration, wayland-egl) were already
+# deployed by pass 1, and libEGL is a host graphics library that must stay unbundled.
+QT_PLUGINS="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
+CLIENT_INTEGRATION="$QT_PLUGINS/wayland-graphics-integration-client/libqt-plugin-wayland-egl.so"
+if [[ -f "$CLIENT_INTEGRATION" ]]; then
+  install -Dm755 "$CLIENT_INTEGRATION" \
+          "$APPDIR/usr/plugins/wayland-graphics-integration-client/libqt-plugin-wayland-egl.so"
+else
+  echo "WARNING: $CLIENT_INTEGRATION not found; the AppImage will fall back to XWayland"
+fi
+
+# Pass 2: deploy the dependencies of everything now in the AppDir and write the image.
+"$TOOLS_DIR/linuxdeploy-${ARCH}.AppImage" \
+  --appdir "$APPDIR" \
   --output appimage
 
 [[ -f "$REPO_ROOT/$OUT" ]] || { echo "ERROR: $OUT was not produced"; exit 1; }
