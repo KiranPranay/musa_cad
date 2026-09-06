@@ -474,7 +474,7 @@ void ViewportRenderer::draw_overlay(GpuCommandBuffer& cmd, int width, int height
 
 void ViewportRenderer::draw_dyn_labels(GpuCommandBuffer& cmd, int width, int height,
                                        const Camera2D& camera) {
-    if (overlay_.dyn_labels.empty()) {
+    if (overlay().dyn_labels.empty()) {
         return;
     }
     const double dpr = static_cast<double>(device_pixel_ratio_);
@@ -486,7 +486,7 @@ void ViewportRenderer::draw_dyn_labels(GpuCommandBuffer& cmd, int width, int hei
     std::vector<core::Vec2> lines;     // unfocused borders + ALL text + caret
     std::vector<core::Vec2> focus;     // focused box border (brighter)
 
-    for (const DynLabel& label : overlay_.dyn_labels) {
+    for (const DynLabel& label : overlay().dyn_labels) {
         const core::Vec2 s = camera.world_to_screen(label.anchor); // device px
         std::vector<core::Vec2> txt;
         const double tw = append_text_segments(label.text, {0.0, 0.0}, h, txt);
@@ -569,7 +569,7 @@ void ViewportRenderer::draw_dyn_labels(GpuCommandBuffer& cmd, int width, int hei
 }
 
 void ViewportRenderer::draw_canvas_command(GpuCommandBuffer& cmd, int width, int height) {
-    const CanvasCommandUI& ui = overlay_.command_ui;
+    const CanvasCommandUI& ui = overlay().command_ui;
     if (!ui.active) {
         return;
     }
@@ -632,55 +632,55 @@ void ViewportRenderer::draw_selection_and_interaction(GpuCommandBuffer& cmd,
     }
 
     // Ghost: transform the selected geometry render-side (move/mirror/rotate/scale).
-    if (overlay_.ghost_mode != 0 && !snapshot.selected_line_vertices.empty()) {
+    if (overlay().ghost_mode != 0 && !snapshot.selected_line_vertices.empty()) {
         std::vector<core::Vec2> ghost;
         ghost.reserve(snapshot.selected_line_vertices.size());
         const auto& src = snapshot.selected_line_vertices;
-        if (overlay_.ghost_mode == 1) { // move
-            const core::Vec2 d = overlay_.ghost_b - overlay_.ghost_a;
+        if (overlay().ghost_mode == 1) { // move
+            const core::Vec2 d = overlay().ghost_b - overlay().ghost_a;
             for (const core::Vec2& v : src) {
                 ghost.push_back(v + d);
             }
-        } else if (overlay_.ghost_mode == 2) { // mirror across ghost_a..ghost_b
-            const core::Vec2 dir = core::normalized(overlay_.ghost_b - overlay_.ghost_a);
+        } else if (overlay().ghost_mode == 2) { // mirror across ghost_a..ghost_b
+            const core::Vec2 dir = core::normalized(overlay().ghost_b - overlay().ghost_a);
             for (const core::Vec2& v : src) {
-                const core::Vec2 ap = v - overlay_.ghost_a;
+                const core::Vec2 ap = v - overlay().ghost_a;
                 const double t = core::dot(ap, dir);
-                const core::Vec2 proj = overlay_.ghost_a + dir * t;
+                const core::Vec2 proj = overlay().ghost_a + dir * t;
                 ghost.push_back(proj * 2.0 - v);
             }
-        } else if (overlay_.ghost_mode == 3) { // rotate about ghost_a
-            const double cs = std::cos(overlay_.ghost_param);
-            const double sn = std::sin(overlay_.ghost_param);
+        } else if (overlay().ghost_mode == 3) { // rotate about ghost_a
+            const double cs = std::cos(overlay().ghost_param);
+            const double sn = std::sin(overlay().ghost_param);
             for (const core::Vec2& v : src) {
-                const core::Vec2 d = v - overlay_.ghost_a;
-                ghost.push_back({overlay_.ghost_a.x + d.x * cs - d.y * sn,
-                                 overlay_.ghost_a.y + d.x * sn + d.y * cs});
+                const core::Vec2 d = v - overlay().ghost_a;
+                ghost.push_back({overlay().ghost_a.x + d.x * cs - d.y * sn,
+                                 overlay().ghost_a.y + d.x * sn + d.y * cs});
             }
         } else { // scale about ghost_a
-            const double f = overlay_.ghost_param;
+            const double f = overlay().ghost_param;
             for (const core::Vec2& v : src) {
-                ghost.push_back(overlay_.ghost_a + (v - overlay_.ghost_a) * f);
+                ghost.push_back(overlay().ghost_a + (v - overlay().ghost_a) * f);
             }
         }
         draw_world(ghost, kGhostColor);
     }
 
     // Live command preview (rubber-band).
-    if (!overlay_.preview_segments.empty()) {
-        draw_world(overlay_.preview_segments, kPreviewColor);
+    if (!overlay().preview_segments.empty()) {
+        draw_world(overlay().preview_segments, kPreviewColor);
     }
 
     // Selection rubber-band rectangle.
-    if (overlay_.rect_mode != 0) {
-        const core::Vec2 a = overlay_.rect_a;
-        const core::Vec2 b = overlay_.rect_b;
+    if (overlay().rect_mode != 0) {
+        const core::Vec2 a = overlay().rect_a;
+        const core::Vec2 b = overlay().rect_b;
         std::vector<core::Vec2> rect;
         edge(rect, {a.x, a.y}, {b.x, a.y});
         edge(rect, {b.x, a.y}, {b.x, b.y});
         edge(rect, {b.x, b.y}, {a.x, b.y});
         edge(rect, {a.x, b.y}, {a.x, a.y});
-        draw_world(rect, overlay_.rect_mode == 2 ? kCrossingColor : kWindowColor);
+        draw_world(rect, overlay().rect_mode == 2 ? kCrossingColor : kWindowColor);
     }
 
     // Grip drag preview: the edited entity (computed geometry-side on a temp store)

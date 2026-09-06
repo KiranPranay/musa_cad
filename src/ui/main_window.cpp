@@ -2851,6 +2851,13 @@ bool MainWindow::stretch_shot(const std::string& out_dir) {
     click({20, 80}, Qt::RightButton);
     ok = pump_until([this] { return !processor_->in_selection_phase(); }) && ok;
 
+    if (qEnvironmentVariableIsSet("MUSACAD_TIMING")) {
+        // THE state the user reported: selection made, sub-prompt live, no rubber band,
+        // cursor travelling over the selected geometry towards the base point.
+        sweep("stretch base-point prompt");
+        burst("stretch base-point prompt");
+    }
+
     // 3. Base point.
     click({100, 0}, Qt::LeftButton);
     pump(100);

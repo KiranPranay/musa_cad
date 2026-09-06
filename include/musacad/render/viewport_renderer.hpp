@@ -79,7 +79,10 @@ public:
 
     /// Transient interaction overlay (preview, selection rect, ghost), composed
     /// on the UI thread and handed in each frame.
-    void set_overlay(RenderOverlay overlay) { overlay_ = std::move(overlay); }
+    /// The overlay is shared, immutable, and referenced -- not copied -- per frame.
+    void set_overlay(std::shared_ptr<const RenderOverlay> overlay) {
+        overlay_ptr_ = std::move(overlay);
+    }
 
     [[nodiscard]] const RenderStats& stats() const noexcept { return stats_; }
 
@@ -120,7 +123,11 @@ private:
     bool grid_visible_ = true;
     float device_px_per_mm_ = 96.0f / 25.4f; // ~3.78 px/mm @ 96 DPI (AutoCAD default)
     float device_pixel_ratio_ = 1.0f;        // Qt devicePixelRatio (HiDPI scaling)
-    RenderOverlay overlay_;
+    std::shared_ptr<const RenderOverlay> overlay_ptr_;
+    [[nodiscard]] const RenderOverlay& overlay() const {
+        static const RenderOverlay kEmpty{};
+        return overlay_ptr_ ? *overlay_ptr_ : kEmpty;
+    }
 
     std::uint64_t uploaded_version_ = ~0ull;
     std::size_t line_count_ = 0;  ///< scene line instances currently on GPU

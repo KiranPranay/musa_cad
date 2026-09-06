@@ -40,6 +40,7 @@
 
 namespace musacad::ui {
 
+
 namespace {
 std::string overlay_text(double fps, double ms) {
     char buf[64];
@@ -408,10 +409,10 @@ void ViewportWindow::render_loop(std::stop_token token) {
         }
 
         {
-            render::RenderOverlay ov;
+            std::shared_ptr<const render::RenderOverlay> ov;
             {
                 std::scoped_lock lock(overlay_mutex_);
-                ov = overlay_;
+                ov = overlay_; // a reference, not a copy of the overlay's vertices
             }
             renderer.set_overlay(std::move(ov));
         }
@@ -1093,10 +1094,11 @@ void ViewportWindow::rebuild_overlay() {
     } else if (!sub_entry_.empty()) {
         sub_entry_.clear(); // command ended / entered a rubber-band: drop stale text
     }
-
+    // Publish as an immutable shared object; the render thread references it.
+    auto published = std::make_shared<const render::RenderOverlay>(std::move(ov));
     {
         std::scoped_lock lock(overlay_mutex_);
-        overlay_ = std::move(ov);
+        overlay_ = std::move(published);
     }
     // Stream the live-stretch delta only AFTER the overlay is handed off: the engine
     // publishes within a millisecond and the render thread then consumes, taking the
@@ -1259,12 +1261,40 @@ void ViewportWindow::append_glyphs(const std::string& text, double ox, double ba
     if (font_engine_ == nullptr || face.empty() || text.empty()) {
         return;
     }
-    std::vector<core::Vec2> tris;
-    font_engine_->glyph_fills(face, text, {0.0, 0.0}, h, 0.0, tris);
+    // One layout per (face, height, text); every later use is a translate of the
+    // cached run. Bounded: the cache is dropped wholesale when it grows large, which
+    // costs one relayout of whatever is on screen and nothing else.
+    const std::string key = face + '\x1f' + std::to_string(h) + '\x1f' + text;
+    auto it = glyph_run_cache_.find(key);
+    if (it == glyph_run_cache_.end()) {
+        if (glyph_run_cache_.size() > 256) {
+            glyph_run_cache_.clear();
+        }
+        std::vector<core::Vec2> tris;
+        font_engine_->glyph_fills(face, text, {0.0, 0.0}, h, 0.0, tris);
+        it = glyph_run_cache_.emplace(key, std::move(tris)).first;
+    }
+    const std::vector<core::Vec2>& tris = it->second;
     out.reserve(out.size() + tris.size());
     for (const core::Vec2& v : tris) {
         out.push_back({ox + v.x, baseline_y - v.y}); // font is y-up; screen is y-down
     }
+}
+
+double ViewportWindow::cmd_advance(const std::string& text, double h) {
+    const std::string face = cmd_font();
+    if (font_engine_ == nullptr || face.empty()) {
+        return static_cast<double>(text.size()) * h * 0.55;
+    }
+    const std::string key = face + '\x1f' + std::to_string(h) + '\x1f' + text;
+    auto it = advance_cache_.find(key);
+    if (it == advance_cache_.end()) {
+        if (advance_cache_.size() > 512) {
+            advance_cache_.clear();
+        }
+        it = advance_cache_.emplace(key, font_engine_->advance(face, text, h)).first;
+    }
+    return it->second;
 }
 
 bool ViewportWindow::cmd_entry_handle_key(int key, const QString& text) {
@@ -1358,7 +1388,7 @@ void ViewportWindow::build_command_ui(render::CanvasCommandUI& ui) {
     const std::string face = cmd_font();
     const auto adv = [&](const std::string& s, double gh) {
         return (font_engine_ != nullptr && !face.empty())
-                   ? font_engine_->advance(face, s, gh)
+                   ? cmd_advance(s, gh)
                    : static_cast<double>(s.size()) * gh * 0.55; // fallback width estimate
     };
     const auto quad = [](std::vector<core::Vec2>& v, double x, double y, double w, double hh) {
@@ -1464,7 +1494,7 @@ void ViewportWindow::build_sub_prompt_ui(render::CanvasCommandUI& ui) {
     const std::string face = cmd_font();
     const auto adv = [&](const std::string& s) {
         return (font_engine_ != nullptr && !face.empty())
-                   ? font_engine_->advance(face, s, h)
+                   ? cmd_advance(s, h)
                    : static_cast<double>(s.size()) * h * 0.55;
     };
     const std::string label = processor_ != nullptr ? processor_->current_prompt() : std::string{};

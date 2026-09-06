@@ -7,6 +7,7 @@
 #include <atomic>
 #include <functional>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -360,7 +361,10 @@ private:
     std::uint64_t cam_doc_id_ = 0; // active document the camera currently reflects
 
     std::mutex overlay_mutex_;
-    render::RenderOverlay overlay_; // guarded by overlay_mutex_
+    /// The overlay is published as an immutable shared object: the render thread takes
+    /// a reference under the lock, never a copy. A rubber band or prompt with tens of
+    /// thousands of glyph vertices used to be deep-copied on every frame.
+    std::shared_ptr<const render::RenderOverlay> overlay_; // guarded by overlay_mutex_
 
     // On-canvas Dynamic Input (UI thread). The viewport owns the dimension input:
     // per-slot typed buffers (Length/Width or Length/Angle or Radius), the active
@@ -383,6 +387,14 @@ private:
     // into overlay_.command_ui each frame; keystrokes routed via the app-wide filter.
     core::IFontEngine* font_engine_ = nullptr; // UI-thread font face for TTF glyph fills
     std::string cmd_font_name_;                // a resolved outline face name (cached)
+    /// Laid-out glyph runs and advances for the on-canvas command UI, keyed by (face,
+    /// cap height, text), in LOCAL baseline coordinates. Prompt text does not change as
+    /// the cursor moves -- only its anchor does -- so the per-move work is a translate of
+    /// cached vertices rather than a re-walk of the font engine, which for a 50-character
+    /// prompt was the whole of the "lag at the base point" (20 ms per mouse move).
+    std::unordered_map<std::string, std::vector<core::Vec2>> glyph_run_cache_;
+    std::unordered_map<std::string, double> advance_cache_;
+    [[nodiscard]] double cmd_advance(const std::string& text, double h);
     std::string cmd_entry_;                    // typed command text
     bool cmd_active_ = false;                  // entry box showing
     core::Vec2 cmd_anchor_px_{};               // device-px anchor (fixed when it appears)
