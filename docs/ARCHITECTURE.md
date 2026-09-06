@@ -433,6 +433,16 @@ stall this thread until that read finished. Scene buffers change rarely and keep
 in-place update, so the "zero scene bytes uploaded across camera frames" invariant is
 untouched.
 
+Two more per-move costs were found by measuring one state at a time. The on-canvas
+sub-prompt cell was re-walking the font engine for every glyph of a 50-character prompt
+on every mouse move; laid-out glyph runs and advances are now cached per (face, height,
+text) and the per-move work is a translate of cached vertices. And the finished overlay
+(tens of thousands of glyph vertices during a prompt) was deep-copied by the render thread
+every frame; it is now published as an immutable shared object that the render thread
+references. Note that the `dev` preset is Debug with AddressSanitizer: it is 10–50× slower
+on exactly these tight loops, so latency judgements must be made on the `release` preset
+(the capture harness prints per-state input cost under `MUSACAD_TIMING` for both).
+
 The other half of latency is the platform: on a Wayland session the AppImage now runs
 **natively** (the Wayland platform plugins are bundled) instead of through XWayland,
 which removes one compositor hop — a display refresh — from every frame.

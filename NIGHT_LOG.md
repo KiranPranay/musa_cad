@@ -479,3 +479,22 @@ all issues. Everything tested by script or GUI control. No release.
   (selection, windows, edit) and `entity_hits_rect` rejects/accepts by AABB first.
 - AppImage now bundles the Wayland platform plugins: native Wayland verified with the
   full GUI self-test (PASS) — one compositor hop less than XWayland.
+
+
+## 2026-09-07 — the base-point lag, found by measuring one state at a time
+
+- The user's report was precise: lag only while moving to pick STRETCH's base point. A
+  sweep/burst added for exactly that state measured **22 ms per mouse move** (every other
+  state 0.2–0.3 ms). Section timers put all of it in the sub-prompt UI build; a font-engine
+  probe showed zero cache misses and an 11 ms loop copying ~33k glyph vertices.
+- Two causes: (1) the prompt's glyph run was re-walked through the font engine on every
+  move — now cached per (face, height, text) and translated; (2) the overlay was deep-copied
+  by the render thread every frame — now a shared immutable object. (3) The `dev` preset is
+  Debug + ASan, 10–50× slower on these loops; the installed `musacad` was still the v0.3.0
+  AppImage from before tonight.
+- Release build: base-point state **0.41 ms per move**, all others 0.01–0.02 ms;
+  input→present 7–10 ms average with pacing engaged. Dev build: 22 → 9 ms.
+- A regex slip made `cmd_advance` call itself (stack overflow, caught by ASan in the GUI
+  self-test, not by the unit suite — the UI has no unit tests). Fixed; all gates green.
+- Packaged the current code as a local AppImage and repointed `~/.local/bin/musacad` at it
+  (no GitHub release). Verified from the artifact on xcb and native Wayland.
