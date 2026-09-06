@@ -29,6 +29,7 @@
 #include <QOpenGLContext>
 #include <QResizeEvent>
 #include <QScreen>
+#include <QOpenGLFunctions>
 #include <QSurfaceFormat>
 #include <QKeyEvent>
 #include <QWheelEvent>
@@ -236,12 +237,67 @@ void ViewportWindow::render_loop(std::stop_token token) {
     render::ViewportRenderer renderer(*device);
     render::FrameStats stats;
 
+    // Say once what is actually drawing: the answer to "is the GPU being used?".
+    if (QOpenGLFunctions* f = context.functions(); f != nullptr) {
+        const GLubyte* r = f->glGetString(GL_RENDERER);
+        const GLubyte* v = f->glGetString(GL_VERSION);
+        std::fprintf(stderr, "[musacad_ui] GL renderer: %s | %s\n",
+                     r != nullptr ? reinterpret_cast<const char*>(r) : "?",
+                     v != nullptr ? reinterpret_cast<const char*>(v) : "?");
+    }
+
     const bool smoke = std::getenv("MUSACAD_SMOKE") != nullptr;
     int smoke_frames = 0;
     auto last = std::chrono::steady_clock::now();
     double last_world_per_px = 0.0; // last view scale reported to the geometry thread
 
+    // Frame pacing: late latching. With vsync, swapBuffers blocks until the display's
+    // refresh. A frame rendered the moment the previous swap returns therefore carries
+    // input that is a whole refresh old by the time it is scanned out -- the "few
+    // milliseconds behind the pointer" feel. Rendering takes about a millisecond, so
+    // instead this loop sleeps until just before the next refresh, THEN samples the
+    // cursor, overlay and snapshot and renders. The wait is derived from the measured
+    // refresh interval and a decaying maximum of the measured render time, and is
+    // only applied while vsync is demonstrably pacing the loop (the swap or the sleep
+    // takes most of each interval), so on an uncapped or offscreen context nothing
+    // is delayed. MUSACAD_NO_PACING=1 disables it for A/B measurement.
+    using clock = std::chrono::steady_clock;
+    const auto to_ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
+    const bool pacing_enabled = std::getenv("MUSACAD_NO_PACING") == nullptr;
+    const bool timing = std::getenv("MUSACAD_TIMING") != nullptr;
+    QOpenGLFunctions* const gf = context.functions();
+    double period_ms = 0.0;     // EMA of refresh-anchor intervals (the refresh period)
+    double render_max_ms = 0.0; // decaying max of sample-to-swap time
+    double slept_ms = 0.0;
+    double touch_ms = 0.0;
+    bool paced = false;
+    auto refresh_anchor = clock::now(); // the moment the display throttle last released
+    // Latency probe (MUSACAD_TIMING): mouse event -> swap returned for the frame that
+    // rendered that cursor position.
+    std::int64_t last_stamp = 0;
+    double lat_sum = 0.0;
+    double lat_max = 0.0;
+    int lat_n = 0;
+
     while (!token.stop_requested()) {
+        if (pacing_enabled && paced) {
+            // Safety margin before the refresh: the recent worst render time with
+            // headroom, never under 2 ms (sleep_until jitter) nor over half a period. A
+            // missed refresh costs a whole period of latency, so the margin errs wide.
+            const double budget = std::clamp(render_max_ms * 1.5 + 1.0, 2.0, period_ms * 0.5);
+            const auto wake = refresh_anchor +
+                              std::chrono::duration_cast<clock::duration>(
+                                  std::chrono::duration<double, std::milli>(period_ms - budget));
+            const auto t0 = clock::now();
+            if (wake > t0) {
+                std::this_thread::sleep_until(wake);
+            }
+            slept_ms = to_ms(clock::now() - t0);
+        } else {
+            slept_ms = 0.0;
+        }
+        const auto t_sample = clock::now();
+        const std::int64_t stamp = cursor_stamp_ns_.load(std::memory_order_relaxed);
         const int w = fb_width_.load(std::memory_order_relaxed);
         const int h = fb_height_.load(std::memory_order_relaxed);
         target->resize(w, h);
@@ -376,9 +432,56 @@ void ViewportWindow::render_loop(std::stop_token token) {
         }
         renderer.set_device_pixel_ratio(static_cast<float>(devicePixelRatio()));
         renderer.render(*target, snap, cam);
+        const auto t_before_swap = clock::now();
         context.swapBuffers(this);
+        const auto t_after_swap = clock::now();
+        // Where the display throttle actually sits differs by driver. NVIDIA blocks in
+        // swapBuffers; Mesa returns at once and blocks on the NEXT frame's first
+        // back-buffer write instead -- which, left alone, lands AFTER the cursor was
+        // sampled and silently adds a whole refresh to every frame's input age. So the
+        // back buffer is acquired here, deliberately, with a one-pixel clear: whichever
+        // call blocks, the loop is now pinned to the refresh before it samples input.
+        if (gf != nullptr) {
+            gf->glEnable(GL_SCISSOR_TEST);
+            gf->glScissor(0, 0, 1, 1);
+            gf->glClear(GL_COLOR_BUFFER_BIT);
+            gf->glDisable(GL_SCISSOR_TEST);
+        }
+        const auto now = clock::now();
 
-        const auto now = std::chrono::steady_clock::now();
+        // Pacing statistics from this frame.
+        const double render_ms = to_ms(t_before_swap - t_sample);
+        const double swap_ms = to_ms(t_after_swap - t_before_swap);
+        touch_ms = to_ms(now - t_after_swap);
+        const double interval_ms = to_ms(now - refresh_anchor);
+        refresh_anchor = now;
+        render_max_ms = std::max(render_ms, render_max_ms * 0.9);
+        // A paced frame whose acquire did not wait at all arrived AFTER the refresh: it
+        // slipped a period. Widen the margin so the next frames make it comfortably.
+        if (paced && slept_ms > 0.0 && touch_ms < 0.2) {
+            render_max_ms += 1.0;
+        }
+        period_ms = period_ms <= 0.0 ? interval_ms : period_ms * 0.9 + interval_ms * 0.1;
+        // vsync is pacing us when the frame's idle time (blocking swap, the throttled
+        // acquire, and our own sleep) fills most of a plausible refresh interval.
+        paced = period_ms >= 6.0 && period_ms <= 40.0 &&
+                (swap_ms + touch_ms + slept_ms) >= interval_ms * 0.5;
+        if (timing && stamp != 0 && stamp != last_stamp) {
+            last_stamp = stamp;
+            const double lat = to_ms(now.time_since_epoch()) - static_cast<double>(stamp) / 1e6;
+            lat_sum += lat;
+            lat_max = std::max(lat_max, lat);
+            if (++lat_n == 20) {
+                std::fprintf(stderr,
+                             "[timing] input->present %.1f ms avg, %.1f max | refresh %.1f ms, "
+                             "render %.2f, swap %.1f, acquire %.1f, slept %.1f, paced=%d\n",
+                             lat_sum / lat_n, lat_max, period_ms, render_ms, swap_ms, touch_ms,
+                             slept_ms, paced ? 1 : 0);
+                lat_sum = lat_max = 0.0;
+                lat_n = 0;
+            }
+        }
+
         const double dt = std::chrono::duration<double>(now - last).count();
         last = now;
         stats.add_frame(dt);
@@ -529,6 +632,10 @@ void ViewportWindow::mouseMoveEvent(QMouseEvent* event) {
     cursor_inside_.store(true, std::memory_order_relaxed);
     cursor_px_x_.store(screen_px.x, std::memory_order_relaxed);
     cursor_px_y_.store(screen_px.y, std::memory_order_relaxed);
+    cursor_stamp_ns_.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                               std::chrono::steady_clock::now().time_since_epoch())
+                               .count(),
+                           std::memory_order_relaxed);
 
     double scale = 1.0;
     core::Vec2 world;

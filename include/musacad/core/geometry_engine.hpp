@@ -368,6 +368,30 @@ private:
     bool stretch_preview_active_ = false;
     Vec2 stretch_preview_delta_{};
 
+    // Publish-cost bookkeeping. A publish runs on every cursor move, so anything in it
+    // that scales with the scene or the selection is paid per mouse move -- which is
+    // what makes a large drawing feel laggy. These make the per-move work O(1) in scene
+    // size and O(selection) only when the selection or the drawing actually changed.
+    std::uint64_t geom_cache_id_ = 0; ///< bumps on every scene rebuild; never resets
+    std::uint64_t edit_serial_ = 0;   ///< bumps on every mutating command and rebuild
+    // Selection highlight + property summary, rebuilt only when (selection, edit_serial)
+    // changes; `sel_cache_build_` stamps the slots that already hold it.
+    bool sel_cache_valid_ = false;
+    std::uint64_t sel_cache_serial_ = 0;
+    std::uint64_t sel_cache_build_ = 0;
+    std::vector<EntityHandle> sel_cache_handles_;
+    std::vector<Vec2> sel_cache_lines_;
+    std::vector<Vec2> sel_cache_fills_;
+    SelectionSummary sel_cache_summary_;
+    // STRETCH's "was this object crossed by a recorded window" classification does not
+    // depend on the drag delta, so it is computed once per (selection, windows, edit)
+    // rather than on every preview frame. Mutable: stretched_commands() is const.
+    mutable bool stretch_class_valid_ = false;
+    mutable std::uint64_t stretch_class_serial_ = 0;
+    mutable std::vector<EntityHandle> stretch_class_handles_;
+    mutable std::vector<std::pair<Vec2, Vec2>> stretch_class_windows_;
+    mutable std::vector<bool> stretch_class_crossed_;
+
     std::atomic<std::uint64_t> version_{0};
     std::jthread worker_;
 };

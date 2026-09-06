@@ -105,6 +105,14 @@ struct DocumentInfo {
 struct RenderSnapshot {
     std::uint64_t version = 0;          ///< bumps every publish (snap/selection too)
     std::uint64_t geometry_version = 0; ///< bumps only when scene geometry changes
+    /// Producer-side bookkeeping for the triple buffer: which geometry-cache build and
+    /// which selection-highlight build this SLOT's arrays were last copied from. A
+    /// publish happens on every cursor move; the scene changes only on edits, so a slot
+    /// that already holds the current build is left alone instead of being rewritten
+    /// with megabytes of identical vertices -- the difference between O(1) and O(scene)
+    /// per mouse move on a large drawing.
+    std::uint64_t copied_geometry_id = 0;
+    std::uint64_t copied_selection_build = 0;
     std::vector<Vec2> points;
     std::vector<Vec2> line_vertices; // 2 entries per segment, ordered by colour batch
     std::uint64_t checksum = 0;
@@ -212,6 +220,8 @@ struct RenderSnapshot {
     void clear() noexcept {
         version = 0;
         geometry_version = 0;
+        copied_geometry_id = 0;
+        copied_selection_build = 0;
         points.clear();
         line_vertices.clear();
         line_batches.clear();

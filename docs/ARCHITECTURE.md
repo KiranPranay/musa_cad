@@ -113,6 +113,16 @@ never blocks the writer** — it always has a complete, internally-consistent
 snapshot. The cost is one extra buffer (three instead of one), which is cheap
 and exactly the trade we want for a renderer that must not stall compute.
 
+**Publish cost is O(1) in scene size.** A publish happens on every cursor move (the
+snap candidate and hover ride the snapshot), so anything in it proportional to the
+drawing is paid per mouse move. Each slot therefore carries two producer-side stamps
+(`copied_geometry_id`, `copied_selection_build`): the scene arrays are copied into a
+slot only when that slot does not already hold the current geometry-cache build, and the
+selection highlight + property summary likewise only when the selection or the edit
+state changed. After three publishes every slot has the current scene, and from then on
+a cursor move copies nothing proportional to the drawing. The geometry-cache id never
+resets, so a slot stamp cannot collide across documents.
+
 **Mechanism.** Three buffers and three roles — `write_` (producer-owned),
 `read_` (consumer-owned), and the index packed into an atomic `shared_` (low 2
 bits = index, bit 2 = "fresh"). The three indices `{0,1,2}` are always a
@@ -393,6 +403,39 @@ from the existing `GeometryEngine` triple buffer (lock-free; **no second handoff
 path**) and draws it. It never touches the `GeometryStore`. Camera input is
 handled on the GUI thread and shared under a small lock; the `Camera2D`
 transform is pure CPU, so pan/zoom never involve the geometry thread.
+
+### Input latency: frame pacing (late latching)
+
+With vsync, a frame rendered the moment the previous one was handed to the display
+carries input that is a whole refresh old by the time it is scanned out. Rendering takes
+about a millisecond, so the render loop instead **sleeps until just before the next
+refresh, then samples** the cursor, overlay and snapshot and renders. Measured with the
+`MUSACAD_STRETCH_SHOT` harness under `MUSACAD_TIMING` (a realistic 8 ms-spaced sweep):
+input→present fell from ~22 ms to ~10 ms average, with no slipped frames.
+
+Two facts make it work and are worth knowing. First, **where the display throttle
+sits differs by driver**: NVIDIA blocks in `swapBuffers`, Mesa returns at once and
+blocks on the next frame's first back-buffer write — which, left alone, lands *after*
+the cursor was sampled and silently adds a refresh to every frame's input age. The loop
+therefore acquires the back buffer deliberately right after the swap (a one-pixel
+scissored clear), so whichever call blocks, the loop is pinned to the refresh before it
+samples. Second, the wait is **derived, not assumed**: from the measured refresh interval
+and a decaying maximum of the measured render time, with a margin that widens itself
+whenever a frame is found to have slipped (a missed refresh costs a whole period, so the
+margin errs wide), and it is applied only while vsync is demonstrably pacing the loop, so
+an uncapped or offscreen context is never delayed. `MUSACAD_NO_PACING=1` disables it
+for A/B measurement.
+
+Per-frame **stream buffers** (grid, overlay, rubber band) are respecified on upload
+rather than written with `BufferSubData`: they are rewritten every frame while the GPU
+may still be reading the previous contents, and an in-place write would make the driver
+stall this thread until that read finished. Scene buffers change rarely and keep the
+in-place update, so the "zero scene bytes uploaded across camera frames" invariant is
+untouched.
+
+The other half of latency is the platform: on a Wayland session the AppImage now runs
+**natively** (the Wayland platform plugins are bundled) instead of through XWayland,
+which removes one compositor hop — a display refresh — from every frame.
 
 ### Instanced drawing
 

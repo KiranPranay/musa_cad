@@ -459,3 +459,23 @@ all issues. Everything tested by script or GUI control. No release.
   the live-stretch submit after the overlay hand-off; tab bars are `NoFocus`.
 - Result: 0.1–0.35 ms per move in every state. GUI harness PASS (the focus rule too), 553
   tests, capture harness PASS with `MUSACAD_TIMING` printing the per-move cost per state.
+
+
+## 2026-09-06 — residual pointer latency: the render pipeline
+
+- Measured input→present with a new probe (mouse-event stamp → the frame that rendered
+  it): **~22 ms avg** on this Intel/Mesa stack. GPU use itself is correct (GL 4.6 core,
+  hardware accelerated; the renderer is now logged at startup).
+- The throttle sits in Mesa's first back-buffer write of the NEXT frame, after the cursor
+  was sampled: every frame carried input a whole refresh old. Fix: acquire the back buffer
+  deliberately right after the swap, then sleep until just before the next refresh, THEN
+  sample and render (late latching); margin from measured render time, widened on a slip;
+  only while vsync demonstrably paces. Result **~10 ms avg, no slipped frames**.
+- Stream buffers (grid/overlay/rubber band) are respecified per upload instead of
+  `BufferSubData` into a buffer the GPU may still read (an implicit stall).
+- Publish is now O(1) in scene size: slot stamps skip re-copying a scene the triple-buffer
+  slot already holds; the selection highlight/summary is rebuilt only when the selection
+  or the edit state changes; STRETCH's crossed-classification is cached per
+  (selection, windows, edit) and `entity_hits_rect` rejects/accepts by AABB first.
+- AppImage now bundles the Wayland platform plugins: native Wayland verified with the
+  full GUI self-test (PASS) — one compositor hop less than XWayland.
