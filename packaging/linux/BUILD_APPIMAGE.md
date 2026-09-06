@@ -22,7 +22,7 @@ This is the same script CI runs (`.github/workflows/build-linux.yml`). It:
    - `usr/share/icons/hicolor/scalable/apps/musacad.svg` (the logo, named to match the
      desktop file's `Icon=musacad`; AppImage supports scalable icons, so no PNG raster is needed)
 4. Runs `linuxdeploy --plugin qt`, which pulls in Qt's libraries + plugins. `EXTRA_QT_PLUGINS`
-   pins `svg;imageformats/qsvg;iconengines/qsvgicon;styles`; `EXTRA_PLATFORM_PLUGINS=libqxcb.so`.
+   pins `svg;imageformats/qsvg;iconengines/qsvgicon;styles`; `EXTRA_PLATFORM_PLUGINS` pins xcb, the two Wayland platform plugins (so the app runs natively on a Wayland session rather than through XWayland, which costs a display refresh of pointer latency per frame), offscreen and minimal.
    `QMAKE` defaults to `qmake6` (the qt plugin uses it to locate Qt).
 5. Emits `MusaCAD-<version>-x86_64.AppImage` in the repo root (~32 MB).
 

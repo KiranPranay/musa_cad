@@ -308,6 +308,18 @@ bool segment_hits_rect(Vec2 a, Vec2 b, Vec2 mn, Vec2 mx) {
 } // namespace
 
 bool GeometryEngine::entity_hits_rect(EntityHandle h, Vec2 mn, Vec2 mx, bool crossing) const {
+    // Bounding box first: a box entirely outside the rect cannot touch it, and one
+    // entirely inside satisfies either mode. Only the straddling cases tessellate.
+    Vec2 lo;
+    Vec2 hi;
+    if (entity_aabb(store_, h, lo, hi)) {
+        if (hi.x < mn.x || lo.x > mx.x || hi.y < mn.y || lo.y > mx.y) {
+            return false;
+        }
+        if (lo.x >= mn.x && hi.x <= mx.x && lo.y >= mn.y && hi.y <= mx.y) {
+            return true;
+        }
+    }
     std::vector<Vec2> tess;
     kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
     if (tess.empty()) {
@@ -1044,19 +1056,36 @@ std::vector<GeometryEngine::StretchEdit> GeometryEngine::stretched_commands(Vec2
     // every selected object falls back to moving whole -- which is exactly what AutoCAD
     // does for objects that were not selected by a crossing window.
     const bool windows_valid = !stretch_windows_.empty() && stretch_windows_sel_ == selection_;
-    for (const EntityHandle h : selection_) {
-        if (!store_.is_valid(h) || !selectable(h)) {
-            continue;
-        }
-        bool crossed = false;
+    // "Crossed by a recorded window" does not depend on the drag, so it is classified
+    // once per (selection, windows, edit state) and reused for every preview frame.
+    if (!(stretch_class_valid_ && stretch_class_serial_ == edit_serial_ &&
+          stretch_class_handles_ == selection_ && stretch_class_windows_ == stretch_windows_)) {
+        stretch_class_crossed_.assign(selection_.size(), false);
         if (windows_valid) {
-            for (const auto& w : stretch_windows_) {
-                if (entity_hits_rect(h, w.first, w.second, /*crossing=*/true)) {
-                    crossed = true;
-                    break;
+            for (std::size_t i = 0; i < selection_.size(); ++i) {
+                const EntityHandle h = selection_[i];
+                if (!store_.is_valid(h)) {
+                    continue;
+                }
+                for (const auto& w : stretch_windows_) {
+                    if (entity_hits_rect(h, w.first, w.second, /*crossing=*/true)) {
+                        stretch_class_crossed_[i] = true;
+                        break;
+                    }
                 }
             }
         }
+        stretch_class_handles_ = selection_;
+        stretch_class_windows_ = stretch_windows_;
+        stretch_class_serial_ = edit_serial_;
+        stretch_class_valid_ = true;
+    }
+    for (std::size_t i = 0; i < selection_.size(); ++i) {
+        const EntityHandle h = selection_[i];
+        if (!store_.is_valid(h) || !selectable(h)) {
+            continue;
+        }
+        const bool crossed = stretch_class_crossed_[i];
         Command edited = capture_entity(h);
         bool changed = false;
         if (crossed) {
@@ -3850,6 +3879,7 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             if constexpr (!view_or_io) {
                 dirty_ = true;
+                ++edit_serial_;
             }
         },
         command);
@@ -4088,20 +4118,28 @@ void GeometryEngine::rebuild_and_publish() {
         build_render_snapshot(store_, kernel_, geom_cache_, tess_tolerance_, store_.ltscale());
         geom_dirty_ = false;
         ++geom_version_;
+        ++geom_cache_id_; // never reset, so a slot stamp cannot collide across documents
+        ++edit_serial_;
     }
     prune_selection();
 
     RenderSnapshot& buf = snapshots_.write_buffer();
-    buf.points = geom_cache_.points;
-    buf.line_vertices = geom_cache_.line_vertices;
-    buf.line_batches = geom_cache_.line_batches;
-    buf.point_batches = geom_cache_.point_batches;
-    buf.fill_vertices = geom_cache_.fill_vertices;
-    buf.fill_batches = geom_cache_.fill_batches;
-    buf.text_edit_targets = geom_cache_.text_edit_targets; // double-click-to-edit
-    buf.bounds_min = geom_cache_.bounds_min;
-    buf.bounds_max = geom_cache_.bounds_max;
-    buf.has_bounds = geom_cache_.has_bounds;
+    // The scene arrays are copied into a slot only when that slot does not already hold
+    // this build. After three publishes every slot has it, and from then on a cursor move
+    // costs nothing proportional to the drawing.
+    if (buf.copied_geometry_id != geom_cache_id_) {
+        buf.points = geom_cache_.points;
+        buf.line_vertices = geom_cache_.line_vertices;
+        buf.line_batches = geom_cache_.line_batches;
+        buf.point_batches = geom_cache_.point_batches;
+        buf.fill_vertices = geom_cache_.fill_vertices;
+        buf.fill_batches = geom_cache_.fill_batches;
+        buf.text_edit_targets = geom_cache_.text_edit_targets; // double-click-to-edit
+        buf.bounds_min = geom_cache_.bounds_min;
+        buf.bounds_max = geom_cache_.bounds_max;
+        buf.has_bounds = geom_cache_.has_bounds;
+        buf.copied_geometry_id = geom_cache_id_;
+    }
     // Layer table + current layer are cheap and may change without a geometry
     // rebuild (e.g. SetCurrentLayer), so publish them fresh from the store.
     buf.layers.assign(store_.layers().begin(), store_.layers().end());
@@ -4118,11 +4156,14 @@ void GeometryEngine::rebuild_and_publish() {
     buf.pending_dim_version = pending_dim_version_;
 
     // Publish the selection set (queryable API) and its segments (highlight/ghost).
-    buf.selection = selection_;
-    // Aggregate the selection's editable properties for the PR palette (geometry
-    // thread -> snapshot, so the UI never queries the store). Capture is cheap over
-    // the small selection set.
-    {
+    //
+    // The highlight tessellation and the PR property summary depend only on WHICH
+    // entities are selected and on the drawing's edit state -- not on the cursor. They
+    // are rebuilt only when either changes, and a slot that already holds the current
+    // build keeps it: selecting everything in a large drawing and then moving the mouse
+    // must not re-tessellate the whole selection per move.
+    if (!(sel_cache_valid_ && sel_cache_serial_ == edit_serial_ &&
+          sel_cache_handles_ == selection_)) {
         std::vector<Command> captured;
         captured.reserve(selection_.size());
         for (const EntityHandle h : selection_) {
@@ -4130,24 +4171,22 @@ void GeometryEngine::rebuild_and_publish() {
                 captured.push_back(capture_entity(h));
             }
         }
-        buf.selection_summary = summarize_selection(captured);
-    }
-    buf.selected_line_vertices.clear();
-    buf.selected_fill_vertices.clear();
-    {
+        sel_cache_summary_ = summarize_selection(captured);
+        sel_cache_lines_.clear();
+        sel_cache_fills_.clear();
         std::vector<Vec2> tess;
         std::vector<Vec2> htris;
         for (const EntityHandle h : selection_) {
             kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
             if (h.kind == EntityKind::Insert) { // disjoint pairs: no phantom connectors
-                for (std::size_t s = 0; s + 1 < tess.size(); s += 2) {
-                    buf.selected_line_vertices.push_back(tess[s]);
-                    buf.selected_line_vertices.push_back(tess[s + 1]);
+                for (std::size_t t = 0; t + 1 < tess.size(); t += 2) {
+                    sel_cache_lines_.push_back(tess[t]);
+                    sel_cache_lines_.push_back(tess[t + 1]);
                 }
             } else {
-                for (std::size_t s = 1; s < tess.size(); ++s) {
-                    buf.selected_line_vertices.push_back(tess[s - 1]);
-                    buf.selected_line_vertices.push_back(tess[s]);
+                for (std::size_t t = 1; t < tess.size(); ++t) {
+                    sel_cache_lines_.push_back(tess[t - 1]);
+                    sel_cache_lines_.push_back(tess[t]);
                 }
             }
             // A selected SOLID hatch also surfaces its fill triangles so the highlight
@@ -4158,11 +4197,21 @@ void GeometryEngine::rebuild_and_publish() {
                 if (hd != nullptr && store_.string_of(*hd) == "SOLID") {
                     htris.clear();
                     hatch::triangulate_filled(store_.hatch_loops(*hd), htris);
-                    buf.selected_fill_vertices.insert(buf.selected_fill_vertices.end(),
-                                                      htris.begin(), htris.end());
+                    sel_cache_fills_.insert(sel_cache_fills_.end(), htris.begin(), htris.end());
                 }
             }
         }
+        sel_cache_handles_ = selection_;
+        sel_cache_serial_ = edit_serial_;
+        sel_cache_valid_ = true;
+        ++sel_cache_build_;
+    }
+    if (buf.copied_selection_build != sel_cache_build_) {
+        buf.selection = selection_;
+        buf.selection_summary = sel_cache_summary_;
+        buf.selected_line_vertices = sel_cache_lines_;
+        buf.selected_fill_vertices = sel_cache_fills_;
+        buf.copied_selection_build = sel_cache_build_;
     }
 
     // Grips of the selected set (display + hit-test) + the hot grip (grabbed during

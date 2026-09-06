@@ -2789,6 +2789,18 @@ bool MainWindow::stretch_shot(const std::string& out_dir) {
     viewport_->zoom_scale(0.6);
     pump(300);
 
+    // A realistic sweep: moves ~8 ms apart, as a mouse delivers them, so the render
+    // thread samples a distinct cursor position per frame and the input->present probe
+    // (MUSACAD_TIMING, printed by the render thread) accrues measurements.
+    const auto sweep = [&](const char* label) {
+        std::printf("[stretch_shot] sweep: %s\n", label);
+        for (int i = 0; i < 70; ++i) {
+            const double t = static_cast<double>(i) / 69.0;
+            const core::Vec2 w{125.0 + 25.0 * std::sin(t * 6.283), 3.0 + 4.0 * std::cos(t * 6.283)};
+            mouse(QEvent::MouseMove, at(w), Qt::NoButton, Qt::NoButton);
+            pump(8);
+        }
+    };
     const auto burst = [&](const char* label) {
         const auto t0 = std::chrono::steady_clock::now();
         for (int i = 0; i < 120; ++i) {
@@ -2802,6 +2814,7 @@ bool MainWindow::stretch_shot(const std::string& out_dir) {
                     static_cast<double>(ms) / 120.0);
     };
     if (qEnvironmentVariableIsSet("MUSACAD_TIMING")) {
+        sweep("idle");
         burst("idle, nothing selected");
         engine_->submit(core::SelectAllCommand{});
         pump(200);
@@ -2853,6 +2866,7 @@ bool MainWindow::stretch_shot(const std::string& out_dir) {
     ok = grab("stretch_3_live_preview.png") && ok;
     hold("live_preview");
     if (qEnvironmentVariableIsSet("MUSACAD_TIMING")) {
+        sweep("stretch live preview");
         burst("stretch-preview DYN on");
         dyn_action_->setChecked(false);
         pump(200);

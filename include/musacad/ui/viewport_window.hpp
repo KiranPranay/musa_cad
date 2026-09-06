@@ -475,6 +475,10 @@ private:
 
     // Cursor (device px) shared GUI->render for the crosshair.
     std::atomic<bool> cursor_inside_{false};
+    /// steady_clock nanoseconds of the mouse event that last set cursor_px_*: the render
+    /// thread reads it when it samples the cursor and, after the swap, reports the
+    /// input-to-present latency (MUSACAD_TIMING). Zero-cost otherwise.
+    std::atomic<std::int64_t> cursor_stamp_ns_{0};
     std::atomic<double> cursor_px_x_{0.0};
     std::atomic<double> cursor_px_y_{0.0};
     // Latest snap (from the snapshot) shared render->GUI for click-time picking.

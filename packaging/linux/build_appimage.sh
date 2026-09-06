@@ -75,8 +75,13 @@ install -Dm644 "$REPO_ROOT/assets/branding/musacad_logo.svg" \
 #    documented fallback for a Qt app with no windowing system.
 echo "==> Running linuxdeploy + qt plugin"
 export QMAKE
-export EXTRA_PLATFORM_PLUGINS="libqxcb.so;libqoffscreen.so;libqminimal.so"
-export EXTRA_QT_PLUGINS="svg;imageformats/qsvg;iconengines/qsvgicon;styles"
+#    `wayland-generic` + `wayland-egl` (with the shell/graphics/decoration integration
+#    plugins below) let the app run NATIVELY on a Wayland session instead of through
+#    XWayland. That removes one compositor hop -- a whole display refresh of pointer
+#    latency -- from every frame. Qt's default platform order ("wayland;xcb") picks it
+#    automatically when the session is Wayland; xcb remains for X11 sessions.
+export EXTRA_PLATFORM_PLUGINS="libqxcb.so;libqwayland-generic.so;libqwayland-egl.so;libqoffscreen.so;libqminimal.so"
+export EXTRA_QT_PLUGINS="svg;imageformats/qsvg;iconengines/qsvgicon;styles;wayland-shell-integration;wayland-graphics-integration-client;wayland-decoration-client"
 export OUTPUT="$OUT"
 rm -f "$REPO_ROOT/$OUT"
 "$TOOLS_DIR/linuxdeploy-${ARCH}.AppImage" \

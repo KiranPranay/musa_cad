@@ -41,7 +41,14 @@ GlBuffer::~GlBuffer() {
 }
 
 void GlBuffer::upload(const void* data, std::size_t bytes) {
-    if (bytes > capacity_) {
+    // A STREAM buffer (grid, overlay, rubber band, crosshair text) is rewritten every
+    // frame, typically while the GPU is still reading the previous frame's contents.
+    // Writing into it with BufferSubData forces the driver to either wait for that
+    // read to finish -- a stall on this thread, i.e. latency -- or copy. Respecifying
+    // the store instead lets the driver orphan the busy allocation and hand back a
+    // fresh one (the canonical streaming idiom). Scene buffers change rarely and keep
+    // the in-place update, which avoids reallocating megabytes on every edit.
+    if (bytes > capacity_ || usage_ == GL_STREAM_DRAW) {
         gl_->glNamedBufferData(id_, static_cast<GLsizeiptr>(bytes), data, usage_);
         capacity_ = bytes;
     } else if (bytes > 0) {

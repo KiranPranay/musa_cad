@@ -97,3 +97,19 @@ Windows box to add to the same GitHub release afterwards. Do not publish an unve
 - The headless CI/offscreen environment cannot exercise the GPU viewport or a real X session;
   verify the GUI on a real desktop. Automated checks use `MUSACAD_PLOT_TEST` (load + vector PDF)
   and `QT_QPA_PLATFORM=offscreen`.
+
+
+## Native Wayland
+
+The AppImage bundles the Wayland platform plugins (`libqwayland-generic.so`,
+`libqwayland-egl.so`) and their shell/graphics/decoration integrations alongside xcb, so
+on a Wayland session Qt's default platform order picks Wayland and the app runs natively
+rather than through XWayland. That is a whole display refresh of pointer latency per frame.
+Verify from the extracted AppImage exactly as for the headless paths:
+
+```
+QT_QPA_PLATFORM=wayland MUSACAD_SELFTEST=1 ./squashfs-root/AppRun   # expect: overall: PASS
+```
+
+`[musacad_ui] GL renderer: …` on stderr says which GPU/driver is drawing; on a Wayland
+session the platform line Qt prints must not mention xcb.
