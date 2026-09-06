@@ -428,7 +428,8 @@ void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additiv
                 continue;
             }
             const EntityHandle h{i, xl.generations()[i], EntityKind::Xline};
-            if (selectable(h) && xline_hits_rect(*xl.get(i, xl.generations()[i]), mn, mx)) {
+            const XlineData* xd = xl.get(i, xl.generations()[i]);
+            if (xd != nullptr && selectable(h) && xline_hits_rect(*xd, mn, mx)) {
                 sel_add(h);
             }
         }

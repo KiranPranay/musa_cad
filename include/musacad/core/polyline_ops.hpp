@@ -186,6 +186,10 @@ inline void revcloud_from_path(std::span<const Vec2> path, bool closed, double a
         }
         // Cumulative length along the run.
         std::vector<double> cum(run.size(), 0.0);
+        if (cum.empty()) {
+            continue; // run always holds >= 1 vertex; this reassures the optimizer's
+                      // null-dereference analysis (cum.back() below) at no runtime cost
+        }
         for (std::size_t k = 1; k < run.size(); ++k) {
             cum[k] = cum[k - 1] + length(run[k] - run[k - 1]);
         }
