@@ -255,6 +255,9 @@ private:
     void apply_lengthen(const LengthenCommand& c);
     void apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t group);
     void apply_purge();
+    void apply_revcloud_object(const RevcloudObjectCommand& c);
+    void apply_revcloud_reverse(std::uint64_t group);
+    void apply_explode(std::uint64_t group);
     void apply_array_polar(Vec2 center, int count, double total_angle, bool rotate_items,
                            std::uint64_t group);
     void apply_extend(Vec2 pick, double radius, std::uint64_t group);

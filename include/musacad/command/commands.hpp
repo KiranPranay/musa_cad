@@ -89,7 +89,19 @@ private:
         AreaSide,
         AreaSideVal,
         RotVal,
+        ChamferD1, ///< [Chamfer] first distance (before the first corner, as in AutoCAD)
+        ChamferD2, ///< [Chamfer] second distance
+        FilletR,   ///< [Fillet] radius
     } state_ = State::First;
+    // Corner treatment. AutoCAD keeps the last chamfer distances / fillet radius as the
+    // default for every later rectangle in the session, and setting one clears the
+    // other -- both mirrored here through the session-wide statics.
+    inline static double s_chamfer_d1_ = 0.0;
+    inline static double s_chamfer_d2_ = 0.0;
+    inline static double s_fillet_r_ = 0.0;
+    double chamfer_d1_ = s_chamfer_d1_;
+    double chamfer_d2_ = s_chamfer_d2_;
+    double fillet_r_ = s_fillet_r_;
     core::Vec2 first_{};
     double length_ = 0.0;   ///< fixed width along X (0 => corner-to-corner, no fixed size)
     double width_ = 0.0;    ///< fixed width along Y
@@ -527,6 +539,61 @@ private:
     State state_ = State::Select;
     core::Vec2 pick_{};
     core::Vec2 p1_{};
+    bool done_ = false;
+};
+
+/// REVCLOUD (AutoCAD). Arc length, Object (with Reverse direction), Rectangular,
+/// Polygonal, and Freehand as a clicked path (the cursor is not tracked while a button
+/// is held here, so the path is picked point by point and Enter closes it). Style
+/// accepts Normal only; Modify is not offered. The lobes come from
+/// core::polyline_ops::revcloud_from_path, so an Object conversion and a drawn cloud
+/// produce identical arcs.
+class RevcloudCommand final : public ICommand {
+public:
+    std::string name() const override { return "REVCLOUD"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State {
+        Main,
+        ArcMin,
+        ArcMax,
+        RectFirst,
+        RectSecond,
+        PathNext,
+        ObjectPick,
+        ObjectReverse,
+        Style,
+    };
+    void main_prompt(CommandContext& ctx);
+    void emit_cloud(CommandContext& ctx, const std::vector<core::Vec2>& path, bool closed);
+    [[nodiscard]] double arc_len() const { return 0.5 * (min_arc_ + max_arc_); }
+
+    inline static double s_min_arc_ = 0.5; ///< session defaults, as AutoCAD keeps them
+    inline static double s_max_arc_ = 0.5;
+    double min_arc_ = s_min_arc_;
+    double max_arc_ = s_max_arc_;
+    State state_ = State::Main;
+    core::Vec2 first_{};
+    std::vector<core::Vec2> path_;
+    bool done_ = false;
+};
+
+/// EXPLODE (AutoCAD X). "Select objects:" then Enter, or a pre-selected set; the engine
+/// decides what each kind becomes and reports what it could not break.
+class ExplodeCommand final : public ICommand {
+public:
+    std::string name() const override { return "EXPLODE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_; }
+
+private:
     bool done_ = false;
 };
 

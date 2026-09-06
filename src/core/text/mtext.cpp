@@ -140,6 +140,7 @@ MTextLayout layout_mtext(const MTextBlock& block, std::string_view raw_content,
         const double linew = measure(lines[i]);
         const double line_x = (col == 1) ? (box_w - linew) * 0.5 : (col == 2 ? box_w - linew : 0.0);
         const double baseline = -static_cast<double>(i) * line_height - height;
+        out.lines.push_back(MTextLine{lines[i], to_world(line_x, baseline)});
         if (outline) {
             // Outline glyphs are produced in world space directly (origin + rotation);
             // width_factor is not applied to TTF (a noted minor gap).

@@ -148,6 +148,10 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/break.svg", "Break a curve between two points.");
     reg({"BREAKATPOINT"}, [] { return std::make_unique<BreakCommand>(true); },
         "assets/ribbon/break.svg", "Split a curve at one point, leaving no gap.");
+    reg({"REVCLOUD"}, [] { return std::make_unique<RevcloudCommand>(); },
+        "assets/ribbon/revcloud.svg", "Draw a revision cloud, or turn an object into one.");
+    reg({"X", "EXPLODE"}, [] { return std::make_unique<ExplodeCommand>(); },
+        "assets/ribbon/explode.svg", "Break compound objects into their components.");
     reg({"POL", "POLYGON"}, [] { return std::make_unique<PolygonCommand>(); },
         "assets/ribbon/polygon.svg", "Draw a regular polygon by centre or by one edge.");
     reg({"PO", "POINT"}, [] { return std::make_unique<PointCommand>(); },
