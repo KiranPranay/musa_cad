@@ -247,17 +247,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // off the geometry on multi-monitor). The cursor box (dyn_) stays the keyword/
     // command-entry path and steps aside during a tip-driven rubber-band. Both route
     // typed text through the SAME processor via command::compose_dyn_submit.
+    // Cursor signals only RECORD; the work happens in cursor_tick(), once per frame.
     connect(viewport_, &ViewportWindow::cursorScreenMoved, this, [this](double px, double py) {
-        reposition_dyn(px, py);
-        update_dyn_surfaces(); // box reappears once a tip-driven command ends
+        tick_px_ = px;
+        tick_py_ = py;
+        tick_screen_pending_ = true;
+        arm_cursor_tick();
     });
     connect(viewport_, &ViewportWindow::constrainedCursorMoved, this,
             [this](double cx, double cy) {
-                if (dyn_ != nullptr) {
-                    dyn_->on_constrained_cursor(cx, cy);
-                }
-                update_dyn_surfaces(); // entering a rubber-band hides the cursor box
+                tick_constrained_ = core::Vec2{cx, cy};
+                tick_constrained_pending_ = true;
+                arm_cursor_tick();
+                update_dyn_surfaces(); // cheap focus pass, kept immediate (see cursor_tick)
             });
+    cursor_tick_ = new QTimer(this);
+    cursor_tick_->setSingleShot(true);
+    cursor_tick_->setInterval(16); // one display frame; the ceiling on UI work per move
+    connect(cursor_tick_, &QTimer::timeout, this, [this] { cursor_tick(); });
     connect(viewport_, &ViewportWindow::pickerInteracted, this, [this] { refocus_dyn(); });
 
     // Properties palette (PR): a dockable panel, hidden by default (the default
@@ -342,6 +349,10 @@ QWidget* MainWindow::build_central() {
     tab_lay->setContentsMargins(0, 0, 0, 0);
     tab_lay->setSpacing(0);
     file_tabs_ = new QTabBar(tab_row);
+    // The tab strip must never hold KEYBOARD focus: in canvas mode keystrokes belong to
+    // the viewport, and a tab-list rebuild (new/close document) used to pull focus here,
+    // which then sent typed commands to the tab bar. Tabs are a mouse surface.
+    file_tabs_->setFocusPolicy(Qt::NoFocus);
     file_tabs_->setObjectName(QStringLiteral("FileTabs"));
     file_tabs_->setExpanding(false);
     file_tabs_->setTabsClosable(true);
@@ -380,6 +391,7 @@ QWidget* MainWindow::build_central() {
 
     // Model/Layout tabs, bottom-left.
     auto* layout_tabs = new QTabBar(central);
+    layout_tabs->setFocusPolicy(Qt::NoFocus); // a mouse surface, like the file tabs
     layout_tabs->setObjectName(QStringLiteral("LayoutTabs"));
     layout_tabs->addTab(QStringLiteral("Model"));
     layout_tabs->addTab(QStringLiteral("Layout1"));
@@ -1052,8 +1064,10 @@ void MainWindow::build_status_bar() {
     coord_label_->setObjectName(QStringLiteral("CoordReadout"));
     statusBar()->addPermanentWidget(coord_label_);
     connect(viewport_, &ViewportWindow::cursorWorldMoved, this, [this](double x, double y) {
-        last_cursor_world_ = core::Vec2{x, y}; // for paste-at-cursor (Ctrl+V)
-        coord_label_->setText(QStringLiteral("%1, %2").arg(x, 0, 'f', 3).arg(y, 0, 'f', 3));
+        last_cursor_world_ = core::Vec2{x, y}; // for paste-at-cursor (Ctrl+V): immediate
+        tick_world_ = last_cursor_world_;
+        tick_world_pending_ = true;
+        arm_cursor_tick(); // the readout repaint waits for the frame tick
     });
 }
 
@@ -1649,7 +1663,14 @@ void MainWindow::update_dyn_surfaces() {
     const bool in_props = properties_dock_ != nullptr && fw != nullptr &&
                           properties_dock_->isAncestorOf(fw);
     const bool cmd_typing = command_widget_ != nullptr && command_widget_->is_typing();
-    const bool vp_focused = viewport_container_ != nullptr && viewport_container_->hasFocus();
+    // "The viewport has focus" must be judged the way Qt actually routes keys to an
+    // embedded QWindow: when the GL window is the focus window there is NO focus
+    // widget, and the container's hasFocus() is false -- so that test alone re-focused
+    // the container on EVERY cursor event (~2 ms each, the lag behind the pointer).
+    const bool vp_focused =
+        (viewport_ != nullptr && QGuiApplication::focusWindow() == viewport_) ||
+        (viewport_container_ != nullptr && fw != nullptr &&
+         (fw == viewport_container_ || viewport_container_->isAncestorOf(fw)));
     if (viewport_container_ != nullptr && !in_props && !cmd_typing && !vp_focused) {
         viewport_container_->setFocus(Qt::OtherFocusReason);
     }
@@ -1685,6 +1706,44 @@ void MainWindow::set_dyn_enabled(bool on) {
         }
     }
 }
+
+void MainWindow::arm_cursor_tick() {
+    if (cursor_tick_ != nullptr && !cursor_tick_->isActive()) {
+        cursor_tick_->start();
+    }
+}
+
+void MainWindow::cursor_tick() {
+    if (tick_world_pending_) {
+        tick_world_pending_ = false;
+        // Only repaint the readout when the text actually changed.
+        const QString t = QStringLiteral("%1, %2")
+                              .arg(tick_world_.x, 0, 'f', 3)
+                              .arg(tick_world_.y, 0, 'f', 3);
+        if (t != coord_text_shown_ && coord_label_ != nullptr) {
+            coord_text_shown_ = t;
+            coord_label_->setText(t);
+        }
+    }
+    if (tick_screen_pending_) {
+        tick_screen_pending_ = false;
+        // The legacy cursor box is a top-level tool window; moving it is a window-system
+        // round trip, and canvas mode keeps it hidden -- so only move it when it shows.
+        if (dyn_ != nullptr && dyn_->isVisible()) {
+            reposition_dyn(tick_px_, tick_py_);
+        }
+    }
+    if (tick_constrained_pending_) {
+        tick_constrained_pending_ = false;
+        if (dyn_ != nullptr && dyn_->isVisible()) {
+            dyn_->on_constrained_cursor(tick_constrained_.x, tick_constrained_.y);
+        }
+    }
+    update_dyn_surfaces(); // box reappears / hides on state changes; keeps viewport focus
+}
+// Note: update_dyn_surfaces() is ALSO run synchronously from the constrained-cursor
+// signal. It is a handful of focus queries, cheap enough per event; what this tick
+// defers are the repaint (coordinate readout) and the tool-window move.
 
 void MainWindow::reposition_dyn(double local_px, double local_py) {
     if (dyn_ == nullptr || dyn_action_ == nullptr || !dyn_action_->isChecked() || viewport_ == nullptr) {
@@ -2730,6 +2789,33 @@ bool MainWindow::stretch_shot(const std::string& out_dir) {
     viewport_->zoom_scale(0.6);
     pump(300);
 
+    const auto burst = [&](const char* label) {
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 120; ++i) {
+            const core::Vec2 w = (i % 2 == 0) ? core::Vec2{140, 5} : core::Vec2{130, 4};
+            mouse(QEvent::MouseMove, at(w), Qt::NoButton, Qt::NoButton);
+            QCoreApplication::processEvents();
+        }
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0).count();
+        std::printf("[stretch_shot] input cost, %-24s %.2f ms per mouse move\n", label,
+                    static_cast<double>(ms) / 120.0);
+    };
+    if (qEnvironmentVariableIsSet("MUSACAD_TIMING")) {
+        burst("idle, nothing selected");
+        engine_->submit(core::SelectAllCommand{});
+        pump(200);
+        burst("idle, 2 selected");
+        engine_->submit(core::ClearSelectionCommand{});
+        pump(200);
+        processor_->submit_line("LINE");
+        processor_->submit_line("100,0");
+        pump(100);
+        burst("LINE rubber band");
+        processor_->cancel();
+        pump(200);
+    }
+
     // 1. STRETCH -> "Select objects:" -> a RIGHT-TO-LEFT drag over the right half (a
     //    crossing window), captured mid-drag so the green band is on screen.
     processor_->submit_line("S");
@@ -2766,6 +2852,14 @@ bool MainWindow::stretch_shot(const std::string& out_dir) {
                 viewport_->grip_preview_vertex_count());
     ok = grab("stretch_3_live_preview.png") && ok;
     hold("live_preview");
+    if (qEnvironmentVariableIsSet("MUSACAD_TIMING")) {
+        burst("stretch-preview DYN on");
+        dyn_action_->setChecked(false);
+        pump(200);
+        burst("stretch-preview DYN off");
+        dyn_action_->setChecked(true);
+        pump(200);
+    }
     // The drawing itself has not changed yet.
     ok = ok && bounds(mn, mx) && std::abs(mx.x - 140.0) < 0.01;
 

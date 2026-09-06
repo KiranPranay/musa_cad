@@ -729,6 +729,7 @@ int ViewportWindow::grip_at(core::Vec2 world, double radius_world) const {
 }
 
 void ViewportWindow::rebuild_overlay() {
+    std::optional<core::Vec2> pending_stretch; // live STRETCH delta to stream, if any
     render::RenderOverlay ov;
 
     // Drop any typed Dynamic-Input value once the command/rubber-band ends, so a new
@@ -781,7 +782,7 @@ void ViewportWindow::rebuild_overlay() {
         if (pv.live_stretch && !pts.empty()) {
             const core::Vec2 delta = cur_eff - pts[0];
             if (!stretch_preview_sent_ || core::length(delta - last_stretch_delta_) > 1e-12) {
-                engine_.submit(core::StretchPreviewCommand{delta, true});
+                pending_stretch = delta; // submitted after the overlay hand-off below
                 last_stretch_delta_ = delta;
                 stretch_preview_sent_ = true;
             }
@@ -986,8 +987,16 @@ void ViewportWindow::rebuild_overlay() {
         sub_entry_.clear(); // command ended / entered a rubber-band: drop stale text
     }
 
-    std::scoped_lock lock(overlay_mutex_);
-    overlay_ = std::move(ov);
+    {
+        std::scoped_lock lock(overlay_mutex_);
+        overlay_ = std::move(ov);
+    }
+    // Stream the live-stretch delta only AFTER the overlay is handed off: the engine
+    // publishes within a millisecond and the render thread then consumes, taking the
+    // same overlay/grip locks -- submitting earlier made this thread wait on them.
+    if (pending_stretch) {
+        engine_.submit(core::StretchPreviewCommand{*pending_stretch, true});
+    }
 }
 
 // ---------------------------------------------------------------------------
