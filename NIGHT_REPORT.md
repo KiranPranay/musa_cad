@@ -1,3 +1,68 @@
+# Night report addendum — 2026-09-06/07 run
+
+This session had two asks: the input lag when picking STRETCH's base point, and "add
+MCP/vision tooling, look at AutoCAD demos for each command, implement as many issues as
+possible." Both done. Nothing published (per instruction); the LOCAL AppImage at
+`~/.local/bin/musacad` was refreshed so the work is testable.
+
+## The base-point lag: found by measuring one state at a time
+
+The earlier pacing work had left ~10 ms input-to-present everywhere EXCEPT one state, and
+that state was exactly the one reported. A per-state probe (added to the capture harness)
+measured **22 ms per mouse move at the base-point prompt**, 0.2 ms everywhere else. Two
+causes, both now fixed:
+
+- The on-canvas sub-prompt cell laid its ~50-character prompt out through the font engine
+  on **every** mouse move (the anchor follows the cursor). Glyph runs and advances are now
+  cached per (face, height, text); a move is a translate of cached vertices.
+- The finished overlay (tens of thousands of glyph vertices during a prompt) was
+  deep-copied by the render thread every frame. It is now a shared immutable object the
+  render thread references.
+
+Release build, per move: base-point state **0.41 ms** (was 22), every other state
+0.01-0.02 ms. A caveat worth stating: latency must be judged on the `release` preset. The
+`dev` preset is Debug + AddressSanitizer, 10-50x slower on these tight loops, and the
+`musacad` launcher was still the pre-session AppImage; both made it look worse than the
+shipping build.
+
+## Reference tooling
+
+`tools/autocad_ref.py` pulls a demo's transcript and still frames (yt-dlp with a
+user-local `deno` runtime; frames via OpenCV from the video-only stream, no ffmpeg). I did
+not add an MCP server: a small script gives the same thing (the exact prompts and the
+on-screen result, frame by frame) with no new moving parts. Every command below was
+checked against its AutoCAD demonstration this way before it was written.
+
+## Issues implemented this session
+
+| Item | Issue | State |
+|---|---|---|
+| RECTANGLE [Chamfer] / [Fillet] corner options | #33 | Done |
+| REVCLOUD (Arc length, Object+Reverse, Rectangular, Polygonal, Freehand) | #33 | Done (Normal style) |
+| EXPLODE (polyline, block, dimension, leader, hatch, MTEXT, table) | #25 | Done |
+| XLINE / RAY construction lines | #23 | Done (Offset deferred) |
+| Native Wayland from the AppImage | #1-ish | Done (bundled the Wayland client-buffer plugin) |
+
+`core/polyline_ops.hpp` now shares the fillet/chamfer/cloud math between FILLET, CHAMFER,
+RECTANGLE and REVCLOUD, so they cannot drift. XLINE is a genuinely infinite entity: no
+finite bounds (excluded from ZOOM Extents and the spatial index), picked and
+window-selected by direct scans, and clipped to the viewport by the render thread each
+frame so pan and zoom stay correct with no baked geometry.
+
+Tests grew from 515 to **590**, all passing; the real-window GUI self-test passes on X11
+and native Wayland. Several bugs were found by the new tests (the REVCLOUD lobe sign, the
+snapshot never copying/clearing construction lines, two Release-only null-dereference
+warnings that had been silently blocking the AppImage) and fixed.
+
+## Still open (unchanged this session)
+
+ELLIPSE and SPLINE draw commands (#23), the remaining #27 curve FILLET and polyline
+TRIM/EXTEND, #28 dimension subtypes, #30 UNITS/AUDIT, #26 paper space, #29 text styles,
+#31 DXF interop, #32 properties/input, #10 image remainder, and the packaging issues
+#1-#6 that need Windows/macOS hardware or a Flathub account.
+
+---
+
 # Night report — 2026-09-05/06 unattended run
 
 The six objectives you left. **1–5 are complete. 6 is an open-ended set of epics, so it is
