@@ -6,12 +6,14 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <optional>
 #include <string>
 
 #include "musacad/command/coordinate.hpp"
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/polygon.hpp"
+#include "musacad/core/polyline_ops.hpp"
 
 namespace musacad::command {
 
@@ -313,7 +315,10 @@ void ArcCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 void RectangleCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    ctx.set_prompt("Specify first corner point: ");
+    // Elevation/Thickness are 3D and Width needs polyline width, which this model does
+    // not have, so only the two corner treatments are offered -- an option that cannot
+    // work is worse than a shorter prompt.
+    ctx.set_prompt("Specify first corner point or [Chamfer/Fillet]: ");
 }
 
 void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
@@ -334,8 +339,8 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
         pv.scalar_prompt = state_ != State::First && state_ != State::AwaitCorner;
         ctx.set_preview(pv);
     };
-    // Commit the closed 4-corner polyline from first_ to `other`, rotated about first_.
-    const auto commit = [&](core::Vec2 other) {
+    // The four corners from first_ to `other`, rotated about first_.
+    const auto corners = [&](core::Vec2 other) {
         std::vector<core::Vec2> c{{first_.x, first_.y},
                                   {other.x, first_.y},
                                   {other.x, other.y},
@@ -349,9 +354,49 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
                 q = {first_.x + dx * cs - dy * sn, first_.y + dx * sn + dy * cs};
             }
         }
-        ctx.submit(core::AddPolylineCommand{std::move(c), true, ctx.group_id()});
+        return c;
+    };
+    // Commit the closed polyline, with every corner rounded or chamfered by the SAME
+    // routine the FILLET / CHAMFER commands use on a picked corner, so the two can never
+    // disagree. A treatment that does not fit falls back to square corners and says so,
+    // which is what AutoCAD does with an oversized radius.
+    const auto commit = [&](core::Vec2 other) {
+        std::vector<core::Vec2> c = corners(other);
+        std::vector<double> bulges;
+        bool shaped = true;
+        if (fillet_r_ > 0.0) {
+            bulges.assign(4, 0.0);
+            for (int i = 3; i >= 0 && shaped; --i) { // descending: inserts never shift the rest
+                shaped = core::polyline_ops::fillet_corner(c, bulges, true, i, fillet_r_);
+            }
+            if (!shaped) {
+                ctx.echo("Fillet radius too large for this rectangle: drawn with square corners.");
+            }
+        } else if (chamfer_d1_ > 0.0 || chamfer_d2_ > 0.0) {
+            for (int i = 3; i >= 0 && shaped; --i) {
+                shaped = core::polyline_ops::chamfer_corner(c, true, i, chamfer_d1_, chamfer_d2_);
+            }
+            if (!shaped) {
+                ctx.echo("Chamfer distances too large for this rectangle: drawn with square corners.");
+            }
+        }
+        if (!shaped) {
+            c = corners(other);
+            bulges.clear();
+        }
+        core::AddPolylineCommand poly;
+        poly.points = std::move(c);
+        poly.closed = true;
+        poly.group = ctx.group_id();
+        poly.bulges = std::move(bulges);
+        ctx.submit(std::move(poly));
         ctx.echo("Rectangle created.");
         done_ = true;
+    };
+    const auto fmt4 = [](double v) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.4f", v);
+        return std::string(buf);
     };
     // A non-numeric entry at a value prompt must not trap the user: drop back to the
     // other-corner pick (AutoCAD-style), preserving any dims/rotation already chosen.
@@ -363,6 +408,17 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
 
     switch (state_) {
     case State::First:
+        if (up == "C" || up == "CHAMFER") {
+            state_ = State::ChamferD1;
+            ctx.set_prompt("Specify first chamfer distance for rectangles <" + fmt4(chamfer_d1_) +
+                           ">: ");
+            return;
+        }
+        if (up == "F" || up == "FILLET") {
+            state_ = State::FilletR;
+            ctx.set_prompt("Specify fillet radius for rectangles <" + fmt4(fillet_r_) + ">: ");
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             first_ = *p;
             ctx.set_last_point(*p);
@@ -371,6 +427,49 @@ void RectangleCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.set_prompt(kCornerPrompt);
         }
         return;
+
+    case State::ChamferD1: {
+        double v = chamfer_d1_; // Enter keeps the current default
+        if (!up.empty() && (!parse_number(text, v) || v < 0.0)) {
+            ctx.echo("Enter a distance of zero or more.");
+            return;
+        }
+        chamfer_d1_ = v;
+        state_ = State::ChamferD2;
+        // AutoCAD defaults the second distance to the first just entered.
+        ctx.set_prompt("Specify second chamfer distance for rectangles <" + fmt4(chamfer_d1_) +
+                       ">: ");
+        return;
+    }
+    case State::ChamferD2: {
+        double v = chamfer_d1_;
+        if (!up.empty() && (!parse_number(text, v) || v < 0.0)) {
+            ctx.echo("Enter a distance of zero or more.");
+            return;
+        }
+        chamfer_d2_ = v;
+        fillet_r_ = 0.0; // the treatment set last wins
+        s_chamfer_d1_ = chamfer_d1_;
+        s_chamfer_d2_ = chamfer_d2_;
+        s_fillet_r_ = 0.0;
+        state_ = State::First;
+        ctx.set_prompt("Specify first corner point or [Chamfer/Fillet]: ");
+        return;
+    }
+    case State::FilletR: {
+        double v = fillet_r_;
+        if (!up.empty() && (!parse_number(text, v) || v < 0.0)) {
+            ctx.echo("Enter a radius of zero or more.");
+            return;
+        }
+        fillet_r_ = v;
+        chamfer_d1_ = chamfer_d2_ = 0.0;
+        s_fillet_r_ = fillet_r_;
+        s_chamfer_d1_ = s_chamfer_d2_ = 0.0;
+        state_ = State::First;
+        ctx.set_prompt("Specify first corner point or [Chamfer/Fillet]: ");
+        return;
+    }
 
     case State::AwaitCorner: {
         if (up == "D" || up == "DIMENSIONS") {
@@ -1254,6 +1353,235 @@ void BreakCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 void BreakCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// REVCLOUD
+// ---------------------------------------------------------------------------
+void RevcloudCommand::main_prompt(CommandContext& ctx) {
+    state_ = State::Main;
+    path_.clear();
+    ctx.clear_preview();
+    ctx.set_prompt("Specify first point or [Arc length/Object/Rectangular/Polygonal/Freehand/Style] "
+                   "<Object>: ");
+}
+
+void RevcloudCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    char buf[128];
+    std::snprintf(buf, sizeof(buf),
+                  "Minimum arc length: %.4f   Maximum arc length: %.4f   Style: Normal", min_arc_,
+                  max_arc_);
+    ctx.echo(buf);
+    main_prompt(ctx);
+}
+
+void RevcloudCommand::emit_cloud(CommandContext& ctx, const std::vector<core::Vec2>& path,
+                                 bool closed) {
+    std::vector<core::Vec2> verts;
+    std::vector<double> bulges;
+    core::polyline_ops::revcloud_from_path(path, closed, arc_len(), false, verts, bulges);
+    if (verts.size() < 2) {
+        ctx.echo("Revision cloud: the arc length is too large for that shape.");
+        done_ = true;
+        return;
+    }
+    core::AddPolylineCommand pc;
+    pc.points = std::move(verts);
+    pc.bulges = std::move(bulges);
+    pc.closed = closed;
+    pc.group = ctx.group_id();
+    ctx.clear_preview();
+    ctx.submit(std::move(pc));
+    ctx.echo("Revision cloud created.");
+    done_ = true;
+}
+
+void RevcloudCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Main: {
+        if (t.empty() || u == "O" || u == "OBJECT") {
+            state_ = State::ObjectPick;
+            ctx.set_prompt("Select object: ");
+            return;
+        }
+        if (u == "A" || u == "ARC" || u == "ARC LENGTH") {
+            state_ = State::ArcMin;
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "Specify minimum length of arc <%.4f>: ", min_arc_);
+            ctx.set_prompt(buf);
+            return;
+        }
+        if (u == "R" || u == "RECTANGULAR") {
+            state_ = State::RectFirst;
+            ctx.set_prompt("Specify first corner point: ");
+            return;
+        }
+        if (u == "P" || u == "POLYGONAL" || u == "F" || u == "FREEHAND") {
+            state_ = State::PathNext;
+            path_.clear();
+            ctx.set_prompt(u.front() == 'F' ? "Guide the path point by point (Enter closes): "
+                                            : "Specify start point: ");
+            return;
+        }
+        if (u == "S" || u == "STYLE") {
+            state_ = State::Style;
+            ctx.set_prompt("Select arc style [Normal/Calligraphy] <Normal>: ");
+            return;
+        }
+        if (u == "M" || u == "MODIFY") {
+            ctx.echo("Modify is not supported yet; draw a new cloud.");
+            return;
+        }
+        // A point at the main prompt starts a path (AutoCAD's default Freehand type).
+        if (const auto p = read_point(ctx, text)) {
+            state_ = State::PathNext;
+            path_ = {*p};
+            ctx.set_last_point(*p);
+            ctx.set_preview(PreviewSpec{PreviewKind::Polyline, path_});
+            ctx.set_prompt("Specify next point (Enter closes): ");
+        }
+        return;
+    }
+    case State::ArcMin: {
+        double v = min_arc_;
+        if (!t.empty() && (!parse_number(t, v) || v <= 0.0)) {
+            ctx.echo("Enter a length greater than zero.");
+            return;
+        }
+        min_arc_ = v;
+        state_ = State::ArcMax;
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "Specify maximum length of arc <%.4f>: ",
+                      std::max(max_arc_, min_arc_));
+        ctx.set_prompt(buf);
+        return;
+    }
+    case State::ArcMax: {
+        double v = std::max(max_arc_, min_arc_);
+        if (!t.empty() && (!parse_number(t, v) || v < min_arc_)) {
+            ctx.echo("The maximum must be at least the minimum length.");
+            return;
+        }
+        max_arc_ = v;
+        s_min_arc_ = min_arc_;
+        s_max_arc_ = max_arc_;
+        main_prompt(ctx);
+        return;
+    }
+    case State::RectFirst:
+        if (const auto p = read_point(ctx, text)) {
+            first_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::RectSecond;
+            ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {first_}});
+            ctx.set_prompt("Specify opposite corner: ");
+        }
+        return;
+    case State::RectSecond:
+        if (const auto p = read_point(ctx, text)) {
+            // Counter-clockwise corners, whatever quadrant the second pick is in.
+            const core::Vec2 mn{std::min(first_.x, p->x), std::min(first_.y, p->y)};
+            const core::Vec2 mx{std::max(first_.x, p->x), std::max(first_.y, p->y)};
+            emit_cloud(ctx, {{mn.x, mn.y}, {mx.x, mn.y}, {mx.x, mx.y}, {mn.x, mx.y}}, true);
+        }
+        return;
+    case State::PathNext: {
+        if (t.empty()) {
+            if (path_.size() < 3) {
+                ctx.echo("A cloud needs at least three points.");
+                return;
+            }
+            emit_cloud(ctx, path_, true);
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (!path_.empty()) {
+                path_.pop_back();
+            }
+            ctx.set_preview(PreviewSpec{PreviewKind::Polyline, path_});
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            path_.push_back(*p);
+            ctx.set_last_point(*p);
+            ctx.set_preview(PreviewSpec{PreviewKind::Polyline, path_});
+            ctx.set_prompt("Specify next point or [Undo] (Enter closes): ");
+        }
+        return;
+    }
+    case State::ObjectPick:
+        if (const auto p = read_point(ctx, text)) {
+            core::RevcloudObjectCommand cmd;
+            cmd.pick = *p;
+            cmd.pick_radius = ctx.pick_radius();
+            cmd.arc_len = arc_len();
+            cmd.group = ctx.group_id();
+            ctx.submit(cmd);
+            state_ = State::ObjectReverse;
+            ctx.set_prompt("Reverse direction [Yes/No] <No>: ");
+        }
+        return;
+    case State::ObjectReverse:
+        if (u == "Y" || u == "YES") {
+            ctx.submit(core::RevcloudReverseCommand{ctx.group_id()});
+        }
+        done_ = true;
+        return;
+    case State::Style:
+        if (u == "C" || u == "CALLIGRAPHY") {
+            ctx.echo("Calligraphy style is not supported; Normal is used.");
+        }
+        main_prompt(ctx);
+        return;
+    }
+}
+
+void RevcloudCommand::cancel(CommandContext& ctx) {
+    ctx.clear_preview();
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// EXPLODE
+// ---------------------------------------------------------------------------
+void ExplodeCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    if (ctx.has_selection()) {
+        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id()});
+        done_ = true; // the engine reports what it broke and what it could not (Ph10.1)
+        return;
+    }
+    ctx.set_prompt("Select objects: ");
+}
+
+void ExplodeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (t.empty()) {
+        if (!ctx.has_selection()) {
+            ctx.echo("Nothing selected.");
+            done_ = true;
+            return;
+        }
+        ctx.submit(core::ExplodeSelectionCommand{ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    if (upper(t) == "ALL") {
+        ctx.submit(core::SelectAllCommand{});
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
+    }
+}
+
+void ExplodeCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
 }

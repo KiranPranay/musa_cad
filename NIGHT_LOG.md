@@ -498,3 +498,18 @@ all issues. Everything tested by script or GUI control. No release.
   self-test, not by the unit suite — the UI has no unit tests). Fixed; all gates green.
 - Packaged the current code as a local AppImage and repointed `~/.local/bin/musacad` at it
   (no GitHub release). Verified from the artifact on xcb and native Wayland.
+
+## 2026-09-07 — issues batch A: RECTANGLE options, REVCLOUD, EXPLODE
+
+- tools/autocad_ref.py pulls a demo's transcript + still frames (yt-dlp with a user-local
+  deno JS runtime; OpenCV frames from the video-only stream). STRETCH, REVCLOUD, RECTANGLE
+  and ELLIPSE demos reviewed frame by frame before writing.
+- core/polyline_ops.hpp: fillet/chamfer corner routines shared with FILLET/CHAMFER; plus
+  revcloud_from_path (runs split at corners, lobes by arc length, outward = CCW bulge on a
+  CCW loop — first sign was backwards, the circle-conversion test caught it).
+- RECTANGLE [Chamfer]/[Fillet] (session defaults, last-set-wins, square-corner fallback).
+- REVCLOUD (Arc length, Object + Reverse, Rectangular, Polygonal, Freehand-as-clicked-path).
+- EXPLODE per AutoCAD's table, one undo group, refusals counted; MTextLayout now records
+  each line's origin so MTEXT explodes to one TEXT per line.
+- 33 new tests. The 1/580 flake is the house 5s-deadline persistence test under -j load;
+  passed alone and on a clean re-run (580/580).

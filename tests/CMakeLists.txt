@@ -88,6 +88,10 @@ add_executable(musacad_tests
     test_array.cpp
     test_divide.cpp
     test_polygon.cpp
+    test_polyline_ops.cpp
+    test_rectangle.cpp
+    test_revcloud.cpp
+    test_explode.cpp
     test_break.cpp
     test_align_lengthen.cpp
     test_inquiry.cpp

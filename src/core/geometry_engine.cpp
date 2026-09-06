@@ -24,6 +24,9 @@
 #include "musacad/core/io/native_format.hpp"
 #include "musacad/core/osnap.hpp"
 #include "musacad/core/scene_snapshot.hpp"
+#include "musacad/core/polyline_ops.hpp"
+#include "musacad/core/text/mtext.hpp"
+#include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/table.hpp"
 
 namespace musacad::core {
@@ -1948,85 +1951,7 @@ int shared_vertex(int s1, int s2, int n, bool closed) {
     return -1;
 }
 
-/// Replace vertex `sv` with a bevel: a point d_prev along the edge toward the
-/// previous vertex and d_next toward the next. Returns false if it can't fit.
-bool chamfer_pl(std::vector<Vec2>& pts, bool closed, int sv, double d_prev, double d_next) {
-    const std::size_t n = pts.size();
-    const std::size_t s = static_cast<std::size_t>(sv);
-    if (n < 3 || (!closed && (sv <= 0 || s >= n - 1))) {
-        return false;
-    }
-    const std::size_t prev = (s + n - 1) % n;
-    const std::size_t next = (s + 1) % n;
-    const Vec2 V = pts[s];
-    if (d_prev > distance(V, pts[prev]) + 1e-9 || d_next > distance(V, pts[next]) + 1e-9) {
-        return false;
-    }
-    const Vec2 A = V + normalized(pts[prev] - V) * d_prev;
-    const Vec2 B = V + normalized(pts[next] - V) * d_next;
-    std::vector<Vec2> out;
-    out.reserve(n + 1);
-    for (std::size_t i = 0; i < n; ++i) {
-        if (i == s) {
-            out.push_back(A);
-            out.push_back(B);
-        } else {
-            out.push_back(pts[i]);
-        }
-    }
-    pts = std::move(out);
-    return true;
-}
 
-/// Replace vertex `sv` with a tangent arc of radius r, approximated by vertices.
-// Rounds corner `sv` with a true arc by replacing the corner vertex with its two
-// tangent points and recording the arc as a BULGE on the first -- the geometry
-// stays a parametric polyline (no baked facets), so it can be dimensioned and
-// re-tessellated at any zoom. `bulges` is grown to match `pts` (zeros = straight).
-bool fillet_pl(std::vector<Vec2>& pts, std::vector<double>& bulges, bool closed, int sv, double r) {
-    const std::size_t n = pts.size();
-    const std::size_t s = static_cast<std::size_t>(sv);
-    if (n < 3 || (!closed && (sv <= 0 || s >= n - 1)) || r <= 0.0) {
-        return false;
-    }
-    if (bulges.size() != n) {
-        bulges.assign(n, 0.0);
-    }
-    const std::size_t prev = (s + n - 1) % n;
-    const std::size_t next = (s + 1) % n;
-    const Vec2 V = pts[s];
-    const Vec2 uP = normalized(pts[prev] - V);
-    const Vec2 uN = normalized(pts[next] - V);
-    const double alpha = std::acos(std::clamp(dot(uP, uN), -1.0, 1.0));
-    if (alpha < 1e-4 || alpha > kPi - 1e-4) {
-        return false;
-    }
-    const double td = r / std::tan(alpha / 2.0);
-    if (td > distance(V, pts[prev]) + 1e-9 || td > distance(V, pts[next]) + 1e-9) {
-        return false;
-    }
-    const Vec2 Tp = V + uP * td; // tangent point on the incoming edge
-    const Vec2 Tn = V + uN * td; // tangent point on the outgoing edge
-    const Vec2 C = V + normalized(uP + uN) * (r / std::sin(alpha / 2.0));
-    double a0 = std::atan2(Tp.y - C.y, Tp.x - C.x);
-    const double a1 = std::atan2(Tn.y - C.y, Tn.x - C.x);
-    double sweep = a1 - a0;
-    while (sweep <= -kPi) {
-        sweep += kTwoPi;
-    }
-    while (sweep > kPi) {
-        sweep -= kTwoPi;
-    }
-    const double bulge = std::tan(sweep / 4.0); // arc Tp->Tn as an AutoCAD bulge
-    // Replace V (index s) with Tp, Tn; the prev->Tp edge keeps its bulge, Tp->Tn is
-    // the fillet arc, Tn->next keeps what V->next had.
-    pts[s] = Tp;
-    pts.insert(pts.begin() + static_cast<std::ptrdiff_t>(s) + 1, Tn);
-    const double out_bulge = bulges[s]; // old V->next segment bulge
-    bulges[s] = bulge;
-    bulges.insert(bulges.begin() + static_cast<std::ptrdiff_t>(s) + 1, out_bulge);
-    return true;
-}
 
 /// Endpoints of the line, or the polyline segment nearest `pick`, under `h`.
 /// False for any other entity kind (or a degenerate polyline).
@@ -2161,6 +2086,425 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
     out.b = b;
     out.line_pt = pick2;
     return true;
+}
+
+void GeometryEngine::apply_revcloud_object(const RevcloudObjectCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    if (h.is_null()) {
+        report("Revision cloud: no object under the pick.");
+        return;
+    }
+    if (h.kind != EntityKind::Line && h.kind != EntityKind::Arc && h.kind != EntityKind::Circle &&
+        h.kind != EntityKind::Polyline && h.kind != EntityKind::Spline) {
+        report("Revision cloud: pick a line, arc, circle, polyline or spline to convert.");
+        return;
+    }
+    std::vector<Vec2> flat;
+    kernel_.tessellate(store_, h, std::max(tess_tolerance_, 1e-6), flat);
+    if (flat.size() < 2) {
+        report("Revision cloud: that object has no length.");
+        return;
+    }
+    const bool closed = length(flat.back() - flat.front()) <= 1e-9;
+    if (closed) {
+        flat.pop_back(); // the loop closes itself; a repeated vertex would make a zero lobe
+    }
+    std::vector<Vec2> verts;
+    std::vector<double> bulges;
+    polyline_ops::revcloud_from_path(flat, closed, c.arc_len, false, verts, bulges);
+    if (verts.size() < 2) {
+        report("Revision cloud: arc length is too large for that object.");
+        return;
+    }
+    const EntityProps* ep = store_.props(h);
+    AddPolylineCommand cloud;
+    cloud.points = std::move(verts);
+    cloud.bulges = std::move(bulges);
+    cloud.closed = closed;
+    cloud.props = ep != nullptr ? *ep : EntityProps{store_.current_layer()};
+    // AutoCAD converts the object: the cloud replaces it, as one undo group.
+    const Command original = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(c.group, original);
+    const Command cmd = cloud;
+    const EntityHandle nh = create_indexed(cmd);
+    push_create_item(c.group, nh, cmd);
+    selection_ = {nh};
+    forget_stretch_windows();
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Converted to a revision cloud of " + std::to_string(cloud.points.size()) + " arcs.");
+}
+
+void GeometryEngine::apply_revcloud_reverse(std::uint64_t group) {
+    prune_selection();
+    std::vector<EntityHandle> out;
+    int flipped = 0;
+    for (const EntityHandle h : selection_) {
+        if (h.kind != EntityKind::Polyline || !store_.is_valid(h)) {
+            out.push_back(h);
+            continue;
+        }
+        Command edited = capture_entity(h);
+        auto& pc = std::get<AddPolylineCommand>(edited);
+        if (pc.bulges.empty()) {
+            out.push_back(h);
+            continue;
+        }
+        for (double& b : pc.bulges) {
+            b = -b;
+        }
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(group, original);
+        const EntityHandle nh = create_indexed(edited);
+        push_create_item(group, nh, edited);
+        out.push_back(nh);
+        ++flipped;
+    }
+    selection_ = out;
+    if (flipped == 0) {
+        report("Reverse direction: no revision cloud is selected.");
+        return;
+    }
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report("Reversed the arc direction.");
+}
+
+void GeometryEngine::apply_explode(std::uint64_t group) {
+    prune_selection();
+    if (selection_.empty()) {
+        report("Nothing selected to explode.");
+        return;
+    }
+    // Each kind contributes its components to `parts`; the shared tail swaps them in.
+    std::vector<Command> parts;
+    const auto line = [&](Vec2 a, Vec2 b, const EntityProps& pr) {
+        if (length(b - a) > 1e-12) {
+            parts.push_back(AddLineCommand{a, b, 0, pr});
+        }
+    };
+    const auto lines_from_pairs = [&](const std::vector<Vec2>& segs, const EntityProps& pr) {
+        for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+            line(segs[i], segs[i + 1], pr);
+        }
+    };
+    // AutoCAD makes 2D SOLIDs of filled arrowheads; the nearest thing here is a SOLID
+    // hatch per triangle, which renders and plots as the same filled shape.
+    const auto solids_from_tris = [&](const std::vector<Vec2>& tris, const EntityProps& pr) {
+        for (std::size_t i = 0; i + 2 < tris.size(); i += 3) {
+            AddHatchCommand hc;
+            hc.loops = {{tris[i], tris[i + 1], tris[i + 2]}};
+            hc.pattern_name = "SOLID";
+            hc.props = pr;
+            parts.push_back(std::move(hc));
+        }
+    };
+    const auto text = [&](std::string content, Vec2 pos, double h, double rot, std::uint8_t just,
+                          std::string font, const EntityProps& pr) {
+        if (content.empty()) {
+            return;
+        }
+        AddTextCommand tc;
+        tc.pos = pos;
+        tc.height = h;
+        tc.rotation = rot;
+        tc.justify = just;
+        tc.content = std::move(content);
+        tc.props = pr;
+        tc.font = std::move(font);
+        parts.push_back(std::move(tc));
+    };
+    // Polyline vertices + bulges -> lines and arcs (width/tangent info, which this model
+    // does not hold anyway, is what AutoCAD discards here).
+    const auto explode_polyline = [&](const std::vector<Vec2>& pts, const std::vector<double>& bulges,
+                                      bool closed, const EntityProps& pr) {
+        const std::size_t n = pts.size();
+        const std::size_t segs = closed ? n : (n > 0 ? n - 1 : 0);
+        for (std::size_t i = 0; i < segs; ++i) {
+            const Vec2 a = pts[i];
+            const Vec2 b = pts[(i + 1) % n];
+            const double bulge = i < bulges.size() ? bulges[i] : 0.0;
+            if (bulge == 0.0) {
+                line(a, b, pr);
+                continue;
+            }
+            const BulgeArc arc = arc_from_bulge(a, b, bulge);
+            if (arc.radius <= 1e-12) {
+                line(a, b, pr);
+                continue;
+            }
+            // Arcs are stored CCW from start to end: a CW bulge runs from b back to a.
+            if (arc.sweep > 0.0) {
+                parts.push_back(AddArcCommand{arc.center, arc.radius, arc.a0, arc.a0 + arc.sweep, 0, pr});
+            } else {
+                parts.push_back(AddArcCommand{arc.center, arc.radius, arc.a0 + arc.sweep, arc.a0, 0, pr});
+            }
+        }
+    };
+
+    std::vector<EntityHandle> exploded;
+    int skipped = 0;
+    for (const EntityHandle h : selection_) {
+        if (!store_.is_valid(h) || !selectable(h)) {
+            continue;
+        }
+        const std::size_t before = parts.size();
+        switch (h.kind) {
+        case EntityKind::Polyline: {
+            const PolylineData* pl = store_.polyline(h);
+            const std::span<const Vec2> v = store_.vertices_of(*pl);
+            const std::span<const double> bg = store_.bulges_of(*pl);
+            explode_polyline(std::vector<Vec2>(v.begin(), v.end()),
+                             std::vector<double>(bg.begin(), bg.end()), pl->closed, pl->props);
+            break;
+        }
+        case EntityKind::Insert: {
+            // One grouping level: the block's members come out as their own kinds, placed
+            // by the insert's transform; a nested insert stays an insert, transformed.
+            const InsertData* in = store_.insert(h);
+            if (in->block >= store_.blocks().size()) {
+                break;
+            }
+            const BlockDef& def = store_.blocks()[in->block];
+            const double cs = std::cos(in->rotation);
+            const double sn = std::sin(in->rotation);
+            const auto xf = [&](Vec2 p) {
+                const double lx = (p.x - def.base.x) * in->scale_x;
+                const double ly = (p.y - def.base.y) * in->scale_y;
+                return Vec2{in->pos.x + lx * cs - ly * sn, in->pos.y + lx * sn + ly * cs};
+            };
+            const bool uniform = std::abs(in->scale_x - in->scale_y) < 1e-12 && in->scale_x > 0.0;
+            const double us = std::abs(in->scale_x);
+            for (const LineData& l : def.content.lines) {
+                line(xf(l.a), xf(l.b), l.props);
+            }
+            for (const CircleData& ci : def.content.circles) {
+                if (uniform) {
+                    parts.push_back(AddCircleCommand{xf(ci.center), ci.radius * us, 0, ci.props});
+                } else {
+                    std::vector<Vec2> ring; // a non-uniform scale makes it an ellipse: approximate
+                    for (int k = 0; k < 64; ++k) {
+                        const double a = kTwoPi * static_cast<double>(k) / 64.0;
+                        ring.push_back(xf({ci.center.x + ci.radius * std::cos(a),
+                                           ci.center.y + ci.radius * std::sin(a)}));
+                    }
+                    AddPolylineCommand pc;
+                    pc.points = std::move(ring);
+                    pc.closed = true;
+                    pc.props = ci.props;
+                    parts.push_back(std::move(pc));
+                }
+            }
+            for (const ArcData& ar : def.content.arcs) {
+                if (uniform) {
+                    parts.push_back(AddArcCommand{xf(ar.center), ar.radius * us,
+                                                  ar.start_angle + in->rotation,
+                                                  ar.end_angle + in->rotation, 0, ar.props});
+                } else {
+                    double sweep = ar.end_angle - ar.start_angle;
+                    while (sweep <= 0.0) {
+                        sweep += kTwoPi;
+                    }
+                    std::vector<Vec2> run;
+                    const int nseg = std::max(8, static_cast<int>(sweep / (kPi / 16.0)));
+                    for (int k = 0; k <= nseg; ++k) {
+                        const double a = ar.start_angle + sweep * static_cast<double>(k) / nseg;
+                        run.push_back(xf({ar.center.x + ar.radius * std::cos(a),
+                                          ar.center.y + ar.radius * std::sin(a)}));
+                    }
+                    AddPolylineCommand pc;
+                    pc.points = std::move(run);
+                    pc.props = ar.props;
+                    parts.push_back(std::move(pc));
+                }
+            }
+            for (const BlockPolyline& bp : def.content.polylines) {
+                AddPolylineCommand pc;
+                for (const Vec2& q : bp.verts) {
+                    pc.points.push_back(xf(q));
+                }
+                pc.bulges = bp.bulges; // a bulge is scale-invariant under uniform scale
+                if (!uniform && !pc.bulges.empty()) {
+                    pc.bulges.clear(); // arcs do not survive a non-uniform scale exactly
+                }
+                pc.closed = bp.closed;
+                pc.props = bp.props;
+                parts.push_back(std::move(pc));
+            }
+            for (const BlockText& bt : def.content.texts) {
+                text(bt.content, xf(bt.pos), bt.height * us, bt.rotation + in->rotation, bt.justify,
+                     std::string{}, bt.props);
+            }
+            for (const BlockMText& bm : def.content.mtexts) {
+                AddMTextCommand mc;
+                mc.block = bm.block;
+                mc.block.pos = xf(bm.block.pos);
+                mc.block.height *= us;
+                mc.block.width *= us;
+                mc.block.rotation += in->rotation;
+                mc.content = bm.content;
+                mc.props = bm.props;
+                mc.font = std::string(store_.font_name(bm.block.font));
+                parts.push_back(std::move(mc));
+            }
+            for (const InsertData& sub : def.content.inserts) {
+                parts.push_back(AddInsertCommand{sub.block, xf(sub.pos), sub.scale_x * in->scale_x,
+                                                 sub.scale_y * in->scale_y,
+                                                 sub.rotation + in->rotation, 0, sub.props});
+            }
+            break;
+        }
+        case EntityKind::Dimension: {
+            const DimData* d = store_.dimension(h);
+            const DimStyle* st = store_.dimstyle(d->style);
+            const DimGeometry g = compute_dim_geometry(*d, st != nullptr ? *st : DimStyle{}, Rgb{},
+                                                       store_.dim_text_parts(*d));
+            lines_from_pairs(g.ext_lines, d->props);
+            lines_from_pairs(g.dim_lines, d->props);
+            lines_from_pairs(g.arrow_lines, d->props);
+            solids_from_tris(g.arrow_fills, d->props);
+            text(g.label, g.text_pos, g.text_height, g.text_rotation,
+                 static_cast<std::uint8_t>(g.text_justify), std::string{}, d->props);
+            text(g.label2, g.label2_pos, g.text_height, g.text_rotation,
+                 static_cast<std::uint8_t>(g.text_justify), std::string{}, d->props);
+            break;
+        }
+        case EntityKind::Leader: {
+            const LeaderData* l = store_.leader(h);
+            const DimStyle* st = store_.dimstyle(l->style);
+            const DimStyle s = apply_dim_overrides(st != nullptr ? *st : DimStyle{}, l->overrides);
+            line(l->tip, l->knee, l->props);
+            std::vector<Vec2> af;
+            std::vector<Vec2> al;
+            append_arrowhead(af, al, l->tip, l->knee - l->tip, s.arrow_size,
+                             static_cast<ArrowType>(s.arrow_type));
+            lines_from_pairs(al, l->props);
+            solids_from_tris(af, l->props);
+            text(std::string(store_.string_of(*l)), l->knee + Vec2{s.arrow_size * 0.4, 0.0},
+                 l->text_height, 0.0, 0, std::string(store_.font_name(l->font)), l->props);
+            break;
+        }
+        case EntityKind::MLeader: {
+            const MLeaderData* m = store_.mleader(h);
+            const DimStyle* st = store_.dimstyle(m->style);
+            const DimStyle s = apply_dim_overrides(st != nullptr ? *st : DimStyle{}, m->overrides);
+            const std::span<const Vec2> v = store_.vertices_of(*m);
+            for (std::size_t i = 1; i < v.size(); ++i) {
+                line(v[i - 1], v[i], m->props);
+            }
+            if (v.size() >= 2) {
+                std::vector<Vec2> af;
+                std::vector<Vec2> al;
+                append_arrowhead(af, al, v[0], v[1] - v[0], s.arrow_size,
+                                 static_cast<ArrowType>(s.arrow_type));
+                lines_from_pairs(al, m->props);
+                solids_from_tris(af, m->props);
+            }
+            AddMTextCommand mc;
+            mc.block = m->text;
+            mc.content = std::string(store_.string_of(m->text));
+            mc.props = m->props;
+            mc.font = std::string(store_.font_name(m->text.font));
+            parts.push_back(std::move(mc));
+            break;
+        }
+        case EntityKind::Hatch: {
+            const HatchData* hd = store_.hatch(h);
+            const std::vector<std::vector<Vec2>> loops = store_.hatch_loops(*hd);
+            const std::string_view pname = store_.string_of(*hd);
+            if (const hatch::Pattern* pat = pname == "SOLID" ? nullptr : hatch::builtin_pattern(pname)) {
+                std::vector<hatch::Segment> segs;
+                hatch::generate_pattern_segments(loops, *pat, hd->pattern_scale, hd->pattern_angle,
+                                                 hd->pattern_origin, segs);
+                for (const hatch::Segment& sg : segs) {
+                    line(sg.a, sg.b, hd->props);
+                }
+            } else {
+                // A filled region has no lines to hand back; its boundary is what remains.
+                for (const std::vector<Vec2>& loop : loops) {
+                    if (loop.size() >= 2) {
+                        AddPolylineCommand pc;
+                        pc.points = loop;
+                        pc.closed = true;
+                        pc.props = hd->props;
+                        parts.push_back(std::move(pc));
+                    }
+                }
+            }
+            break;
+        }
+        case EntityKind::MText: {
+            const MTextData* m = store_.mtext(h);
+            const std::string_view font = store_.font_name(m->text.font);
+            const text::MTextLayout lay = text::layout_mtext(m->text, store_.string_of(m->text),
+                                                             store_.font_engine(), font);
+            for (const text::MTextLine& ln : lay.lines) {
+                text(ln.text, ln.origin, m->text.height, m->text.rotation, 0, std::string(font),
+                     m->props);
+            }
+            break;
+        }
+        case EntityKind::Table: {
+            const TableData* td = store_.table(h);
+            const TableStyle* st = store_.table_style(td->style);
+            const TableGeometry g = compute_table_geometry(
+                *td, store_.table_cell_views(*td), store_.table_col_widths(*td),
+                store_.table_row_heights(*td), st != nullptr ? *st : TableStyle{}, Rgb{});
+            lines_from_pairs(g.lines, td->props);
+            for (std::size_t i = 0; i < g.cell_text.size(); ++i) {
+                text(g.cell_text[i], g.text_pos[i], g.text_height[i], g.rotation, 0, std::string{},
+                     td->props);
+            }
+            break;
+        }
+        case EntityKind::Point:
+        case EntityKind::Line:
+        case EntityKind::Circle:
+        case EntityKind::Arc:
+        case EntityKind::Spline:
+        case EntityKind::Text:
+        case EntityKind::Fcf:
+        case EntityKind::Datum:
+        case EntityKind::Image:
+            break; // already simple, or nothing meaningful to break into
+        }
+        if (parts.size() > before) {
+            exploded.push_back(h);
+        } else {
+            ++skipped;
+        }
+    }
+    if (exploded.empty()) {
+        report("Nothing to explode: the selection holds only simple objects.");
+        return;
+    }
+    std::vector<EntityHandle> result;
+    for (const EntityHandle h : exploded) {
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(group, original);
+    }
+    for (const Command& part : parts) {
+        const EntityHandle nh = create_indexed(part);
+        push_create_item(group, nh, part);
+        result.push_back(nh);
+    }
+    selection_ = result;
+    forget_stretch_windows();
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    std::string msg = "Exploded " + std::to_string(exploded.size()) +
+                      (exploded.size() == 1 ? " object into " : " objects into ") +
+                      std::to_string(parts.size()) + ".";
+    if (skipped > 0) {
+        msg += " " + std::to_string(skipped) + " could not be exploded.";
+    }
+    report(msg);
 }
 
 void GeometryEngine::apply_purge() {
@@ -2663,7 +3007,7 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
         std::vector<Vec2> pts(v.begin(), v.end());
         const auto bspan = store_.bulges_of(*pl);
         std::vector<double> bulges(bspan.begin(), bspan.end());
-        if (!fillet_pl(pts, bulges, pl->closed, sv, radius)) {
+        if (!polyline_ops::fillet_corner(pts, bulges, pl->closed, sv, radius)) {
             report("Fillet: radius too large for that corner.");
             return;
         }
@@ -2774,7 +3118,7 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
             d_next = dist2;
         }
         std::vector<Vec2> pts(v.begin(), v.end());
-        if (!chamfer_pl(pts, pl->closed, sv, d_prev, d_next)) {
+        if (!polyline_ops::chamfer_corner(pts, pl->closed, sv, d_prev, d_next)) {
             report("Chamfer: distances too large for that corner.");
             return;
         }
@@ -3707,6 +4051,12 @@ void GeometryEngine::apply(const Command& command) {
                 apply_break(c);
             } else if constexpr (std::is_same_v<T, PurgeCommand>) {
                 apply_purge();
+            } else if constexpr (std::is_same_v<T, RevcloudObjectCommand>) {
+                apply_revcloud_object(c);
+            } else if constexpr (std::is_same_v<T, RevcloudReverseCommand>) {
+                apply_revcloud_reverse(c.group);
+            } else if constexpr (std::is_same_v<T, ExplodeSelectionCommand>) {
+                apply_explode(c.group);
             } else if constexpr (std::is_same_v<T, StretchPreviewCommand>) {
                 // Preview only: recomputed at the next publish on the scratch store.
                 stretch_preview_active_ = c.active && !selection_.empty();

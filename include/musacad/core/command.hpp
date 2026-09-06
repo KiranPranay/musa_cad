@@ -28,6 +28,31 @@ namespace musacad::core {
 /// Which entities ERASE targets (selection/picking arrives in Phase 5).
 enum class EraseScope : std::uint8_t { Last, All };
 
+/// REVCLOUD's Object option: convert the curve under `pick` into a revision cloud with
+/// lobes of ~`arc_len` chord, replacing it (as AutoCAD does) as one undo group.
+struct RevcloudObjectCommand {
+    Vec2 pick;
+    double pick_radius = 0.0;
+    double arc_len = 0.5;
+    std::uint64_t group = 0;
+};
+
+/// REVCLOUD's "Reverse direction": flip every lobe of the selected cloud polylines
+/// (bulge signs), which turns outward lobes inward and back.
+struct RevcloudReverseCommand {
+    std::uint64_t group = 0;
+};
+
+/// EXPLODE (AutoCAD): break every selected compound object into its components, as one
+/// undo group. What each kind becomes follows AutoCAD's table: a polyline into lines and
+/// arcs, a block reference one level down, a dimension or leader into lines, solids and
+/// text, a hatch into pattern lines (a SOLID hatch into its boundary loops), MTEXT into
+/// one TEXT per line, a table into lines and text. Simple objects are left alone and
+/// counted in the report.
+struct ExplodeSelectionCommand {
+    std::uint64_t group = 0;
+};
+
 /// PURGE (AutoCAD): drop symbol-table entries nothing refers to. Today that means
 /// unused LAYERS, which is what an imported drawing accumulates dozens of; dimension
 /// styles, text styles and block definitions are not purgeable yet (see docs/COMMANDS.md).
@@ -819,6 +844,7 @@ using Command =
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
                  ArrayPathCommand, AddPointCommand, DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
+                 RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,

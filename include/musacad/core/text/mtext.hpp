@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -19,12 +20,20 @@ namespace musacad::core::text {
 /// geometry and the block's axis-aligned bounding box (for pick, bounds, and the width
 /// grip). The stroke font fills `segments` (line pairs); an outline (TTF) font fills
 /// `fills` (triangles). Computed entirely from the MTextBlock + content -- nothing baked.
+/// One laid-out line: its text and where its baseline starts (world), left-justified
+/// at the block's rotation. What EXPLODE turns into a TEXT entity per line.
+struct MTextLine {
+    std::string text;
+    Vec2 origin{};
+};
+
 struct MTextLayout {
     std::vector<Vec2> segments; ///< 2 Vec2 per glyph stroke (stroke font)
     std::vector<Vec2> fills;    ///< 3 Vec2 per glyph triangle (outline font)
     Vec2 min{};                 ///< block AABB (world)
     Vec2 max{};
     int line_count = 0;
+    std::vector<MTextLine> lines; ///< per line, in reading order
 };
 
 /// Lays out `content` within `block`: splits on '\n', word-wraps each paragraph to
