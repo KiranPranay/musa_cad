@@ -28,6 +28,7 @@ enum class EntityKind : std::uint16_t {
     Datum, ///< GD&T datum feature symbol
     Image, ///< placed raster image
     Table, ///< a grid of text cells (BOM, revision block, parts list)
+    Xline, ///< construction line: infinite (XLINE) or semi-infinite (RAY)
 };
 
 /// Coarse classification of an EntityKind, used by MATCHPROP to decide when
@@ -82,6 +83,7 @@ enum class EntityFamily : std::uint8_t {
     case EntityKind::Circle:
     case EntityKind::Arc:
     case EntityKind::Spline:
+    case EntityKind::Xline:
         return EntityFamily::SimpleGeometry;
     }
     return EntityFamily::SimpleGeometry;

@@ -513,3 +513,19 @@ all issues. Everything tested by script or GUI control. No release.
   each line's origin so MTEXT explodes to one TEXT per line.
 - 33 new tests. The 1/580 flake is the house 5s-deadline persistence test under -j load;
   passed alone and on a clean re-run (580/580).
+
+## 2026-09-07 — issues batch B: XLINE / RAY construction lines (#23)
+
+- New EntityKind::Xline (base + unit dir + ray flag). The hard part is that it is
+  INFINITE: entity_aabb returns false, so it is excluded from ZOOM Extents and from the
+  spatial grid; pick_nearest and select_window scan xlines directly; the renderer clips
+  each to the camera viewport every frame (Liang-Barsky, ray clamps t>=0) via the scene
+  line pipeline, so pan/zoom stay correct with zero baked geometry.
+- -Werror=switch drove the ~17 switch sites; each got an explicit Xline case.
+- Commands: XLINE (Hor/Ver/Ang/Bisect/two-point, repeating) and RAY; Offset deferred
+  (needs a picked reference) with a message. Native + DXF round-trip (format v21); moves,
+  rotates, mirrors, scales, deletes, one undo group.
+- Two bugs the tests caught: the publish never copied construction_lines into the buffer
+  slot, and build_render_snapshot never cleared it (so index 0 stayed stale after a move).
+- 590 tests (up from 553 last turn), GUI harness PASS. Reference: the SAS Creative Group
+  XLINE/RAY demo (transcript + frames via tools/autocad_ref.py).

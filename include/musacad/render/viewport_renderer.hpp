@@ -97,6 +97,8 @@ private:
     void draw_canvas_command(GpuCommandBuffer& cmd, int width, int height);
     void draw_crosshair_and_snap(GpuCommandBuffer& cmd, int width, int height,
                                  const core::RenderSnapshot& snapshot, const Camera2D& camera);
+    void draw_construction_lines(GpuCommandBuffer& cmd, const core::RenderSnapshot& snapshot,
+                                 const Camera2D& camera);
     void draw_selection_and_interaction(GpuCommandBuffer& cmd, const core::RenderSnapshot& snapshot,
                                         const core::Mat3& view);
 

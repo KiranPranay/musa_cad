@@ -324,6 +324,17 @@ std::string serialize_dxf(const Document& doc) {
         code_d(s, 20, p.p.y);
         code_d(s, 30, 0.0);
     }
+    // XLINE / RAY: DXF code 10 = base (first) point, code 11 = unit direction vector.
+    for (const DocXline& x : doc.xlines) {
+        code(s, 0, x.ray ? "RAY" : "XLINE");
+        emit_props(s, doc, x.props);
+        code_d(s, 10, x.base.x);
+        code_d(s, 20, x.base.y);
+        code_d(s, 30, 0.0);
+        code_d(s, 11, x.dir.x);
+        code_d(s, 21, x.dir.y);
+        code_d(s, 31, 0.0);
+    }
     for (const DocLine& l : doc.lines) {
         code(s, 0, "LINE");
         emit_props(s, doc, l.props);
@@ -1002,6 +1013,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         std::vector<DocPoint>* points = nullptr;
         std::vector<DocInsert>* inserts = nullptr;
         std::vector<DocHatch>* hatches = nullptr;
+        std::vector<DocXline>* xlines = nullptr;
     };
 
     const auto build_entity = [&](Sink& sink, const std::string& type,
@@ -1226,6 +1238,16 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             } else {
                 ++skipped[type];
             }
+        } else if (type == "XLINE" || type == "RAY") {
+            if (sink.xlines != nullptr) {
+                const Vec2 dir{getd(body, 11), getd(body, 21)};
+                sink.xlines->push_back(DocXline{{getd(body, 10), getd(body, 20)},
+                                                dir,
+                                                type == "RAY",
+                                                props_of(body)});
+            } else {
+                ++skipped[type];
+            }
         } else if (type == "LWPOLYLINE") {
             if (sink.polylines == nullptr) {
                 ++skipped[type];
@@ -1344,7 +1366,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     // (dims/leaders/points inside a block route to the skip catalog).
     Sink model_sink{&doc.lines,  &doc.circles, &doc.arcs,    &doc.polylines, &doc.texts,
                     &doc.mtexts, &doc.dims,    &doc.leaders, &doc.points,    &doc.inserts,
-                    &doc.hatches};
+                    &doc.hatches, &doc.xlines};
 
     // The block currently being read in the BLOCKS section. Its sink takes the
     // importable subset; dims/leaders/points/nested-INSERT-targets that a block can't

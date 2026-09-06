@@ -1358,6 +1358,143 @@ void BreakCommand::cancel(CommandContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// XLINE / RAY: construction lines
+// ---------------------------------------------------------------------------
+void XlineCommand::emit(CommandContext& ctx, core::Vec2 base, core::Vec2 dir) {
+    if (core::length(dir) < 1e-9) {
+        return;
+    }
+    ctx.submit(core::AddXlineCommand{base, core::normalized(dir), ray_, ctx.group_id(), {}});
+}
+
+void XlineCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::First;
+    mode_ = 0;
+    if (ray_) {
+        ctx.set_prompt("Specify start point: ");
+    } else {
+        ctx.set_prompt("Specify a point or [Hor/Ver/Ang/Bisect]: ");
+    }
+}
+
+void XlineCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::First: {
+        if (!ray_) {
+            if (u == "H" || u == "HOR") {
+                mode_ = 1;
+                state_ = State::Through;
+                ctx.set_prompt("Specify through point: ");
+                return;
+            }
+            if (u == "V" || u == "VER") {
+                mode_ = 2;
+                state_ = State::Through;
+                ctx.set_prompt("Specify through point: ");
+                return;
+            }
+            if (u == "A" || u == "ANG") {
+                state_ = State::Angle;
+                ctx.set_prompt("Enter angle of xline (0): ");
+                return;
+            }
+            if (u == "B" || u == "BISECT") {
+                state_ = State::BisectVertex;
+                ctx.set_prompt("Specify angle vertex point: ");
+                return;
+            }
+            if (u == "O" || u == "OFFSET") {
+                ctx.echo("XLINE Offset is not supported yet; use the OFFSET command on a line.");
+                return;
+            }
+        }
+        if (const auto p = read_point(ctx, text)) {
+            root_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Through;
+            ctx.set_prompt("Specify through point: ");
+        }
+        return;
+    }
+    case State::Angle: {
+        double deg = 0.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            ctx.echo("Enter an angle in degrees.");
+            return;
+        }
+        angle_ = core::to_radians(deg);
+        mode_ = 3;
+        state_ = State::Through;
+        ctx.set_prompt("Specify through point: ");
+        return;
+    }
+    case State::Through: {
+        if (t.empty()) {
+            done_ = true; // Enter ends the repeating family, as in AutoCAD
+            return;
+        }
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        core::Vec2 base = *p;
+        core::Vec2 dir;
+        if (mode_ == 1) {
+            dir = {1.0, 0.0};
+        } else if (mode_ == 2) {
+            dir = {0.0, 1.0};
+        } else if (mode_ == 3) {
+            dir = {std::cos(angle_), std::sin(angle_)};
+        } else {
+            // Two-point / RAY: the line runs through the root toward this point.
+            base = root_;
+            dir = *p - root_;
+        }
+        emit(ctx, base, dir);
+        // XLINE repeats through the SAME root; the Hor/Ver/Ang families repeat at new
+        // points; RAY keeps its start. Enter (empty) ends it.
+        if (ray_ || mode_ == 0) {
+            ctx.set_last_point(root_);
+        }
+        ctx.set_prompt("Specify through point: ");
+        return;
+    }
+    case State::BisectVertex:
+        if (const auto p = read_point(ctx, text)) {
+            bvertex_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::BisectStart;
+            ctx.set_prompt("Specify angle start point: ");
+        }
+        return;
+    case State::BisectStart:
+        if (const auto p = read_point(ctx, text)) {
+            bstart_ = *p;
+            state_ = State::BisectEnd;
+            ctx.set_prompt("Specify angle end point: ");
+        }
+        return;
+    case State::BisectEnd:
+        if (const auto p = read_point(ctx, text)) {
+            const core::Vec2 d0 = core::normalized(bstart_ - bvertex_);
+            const core::Vec2 d1 = core::normalized(*p - bvertex_);
+            const core::Vec2 bis = d0 + d1; // the angle bisector direction
+            emit(ctx, bvertex_, bis);
+            done_ = true;
+        }
+        return;
+    }
+}
+
+void XlineCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // REVCLOUD
 // ---------------------------------------------------------------------------
 void RevcloudCommand::main_prompt(CommandContext& ctx) {

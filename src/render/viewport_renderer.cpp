@@ -434,6 +434,7 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
         }
     }
 
+    draw_construction_lines(*cmd_, snapshot, camera);
     draw_selection_and_interaction(*cmd_, snapshot, view);
     draw_crosshair_and_snap(*cmd_, target.width(), target.height(), snapshot, camera);
     draw_overlay(*cmd_, target.width(), target.height());
@@ -597,6 +598,63 @@ void ViewportRenderer::draw_canvas_command(GpuCommandBuffer& cmd, int width, int
         cmd.set_uniform_mat3("u_transform", screen);
         cmd.set_uniform_vec4("u_color", 0.40f, 0.55f, 0.75f, 1.0f); // borders + caret
         cmd.bind_vertex_buffer(0, *overlay_buffer_, 0);
+        cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
+        ++stats_.draw_calls;
+    }
+}
+
+void ViewportRenderer::draw_construction_lines(GpuCommandBuffer& cmd,
+                                               const core::RenderSnapshot& snapshot,
+                                               const Camera2D& camera) {
+    if (snapshot.construction_lines.empty()) {
+        return;
+    }
+    // A construction line is infinite, so it is clipped to the current view each frame
+    // (it is not in the scene buffers, which would be stale after a pan). The visible
+    // world rectangle comes from the camera; each line is clipped to it with
+    // Liang-Barsky, a RAY restricted to t >= 0. Drawn through the scene line pipeline in
+    // the entity's own colour, one small per-frame upload (there are few).
+    const int w = camera.viewport_width();
+    const int h = camera.viewport_height();
+    const core::Vec2 c0 = camera.screen_to_world({0.0, 0.0});
+    const core::Vec2 c1 = camera.screen_to_world({static_cast<double>(w), static_cast<double>(h)});
+    const core::Vec2 mn{std::min(c0.x, c1.x), std::min(c0.y, c1.y)};
+    const core::Vec2 mx{std::max(c0.x, c1.x), std::max(c0.y, c1.y)};
+    const core::Mat3 view = camera.view_matrix();
+    cmd.bind_pipeline(*line_pipeline_);
+    cmd.set_uniform_mat3("u_transform", view);
+    for (const core::ConstructionLineView& x : snapshot.construction_lines) {
+        double t0 = x.ray ? 0.0 : -std::numeric_limits<double>::infinity();
+        double t1 = std::numeric_limits<double>::infinity();
+        const double p[4] = {-x.dir.x, x.dir.x, -x.dir.y, x.dir.y};
+        const double q[4] = {x.base.x - mn.x, mx.x - x.base.x, x.base.y - mn.y, mx.y - x.base.y};
+        bool ok = true;
+        for (int i = 0; i < 4 && ok; ++i) {
+            if (std::abs(p[i]) < 1e-12) {
+                ok = q[i] >= 0.0;
+            } else {
+                const double r = q[i] / p[i];
+                if (p[i] < 0.0) {
+                    t0 = std::max(t0, r);
+                } else {
+                    t1 = std::min(t1, r);
+                }
+            }
+        }
+        if (!ok || t0 > t1) {
+            continue; // the line does not cross the current view
+        }
+        const std::vector<core::Vec2> seg = {{x.base.x + x.dir.x * t0, x.base.y + x.dir.y * t0},
+                                             {x.base.x + x.dir.x * t1, x.base.y + x.dir.y * t1}};
+        const std::size_t n = pack_segments(seg, scratch_);
+        if (n == 0) {
+            continue;
+        }
+        aux_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+        cmd.set_uniform_vec4("u_color", static_cast<float>(x.color.r) / 255.0f,
+                             static_cast<float>(x.color.g) / 255.0f,
+                             static_cast<float>(x.color.b) / 255.0f, 1.0f);
+        cmd.bind_vertex_buffer(0, *aux_buffer_, 0);
         cmd.draw_instanced(2, static_cast<std::uint32_t>(n));
         ++stats_.draw_calls;
     }

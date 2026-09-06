@@ -1030,6 +1030,8 @@ const char* kind_name(EntityKind k) noexcept {
     switch (k) {
     case EntityKind::Point:
         return "Point";
+    case EntityKind::Xline:
+        return "Construction line";
     case EntityKind::Line:
         return "Line";
     case EntityKind::Circle:
@@ -1101,6 +1103,8 @@ EntityKind kind_of(const Command& c) noexcept {
                 k = EntityKind::Fcf;
             } else if constexpr (std::is_same_v<T, AddDatumCommand>) {
                 k = EntityKind::Datum;
+            } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
+                k = EntityKind::Xline;
             } else if constexpr (std::is_same_v<T, AddImageCommand>) {
                 k = EntityKind::Image;
             } else if constexpr (std::is_same_v<T, AddTableCommand>) {

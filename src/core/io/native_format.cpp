@@ -393,6 +393,17 @@ std::string serialize_native(const Document& doc) {
         append_props(s, l.props);
         s += '\n';
     }
+    // XLINE basex basey dirx diry ray <props7>  (v21). Construction line / ray.
+    for (const DocXline& x : doc.xlines) {
+        s += "XLINE ";
+        append_vec(s, x.base);
+        s += ' ';
+        append_vec(s, x.dir);
+        s += ' ';
+        append_uint(s, x.ray ? 1 : 0);
+        append_props(s, x.props);
+        s += '\n';
+    }
     for (const DocCircle& c : doc.circles) {
         s += "CIRCLE ";
         append_vec(s, c.center);
@@ -1616,6 +1627,13 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("POINT record malformed");
             }
             doc.points.push_back(DocPoint{{vals[0], vals[1]}, p});
+        } else if (key == "XLINE") {
+            EntityProps p;
+            if (!read_fixed(tok, 5, p)) {
+                return fail("XLINE record malformed");
+            }
+            doc.xlines.push_back(
+                DocXline{{vals[0], vals[1]}, {vals[2], vals[3]}, vals[4] != 0.0, p});
         } else if (key == "LINE") {
             EntityProps p;
             if (!read_fixed(tok, 4, p)) {
