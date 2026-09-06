@@ -116,7 +116,8 @@ int main(int argc, char* argv[]) {
         qEnvironmentVariableIsSet("MUSACAD_LTSCALE_SHOT") || qEnvironmentVariableIsSet("MUSACAD_MLT_SHOT") ||
         qEnvironmentVariableIsSet("MUSACAD_HATCH_SHOT") ||
         qEnvironmentVariableIsSet("MUSACAD_RIBBON_SHOT") ||
-        qEnvironmentVariableIsSet("MUSACAD_CMDCTL_SHOT") || qEnvironmentVariableIsSet("MUSACAD_SMOKE");
+        qEnvironmentVariableIsSet("MUSACAD_CMDCTL_SHOT") ||
+        qEnvironmentVariableIsSet("MUSACAD_STRETCH_SHOT") || qEnvironmentVariableIsSet("MUSACAD_SMOKE");
     if (harness) {
         window.show();
     } else {
@@ -192,6 +193,16 @@ int main(int argc, char* argv[]) {
             const bool ok = window.selftest_gui_plot_file(
                 a.value(0), a.value(1, QStringLiteral("/tmp/gui_plot.pdf")));
             app.exit(ok ? 0 : 1);
+        });
+    }
+
+    // Real-mouse STRETCH capture: MUSACAD_STRETCH_SHOT="out_dir". Drives the whole gesture
+    // through synthetic mouse events and grabs a PNG at each stage (crossing drag, selected,
+    // live preview, committed).
+    if (qEnvironmentVariableIsSet("MUSACAD_STRETCH_SHOT")) {
+        QTimer::singleShot(900, &window, [&window, &app] {
+            const QString out = qEnvironmentVariable("MUSACAD_STRETCH_SHOT");
+            app.exit(window.stretch_shot(out.toStdString()) ? 0 : 1);
         });
     }
 

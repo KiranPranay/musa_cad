@@ -38,14 +38,13 @@ public:
     /// ERASE) rather than as coordinate input.
     [[nodiscard]] virtual bool wants_selection() const { return false; }
 
-    /// True while the NEXT pick is a corner of a selection window (STRETCH's crossing
-    /// window). A selection window is a screen region, not geometry, so AutoCAD applies
-    /// neither object snap nor ortho/polar to its corners -- and it must not, because
-    /// ortho collapses the second corner onto an axis through the first, which makes the
-    /// window zero-area and catches nothing, while osnap yanks a corner onto a vertex of
-    /// the very object being windowed. State-dependent by design: the same command's
-    /// later base/displacement picks DO want ortho.
-    [[nodiscard]] virtual bool wants_window() const { return false; }
+    /// True while the command sits at AutoCAD's "Select objects:" prompt. The viewport
+    /// then runs its ordinary selection gestures -- a pick, a window (left-to-right) or a
+    /// crossing window (right-to-left), accumulating -- and Enter or right-click ends the
+    /// phase. Selection drags take the raw cursor, never osnap or ortho: a selection
+    /// window is a screen region, not geometry. State-dependent by design: the same
+    /// command's later coordinate picks DO snap and honour ortho.
+    [[nodiscard]] virtual bool in_selection_phase() const { return false; }
 };
 
 } // namespace musacad::command

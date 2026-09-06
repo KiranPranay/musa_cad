@@ -126,6 +126,10 @@ private:
         std::uint32_t grip_index = 0;
         Vec2 grip_pos{};
         GeometryStore grip_preview_store;
+        std::vector<std::pair<Vec2, Vec2>> stretch_windows;
+        std::vector<EntityHandle> stretch_windows_sel;
+        bool stretch_preview_active = false;
+        Vec2 stretch_preview_delta{};
     };
     struct DocMeta {
         std::uint64_t id = 0;
@@ -178,7 +182,18 @@ private:
     [[nodiscard]] bool sel_contains(EntityHandle h) const;
     void sel_add(EntityHandle h);
     void prune_selection();
-    void select_window(Vec2 min, Vec2 max, bool crossing, bool additive);
+    void select_window(Vec2 min, Vec2 max, bool crossing, bool additive, bool announce);
+    /// Does `h` satisfy a box selection? `crossing` = any part inside or touching the
+    /// box; otherwise every point must be inside. THE box test, shared by window
+    /// selection and by STRETCH's "was this object crossed by the window" decision, so
+    /// the two can never disagree about what a crossing window caught.
+    [[nodiscard]] bool entity_hits_rect(EntityHandle h, Vec2 mn, Vec2 mx, bool crossing) const;
+    /// The crossing windows on record are only meaningful for the selection they built.
+    void note_selection_for_windows() { stretch_windows_sel_ = selection_; }
+    void forget_stretch_windows() {
+        stretch_windows_.clear();
+        stretch_windows_sel_.clear();
+    }
 
     // --- cross-document clipboard (Phase B) ---
     // In-process, app-global clipboard (NOT per-document, so a copy survives switching /
@@ -198,7 +213,16 @@ private:
     void apply_chain_dimension(Vec2 at, bool baseline, std::uint64_t group);
     void apply_area_query(Vec2 at, double radius);
     void apply_list_query(Vec2 at, double radius);
-    void apply_stretch(Vec2 mn, Vec2 mx, Vec2 delta, std::uint64_t group);
+    void apply_stretch(Vec2 delta, std::uint64_t group);
+    /// One stretched entity: the handle it replaces and the edit that replaces it.
+    struct StretchEdit {
+        EntityHandle handle;
+        Command edited;
+    };
+    /// THE stretch computation: every selected entity that would change under `delta`,
+    /// with its edited form. Used by the commit AND by the live preview, so the rubber
+    /// band cannot show something different from what the click will produce.
+    [[nodiscard]] std::vector<StretchEdit> stretched_commands(Vec2 delta) const;
     void apply_copy_clipboard();
     void apply_cut_clipboard(std::uint64_t group);
     void apply_paste_clipboard(Vec2 at, std::uint64_t group, bool at_cursor);
@@ -332,6 +356,17 @@ private:
     std::uint32_t grip_index_ = 0;
     Vec2 grip_pos_{};
     GeometryStore grip_preview_store_;
+
+    // STRETCH state. The crossing windows that built the current selection, kept so
+    // STRETCH knows which vertices the user "caught" -- AutoCAD's rule is that a crossed
+    // object stretches only those, while a picked or enclosed one moves whole. Valid only
+    // while `stretch_windows_sel_` still equals `selection_`: any edit that replaces the
+    // selection invalidates them without every such site having to know.
+    std::vector<std::pair<Vec2, Vec2>> stretch_windows_;
+    std::vector<EntityHandle> stretch_windows_sel_;
+    // The live rubber-band (StretchPreviewCommand): previewed on grip_preview_store_.
+    bool stretch_preview_active_ = false;
+    Vec2 stretch_preview_delta_{};
 
     std::atomic<std::uint64_t> version_{0};
     std::jthread worker_;

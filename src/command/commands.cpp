@@ -2253,65 +2253,108 @@ void ListCommand::cancel(CommandContext& ctx) {
 // ---------------------------------------------------------------------------
 // STRETCH: crossing window -> base point -> displacement
 // ---------------------------------------------------------------------------
+void StretchCommand::begin_base(CommandContext& ctx) {
+    mode_ = Mode::Base;
+    ctx.set_prompt("Specify base point or [Displacement] <Displacement>: ");
+}
+
 void StretchCommand::start(CommandContext& ctx) {
     ctx.clear_last_point();
-    mode_ = Mode::Corner1;
-    ctx.set_prompt("Specify first corner of crossing window: ");
+    if (ctx.has_selection()) {
+        // Noun-verb (AutoCAD PICKFIRST): the selection, and the crossing window that
+        // made it, are already on record in the engine.
+        begin_base(ctx);
+        return;
+    }
+    mode_ = Mode::Select;
+    ctx.echo("Select objects to stretch by crossing-window or crossing-polygon...");
+    ctx.set_prompt("Select objects: ");
+}
+
+void StretchCommand::finish(CommandContext& ctx, core::Vec2 delta) {
+    ctx.clear_preview();
+    ctx.submit(core::StretchSelectionCommand{delta, ctx.group_id()});
+    // The engine reports what it actually did -- how many objects, or why none (Ph10.1).
+    done_ = true;
 }
 
 void StretchCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
     switch (mode_) {
-    case Mode::Corner1:
-        if (const auto p = read_point(ctx, text)) {
-            c1_ = *p;
-            ctx.set_last_point(*p);
-            mode_ = Mode::Corner2;
-            // Rubber-band the crossing window so the region is visible while it is
-            // dragged out -- without it the user is picking two invisible corners and
-            // can only guess which vertices the stretch will catch.
-            ctx.set_preview(PreviewSpec{PreviewKind::Rectangle, {c1_}});
-            ctx.set_prompt("Specify opposite corner: ");
+    case Mode::Select: {
+        // The viewport does the selecting (drags and picks accumulate, announced as
+        // "N found"); this prompt only has to know when the user is done.
+        if (t.empty()) {
+            if (!ctx.has_selection()) {
+                ctx.echo("Nothing selected.");
+                done_ = true;
+                return;
+            }
+            begin_base(ctx);
+            return;
         }
-        return;
-    case Mode::Corner2:
-        if (const auto p = read_point(ctx, text)) {
-            c2_ = *p;
-            ctx.clear_preview();
-            // The base point is a real coordinate again (osnap/ortho apply), so seed
-            // ortho from it rather than from the window corner.
-            ctx.clear_last_point();
-            mode_ = Mode::Base;
-            ctx.set_prompt("Specify base point: ");
+        if (upper(t) == "ALL") {
+            ctx.submit(core::SelectAllCommand{});
+            return; // still selecting, as in AutoCAD: Enter finishes
         }
+        if (const auto p = read_point(ctx, text)) {
+            // A typed coordinate at "Select objects:" is a pick at that point.
+            ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
+            return;
+        }
+        ctx.echo("Pick objects, drag a crossing window, type ALL, or press Enter to finish.");
         return;
-    case Mode::Base:
+    }
+    case Mode::Base: {
+        const std::string u = upper(t);
+        if (t.empty() || u == "D" || u == "DISPLACEMENT") {
+            mode_ = Mode::Displacement;
+            ctx.set_prompt("Specify displacement <0.0000, 0.0000>: ");
+            return;
+        }
         if (const auto p = read_point(ctx, text)) {
             base_ = *p;
-            ctx.set_last_point(*p);
-            mode_ = Mode::Displacement;
-            // A rubber line from the base point to the cursor: the displacement vector.
-            // Deliberately NOT a Move ghost -- a stretch drags only the caught vertices,
-            // so ghosting the whole entity would show the wrong result.
-            ctx.set_preview(PreviewSpec{PreviewKind::Segment, {base_}});
-            ctx.set_prompt("Specify second point: ");
+            ctx.set_last_point(*p); // ortho/polar for the second point run from here
+            mode_ = Mode::Second;
+            // A rubber line from the base point, and the selection stretched live under
+            // the cursor (the engine previews it on a scratch store).
+            PreviewSpec pv{PreviewKind::Segment, {base_}};
+            pv.live_stretch = true;
+            ctx.set_preview(pv);
+            ctx.set_prompt("Specify second point or <use first point as displacement>: ");
         }
         return;
-    case Mode::Displacement:
-        if (const auto p = read_point(ctx, text)) {
-            const core::Vec2 mn{std::min(c1_.x, c2_.x), std::min(c1_.y, c2_.y)};
-            const core::Vec2 mx{std::max(c1_.x, c2_.x), std::max(c1_.y, c2_.y)};
-            ctx.clear_preview();
-            ctx.submit(core::StretchSelectionCommand{mn, mx, *p - base_, ctx.group_id()});
-            // The engine reports what it actually did (Ph10.1 honest feedback), so the
-            // command does not guess a success message here.
+    }
+    case Mode::Displacement: {
+        if (t.empty()) {
+            ctx.echo("Zero displacement: nothing to stretch.");
             done_ = true;
+            return;
+        }
+        // The value IS the displacement vector, typed as x,y (or a picked point taken
+        // as a vector from the origin), as in AutoCAD.
+        if (const auto p = read_point(ctx, text)) {
+            finish(ctx, *p);
         }
         return;
+    }
+    case Mode::Second: {
+        if (t.empty()) {
+            // AutoCAD: the first point's coordinates are the displacement.
+            finish(ctx, base_);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            finish(ctx, *p - base_);
+        }
+        return;
+    }
     }
 }
 
 void StretchCommand::cancel(CommandContext& ctx) {
     ctx.clear_preview();
+    ctx.submit(core::StretchPreviewCommand{{}, false}); // drop the rubber band
     ctx.echo("*Cancel*");
     done_ = true;
 }

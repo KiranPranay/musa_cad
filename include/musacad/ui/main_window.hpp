@@ -116,6 +116,11 @@ public:
     /// `out_png` for eyes-on verification of the on-geometry tooltips. `kind`: 0 REC,
     /// 1 LINE, 2 CIRCLE. Returns true if the tips landed on their geometry anchors.
     bool dyn_shot(int kind, const std::string& out_png);
+    /// Real-window STRETCH capture, driven entirely by synthetic MOUSE events through the
+    /// viewport's own handlers -- a right-to-left crossing drag at "Select objects:", a
+    /// right-click to finish, a click for the base point, a move (the live preview), a
+    /// click to commit -- grabbing a PNG at each stage into `out_dir`.
+    bool stretch_shot(const std::string& out_dir);
     /// Real-window capture for the OFFSET-polyline fix + JOIN. Builds geometry, runs the
     /// op, zooms to extents, and grabs the app region. `kind`: 0 rectangle offset inward,
     /// 1 filleted-rectangle offset, 2 open-polyline offset, 3 over-large offset (graceful

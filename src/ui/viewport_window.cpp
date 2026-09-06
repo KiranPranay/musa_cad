@@ -301,6 +301,8 @@ void ViewportWindow::render_loop(std::stop_token token) {
             snap_y_.store(snap.snap_point.y, std::memory_order_relaxed);
         }
         selection_count_.store(static_cast<int>(snap.selection.size()), std::memory_order_relaxed);
+        grip_preview_count_.store(static_cast<int>(snap.grip_preview_segments.size()),
+                                  std::memory_order_relaxed);
         line_vertex_count_.store(static_cast<int>(snap.line_vertices.size()),
                                  std::memory_order_relaxed);
         hovered_kind_.store(snap.has_hover ? static_cast<int>(snap.hover.kind) + 1 : 0,
@@ -392,6 +394,16 @@ void ViewportWindow::render_loop(std::stop_token token) {
 }
 
 void ViewportWindow::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::RightButton) {
+        // AutoCAD: right-click is Enter while a command is running -- it ends "Select
+        // objects:" and accepts a prompt's default. Idle right-click is left alone.
+        if (processor_ != nullptr && processor_->has_active_command()) {
+            sync_selection_to_processor();
+            processor_->submit_line("");
+            rebuild_overlay();
+        }
+        return;
+    }
     if (event->button() == Qt::MiddleButton) {
         panning_ = true;
         last_x_ = event->position().x();
@@ -415,22 +427,24 @@ void ViewportWindow::mousePressEvent(QMouseEvent* event) {
             sel_start_screen_ = screen_px;
             sel_start_world_ = world;
             sel_cur_world_ = world;
+        } else if (processor_->in_selection_phase()) {
+            // "Select objects:" -- the same drag the idle canvas uses (a pick, a window
+            // left-to-right, a crossing window right-to-left), on the RAW cursor, but
+            // always accumulating and announced as "N found". Never a tab-to-tab drop.
+            selecting_ = true;
+            sel_additive_ = true;
+            sel_start_screen_ = screen_px;
+            sel_start_world_ = world;
+            sel_cur_world_ = world;
+            had_selection_at_press_ = false;
         } else if (processor_->has_active_command()) {
             std::optional<core::Vec2> snap;
             if (snap_has_.load(std::memory_order_relaxed)) {
                 snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
                                   snap_y_.load(std::memory_order_relaxed)};
             }
-            // Was this pick the FIRST corner of a selection window? If so, arm a drag:
-            // releasing away from here delivers the opposite corner, so the window can be
-            // dragged out in one gesture (AutoCAD) as well as clicked corner-to-corner.
-            const bool window_pick = processor_->wants_window();
             processor_->set_pick_radius(10.0 * dpr / scale);
             processor_->pick_point(world, snap);
-            if (window_pick) {
-                window_drag_ = true;
-                sel_start_screen_ = screen_px;
-            }
             rebuild_overlay();
         } else if (const int gi = grip_at(world, 10.0 * dpr / scale); gi >= 0) {
             // Idle press on a grip of a selected entity: begin a direct-manipulation
@@ -597,25 +611,6 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
         rebuild_overlay();
         return;
     }
-    if (event->button() == Qt::LeftButton && window_drag_) {
-        window_drag_ = false;
-        const double dpr = devicePixelRatio();
-        const core::Vec2 rel_screen{event->position().x() * dpr, event->position().y() * dpr};
-        // A real drag delivers the opposite corner now; a press-in-place is left alone so
-        // the classic click-click flow still works and a stray click cannot collapse the
-        // window onto its own first corner.
-        if (processor_ != nullptr && processor_->wants_window() &&
-            core::length(rel_screen - sel_start_screen_) >= 4.0 * dpr) {
-            core::Vec2 world;
-            {
-                std::scoped_lock lock(camera_mutex_);
-                world = camera_.screen_to_world(rel_screen);
-            }
-            processor_->pick_point(world, std::nullopt); // window corners ignore osnap
-            rebuild_overlay();
-        }
-        return;
-    }
     if (event->button() == Qt::LeftButton && selecting_) {
         selecting_ = false;
         const double dpr = devicePixelRatio();
@@ -660,9 +655,12 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
             return;
         }
         had_selection_at_press_ = false;
+        // At a command's "Select objects:" prompt the engine echoes AutoCAD's "N found".
+        const bool announce = processor_ != nullptr && processor_->in_selection_phase();
         if (drag_px < 4.0 * dpr) {
             // Single-click pick.
-            engine_.submit(core::SelectPickCommand{world, 10.0 * dpr / scale, sel_additive_});
+            engine_.submit(
+                core::SelectPickCommand{world, 10.0 * dpr / scale, sel_additive_, announce});
         } else {
             // Window (left->right) vs crossing (right->left), per AutoCAD.
             const bool crossing = rel_screen.x < sel_start_screen_.x;
@@ -670,7 +668,8 @@ void ViewportWindow::mouseReleaseEvent(QMouseEvent* event) {
                                 std::min(sel_start_world_.y, world.y)};
             const core::Vec2 mx{std::max(sel_start_world_.x, world.x),
                                 std::max(sel_start_world_.y, world.y)};
-            engine_.submit(core::SelectWindowCommand{mn, mx, crossing, sel_additive_});
+            engine_.submit(
+                core::SelectWindowCommand{mn, mx, crossing, sel_additive_, announce});
         }
         rebuild_overlay();
         Q_EMIT pickerInteracted();
@@ -761,10 +760,7 @@ void ViewportWindow::rebuild_overlay() {
             snap = core::Vec2{snap_x_.load(std::memory_order_relaxed),
                               snap_y_.load(std::memory_order_relaxed)};
         }
-        // A selection-window corner takes the raw cursor, so the rubber band outlines the
-        // region the pick will actually use (ortho would otherwise flatten the band).
-        const core::Vec2 cur =
-            processor_->wants_window() ? raw : processor_->resolve_pick(raw, snap);
+        const core::Vec2 cur = processor_->resolve_pick(raw, snap);
         dyn_cursor_ = cur; // for composing a typed value on Enter
         Q_EMIT constrainedCursorMoved(cur.x, cur.y); // DYN live values read this
         const command::PreviewSpec& pv = processor_->preview();
@@ -779,6 +775,19 @@ void ViewportWindow::rebuild_overlay() {
             dyn_sec = dyn_parse(dyn_buf_[1]);
         }
         const core::Vec2 cur_eff = command::apply_dyn_lock(pv, cur, dyn_prim, dyn_sec);
+        // Live STRETCH: stream the (ortho/snap/DYN-resolved) cursor delta to the geometry
+        // thread, which previews the whole selection stretched by it. Only on change, so
+        // a redraw that did not move the cursor does not resubmit the same preview.
+        if (pv.live_stretch && !pts.empty()) {
+            const core::Vec2 delta = cur_eff - pts[0];
+            if (!stretch_preview_sent_ || core::length(delta - last_stretch_delta_) > 1e-12) {
+                engine_.submit(core::StretchPreviewCommand{delta, true});
+                last_stretch_delta_ = delta;
+                stretch_preview_sent_ = true;
+            }
+        } else {
+            stretch_preview_sent_ = false;
+        }
         auto& seg = ov.preview_segments;
         switch (pv.kind) {
         case command::PreviewKind::Segment:
@@ -1301,6 +1310,7 @@ bool ViewportWindow::sub_prompt_handle_key(int key, const QString& text) {
     case Qt::Key_Enter: {
         const std::string v = sub_entry_;
         sub_entry_.clear();
+        sync_selection_to_processor();
         processor_->submit_line(v); // empty -> the command's default (accept <0>, end LINE, ...)
         rebuild_overlay();
         return true;
@@ -1427,6 +1437,26 @@ void ViewportWindow::keyPressEvent(QKeyEvent* event) {
         return;
     }
     QWindow::keyPressEvent(event);
+}
+
+core::Vec2 ViewportWindow::world_to_widget(core::Vec2 world) {
+    core::Vec2 px;
+    {
+        std::scoped_lock lock(camera_mutex_);
+        px = camera_.world_to_screen(world);
+    }
+    const double dpr = devicePixelRatio();
+    return {px.x / dpr, px.y / dpr};
+}
+
+void ViewportWindow::sync_selection_to_processor() {
+    // The processor's selection count is a cache the host refreshes on a timer. Before an
+    // Enter or right-click that a command will judge by "is anything selected?", hand it
+    // the count this viewport has ALREADY been published, so a drag-then-Enter is judged
+    // on the selection it just made rather than on a 100 ms-old copy.
+    if (processor_ != nullptr) {
+        processor_->set_selection_count(selection_count_.load(std::memory_order_relaxed));
+    }
 }
 
 void ViewportWindow::handle_escape() {

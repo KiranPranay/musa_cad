@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <span>
 #include <optional>
 #include <unordered_set>
 #include <utility>
@@ -306,50 +307,70 @@ bool segment_hits_rect(Vec2 a, Vec2 b, Vec2 mn, Vec2 mx) {
 }
 } // namespace
 
-void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additive) {
+bool GeometryEngine::entity_hits_rect(EntityHandle h, Vec2 mn, Vec2 mx, bool crossing) const {
+    std::vector<Vec2> tess;
+    kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
+    if (tess.empty()) {
+        return false;
+    }
+    // An INSERT tessellates to disjoint segment PAIRS (no phantom connectors);
+    // crossing must test pair (2i, 2i+1), not consecutive points.
+    const bool pairs = h.kind == EntityKind::Insert;
+    if (crossing) {
+        if (pairs) {
+            for (std::size_t i = 0; i + 1 < tess.size(); i += 2) {
+                if (segment_hits_rect(tess[i], tess[i + 1], mn, mx)) {
+                    return true;
+                }
+            }
+        } else {
+            for (std::size_t i = 1; i < tess.size(); ++i) {
+                if (segment_hits_rect(tess[i - 1], tess[i], mn, mx)) {
+                    return true;
+                }
+            }
+        }
+        return tess.size() == 1 && point_in_rect(tess[0], mn, mx);
+    }
+    for (const Vec2& p : tess) { // window: every point must be inside
+        if (!point_in_rect(p, mn, mx)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additive,
+                                   bool announce) {
     if (!additive) {
         selection_.clear();
+        forget_stretch_windows();
     }
+    const std::size_t before = selection_.size();
     std::vector<EntityHandle> candidates;
     grid_.query(mn, mx, candidates);
-    std::vector<Vec2> tess;
     for (const EntityHandle h : candidates) {
         if (!selectable(h)) {
             continue; // window/crossing select ignores off/frozen/locked layers
         }
-        kernel_.tessellate(store_, h, kDefaultTessTolerance, tess);
-        if (tess.empty()) {
-            continue;
-        }
-        bool selected = false;
-        // An INSERT tessellates to disjoint segment PAIRS (no phantom connectors);
-        // crossing must test pair (2i, 2i+1), not consecutive points.
-        const bool pairs = h.kind == EntityKind::Insert;
-        if (crossing) {
-            if (pairs) {
-                for (std::size_t i = 0; i + 1 < tess.size() && !selected; i += 2) {
-                    selected = segment_hits_rect(tess[i], tess[i + 1], mn, mx);
-                }
-            } else {
-                for (std::size_t i = 1; i < tess.size() && !selected; ++i) {
-                    selected = segment_hits_rect(tess[i - 1], tess[i], mn, mx);
-                }
-            }
-            if (!selected && tess.size() == 1) {
-                selected = point_in_rect(tess[0], mn, mx);
-            }
-        } else {
-            selected = true; // window: every point must be inside
-            for (const Vec2& p : tess) {
-                if (!point_in_rect(p, mn, mx)) {
-                    selected = false;
-                    break;
-                }
-            }
-        }
-        if (selected) {
+        if (entity_hits_rect(h, mn, mx, crossing)) {
             sel_add(h);
         }
+    }
+    // A CROSSING window is remembered for STRETCH: it is the record of which vertices
+    // the user caught. An ordinary window is not -- everything it selects is enclosed,
+    // and enclosed objects move whole, which needs no window to decide.
+    if (crossing) {
+        stretch_windows_.emplace_back(mn, mx);
+    }
+    note_selection_for_windows();
+    if (announce) {
+        const std::size_t found = selection_.size() - before;
+        std::string msg = std::to_string(found) + " found";
+        if (additive && before > 0) {
+            msg += ", " + std::to_string(selection_.size()) + " total";
+        }
+        report(msg + ".");
     }
 }
 
@@ -370,9 +391,21 @@ namespace {
 /// untouched -- AutoCAD does the same (a circle cannot be stretched). Dimensions move
 /// their enclosed DEF POINTS, so a stretched feature's dimension RE-MEASURES for free:
 /// the value is computed from those points, never baked.
-bool stretch_cmd(Command& c, Vec2 d, Vec2 mn, Vec2 mx) {
+/// A crossing window on record: {min, max}.
+using StretchWindow = std::pair<Vec2, Vec2>;
+
+/// Apply STRETCH's per-kind rule to one captured entity: every "stretch point" (vertex,
+/// endpoint, or the single anchor of a rigid object) that lies inside ANY of `windows`
+/// moves by `d`; the rest stay. Returns false if nothing moved. A point inside two
+/// overlapping windows moves once -- membership is a predicate, not a sum.
+bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
     const auto inside = [&](Vec2 p) {
-        return p.x >= mn.x && p.x <= mx.x && p.y >= mn.y && p.y <= mx.y;
+        for (const StretchWindow& w : windows) {
+            if (p.x >= w.first.x && p.x <= w.second.x && p.y >= w.first.y && p.y <= w.second.y) {
+                return true;
+            }
+        }
+        return false;
     };
     bool moved = false;
     const auto pull = [&](Vec2& p) {
@@ -392,6 +425,59 @@ bool stretch_cmd(Command& c, Vec2 d, Vec2 mn, Vec2 mx) {
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
                 for (Vec2& v : x.points) {
                     pull(v);
+                }
+            } else if constexpr (std::is_same_v<T, AddArcCommand>) {
+                // An arc's stretch points are its two ENDPOINTS. Both inside -> it moves
+                // whole. One inside -> that end moves and the arc is rebuilt through the
+                // new chord keeping its SAGITTA (height above the chord), the AutoCAD
+                // rule: the arc flattens or bulges as its chord changes rather than
+                // swinging about a fixed centre. Neither inside -> untouched, even if the
+                // centre happens to be in the window: the centre is not a stretch point.
+                double sweep = x.end_angle - x.start_angle;
+                while (sweep <= 0.0) {
+                    sweep += kTwoPi;
+                }
+                const Vec2 p0{x.center.x + x.radius * std::cos(x.start_angle),
+                              x.center.y + x.radius * std::sin(x.start_angle)};
+                const Vec2 p1{x.center.x + x.radius * std::cos(x.end_angle),
+                              x.center.y + x.radius * std::sin(x.end_angle)};
+                const bool i0 = inside(p0);
+                const bool i1 = inside(p1);
+                if (i0 && i1) {
+                    x.center += d;
+                    moved = true;
+                } else if (i0 || i1) {
+                    // Signed sagitta: the arc's midpoint measured along the chord's left
+                    // normal. Negative for a minor CCW arc (it bulges away from the centre,
+                    // which sits on the left), positive for a major one.
+                    const double mid = x.start_angle + sweep * 0.5;
+                    const Vec2 m{x.center.x + x.radius * std::cos(mid),
+                                 x.center.y + x.radius * std::sin(mid)};
+                    const Vec2 chord = p1 - p0;
+                    const double len = length(chord);
+                    if (len > 1e-12) {
+                        const Vec2 n{-chord.y / len, chord.x / len};
+                        const Vec2 q{(p0.x + p1.x) * 0.5, (p0.y + p1.y) * 0.5};
+                        const double h = dot(m - q, n);
+                        const Vec2 np0 = i0 ? p0 + d : p0;
+                        const Vec2 np1 = i1 ? p1 + d : p1;
+                        const Vec2 nc = np1 - np0;
+                        const double nl = length(nc);
+                        if (nl > 1e-12 && std::abs(h) > 1e-9) {
+                            const Vec2 nn{-nc.y / nl, nc.x / nl};
+                            const Vec2 nq{(np0.x + np1.x) * 0.5, (np0.y + np1.y) * 0.5};
+                            const double r = (nl * nl * 0.25 + h * h) / (2.0 * std::abs(h));
+                            // Centre: r back from the new arc midpoint, on the side away
+                            // from it -- left of the chord for a minor arc, right for major.
+                            const double sgn = h < 0.0 ? -1.0 : 1.0;
+                            const Vec2 centre{nq.x + nn.x * (h - sgn * r), nq.y + nn.y * (h - sgn * r)};
+                            x.center = centre;
+                            x.radius = r;
+                            x.start_angle = std::atan2(np0.y - centre.y, np0.x - centre.x);
+                            x.end_angle = std::atan2(np1.y - centre.y, np1.x - centre.x);
+                            moved = true;
+                        }
+                    }
                 }
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 // Def points re-measure; the placement point follows so the dimension
@@ -416,9 +502,9 @@ bool stretch_cmd(Command& c, Vec2 d, Vec2 mn, Vec2 mx) {
                 pull(x.tip);
                 pull(x.pos);
             } else if constexpr (requires { x.center; }) {
-                pull(x.center); // circle / arc: move whole, never deform
+                pull(x.center); // circle: cannot be stretched; moves if its centre is caught
             } else if constexpr (requires { x.pos; }) {
-                pull(x.pos); // text, mtext, insert, image, table, FCF
+                pull(x.pos); // text, mtext, insert, image, table, FCF: one anchor
             }
         },
         c);
@@ -951,39 +1037,72 @@ void GeometryEngine::apply_list_query(Vec2 at, double radius) {
     report(out);
 }
 
-void GeometryEngine::apply_stretch(Vec2 mn, Vec2 mx, Vec2 delta, std::uint64_t group) {
-    // Candidates from the SAME spatial index every other pick uses. A crossing window is
-    // the right query: an entity only partly inside must still be considered, because its
-    // enclosed vertices are exactly the ones that move.
-    std::vector<EntityHandle> candidates;
-    grid_.query(mn, mx, candidates);
-    std::vector<EntityHandle> result;
-    int touched = 0;
-    for (const EntityHandle h : candidates) {
-        if (!selectable(h)) {
-            continue; // off / frozen / locked layers are inert, as everywhere else
+std::vector<GeometryEngine::StretchEdit> GeometryEngine::stretched_commands(Vec2 delta) const {
+    std::vector<StretchEdit> out;
+    // The recorded crossing windows describe THIS selection only. If anything replaced
+    // the selection since (an edit, a paste, a new document) they are meaningless, and
+    // every selected object falls back to moving whole -- which is exactly what AutoCAD
+    // does for objects that were not selected by a crossing window.
+    const bool windows_valid = !stretch_windows_.empty() && stretch_windows_sel_ == selection_;
+    for (const EntityHandle h : selection_) {
+        if (!store_.is_valid(h) || !selectable(h)) {
+            continue;
         }
-        const Command original = capture_entity(h);
-        Command edited = original;
-        if (!stretch_cmd(edited, delta, mn, mx)) {
-            continue; // the window enclosed none of its points -- leave it alone
+        bool crossed = false;
+        if (windows_valid) {
+            for (const auto& w : stretch_windows_) {
+                if (entity_hits_rect(h, w.first, w.second, /*crossing=*/true)) {
+                    crossed = true;
+                    break;
+                }
+            }
         }
-        remove_indexed(h);
-        push_erase_item(group, original);
-        const EntityHandle nh = create_indexed(edited);
-        push_create_item(group, nh, edited);
-        result.push_back(nh);
-        ++touched;
+        Command edited = capture_entity(h);
+        bool changed = false;
+        if (crossed) {
+            // Partly enclosed: only the caught vertices move. A line that merely passes
+            // through the window with both ends outside is crossed but unchanged, and
+            // AutoCAD leaves it alone too -- `changed` stays false and it is skipped.
+            changed = stretch_cmd(edited, delta, stretch_windows_);
+        } else {
+            translate_cmd(edited, delta); // enclosed or picked: moved whole
+            changed = true;
+        }
+        if (changed) {
+            out.push_back(StretchEdit{h, std::move(edited)});
+        }
     }
-    if (touched == 0) {
-        report("Nothing in the crossing window to stretch.");
+    return out;
+}
+
+void GeometryEngine::apply_stretch(Vec2 delta, std::uint64_t group) {
+    stretch_preview_active_ = false; // the rubber band ends with the commit
+    prune_selection();
+    if (selection_.empty()) {
+        report("Nothing selected to stretch.");
         return;
     }
+    const std::vector<StretchEdit> edits = stretched_commands(delta);
+    if (edits.empty()) {
+        report("Nothing to stretch: no vertex of the selection lies inside the crossing window.");
+        return;
+    }
+    std::vector<EntityHandle> result;
+    for (const StretchEdit& e : edits) {
+        const Command original = capture_entity(e.handle);
+        remove_indexed(e.handle);
+        push_erase_item(group, original);
+        const EntityHandle nh = create_indexed(e.edited);
+        push_create_item(group, nh, e.edited);
+        result.push_back(nh);
+    }
     selection_ = result;
+    forget_stretch_windows(); // the caught vertices have moved out from under the windows
     redo_.clear();
     geom_dirty_ = true;
-    report("Stretched " + std::to_string(touched) +
-           (touched == 1 ? " object." : " objects."));
+    dirty_ = true;
+    report("Stretched " + std::to_string(edits.size()) +
+           (edits.size() == 1 ? " object." : " objects."));
 }
 
 void GeometryEngine::apply_copy_clipboard() {
@@ -3496,14 +3615,27 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, SelectPickCommand>) {
                 if (!c.additive) {
                     selection_.clear();
+                    forget_stretch_windows();
                 }
+                const std::size_t before = selection_.size();
                 sel_add(pick_nearest(c.world, c.radius));
+                note_selection_for_windows(); // a picked object moves whole; windows stay
+                if (c.announce) {
+                    const std::size_t found = selection_.size() - before;
+                    std::string msg = std::to_string(found) + " found";
+                    if (c.additive && before > 0) {
+                        msg += ", " + std::to_string(selection_.size()) + " total";
+                    }
+                    report(msg + ".");
+                }
             } else if constexpr (std::is_same_v<T, SelectWindowCommand>) {
-                select_window(c.min, c.max, c.crossing, c.additive);
+                select_window(c.min, c.max, c.crossing, c.additive, c.announce);
             } else if constexpr (std::is_same_v<T, SelectAllCommand>) {
                 selection_ = all_live();
+                forget_stretch_windows(); // nothing was "caught": everything moves whole
             } else if constexpr (std::is_same_v<T, ClearSelectionCommand>) {
                 selection_.clear();
+                forget_stretch_windows();
             } else if constexpr (std::is_same_v<T, ChainDimensionCommand>) {
                 apply_chain_dimension(c.at, c.baseline, c.group);
             } else if constexpr (std::is_same_v<T, AreaQueryCommand>) {
@@ -3511,7 +3643,7 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, ListQueryCommand>) {
                 apply_list_query(c.at, c.pick_radius);
             } else if constexpr (std::is_same_v<T, StretchSelectionCommand>) {
-                apply_stretch(c.win_min, c.win_max, c.delta, c.group);
+                apply_stretch(c.delta, c.group);
             } else if constexpr (std::is_same_v<T, MoveSelectionCommand>) {
                 apply_move(c.delta, false, c.group);
             } else if constexpr (std::is_same_v<T, CopySelectionCommand>) {
@@ -3546,6 +3678,10 @@ void GeometryEngine::apply(const Command& command) {
                 apply_break(c);
             } else if constexpr (std::is_same_v<T, PurgeCommand>) {
                 apply_purge();
+            } else if constexpr (std::is_same_v<T, StretchPreviewCommand>) {
+                // Preview only: recomputed at the next publish on the scratch store.
+                stretch_preview_active_ = c.active && !selection_.empty();
+                stretch_preview_delta_ = c.delta;
             } else if constexpr (std::is_same_v<T, AlignSelectionCommand>) {
                 apply_align(c);
             } else if constexpr (std::is_same_v<T, LengthenCommand>) {
@@ -3710,6 +3846,7 @@ void GeometryEngine::apply(const Command& command) {
                 std::is_same_v<T, ResolveDimObjectCommand> ||
                 std::is_same_v<T, SetViewScaleCommand> ||
                 std::is_same_v<T, BuildPlotSnapshotCommand> || // read-only plot build
+                std::is_same_v<T, StretchPreviewCommand> || // rubber band only
                 std::is_same_v<T, GripDragCommand>; // Commit sets dirty_ itself
             if constexpr (!view_or_io) {
                 dirty_ = true;
@@ -3769,6 +3906,8 @@ void GeometryEngine::reset_active_state() {
     grip_handle_ = EntityHandle{};
     grip_index_ = 0;
     grip_preview_store_.clear();
+    forget_stretch_windows();
+    stretch_preview_active_ = false;
 }
 
 void GeometryEngine::new_document() {
@@ -3796,6 +3935,10 @@ void GeometryEngine::park_active(DocState& d) {
     d.grip_index = grip_index_;
     d.grip_pos = grip_pos_;
     d.grip_preview_store = std::move(grip_preview_store_);
+    d.stretch_windows = std::move(stretch_windows_);
+    d.stretch_windows_sel = std::move(stretch_windows_sel_);
+    d.stretch_preview_active = stretch_preview_active_;
+    d.stretch_preview_delta = stretch_preview_delta_;
 }
 
 void GeometryEngine::load_active(DocState& d) {
@@ -3818,6 +3961,10 @@ void GeometryEngine::load_active(DocState& d) {
     grip_index_ = d.grip_index;
     grip_pos_ = d.grip_pos;
     grip_preview_store_ = std::move(d.grip_preview_store);
+    stretch_windows_ = std::move(d.stretch_windows);
+    stretch_windows_sel_ = std::move(d.stretch_windows_sel);
+    stretch_preview_active_ = d.stretch_preview_active;
+    stretch_preview_delta_ = d.stretch_preview_delta;
 }
 
 std::size_t GeometryEngine::doc_index(std::uint64_t id) const {
@@ -4070,6 +4217,27 @@ void GeometryEngine::rebuild_and_publish() {
         build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_, store_.ltscale());
         buf.grip_preview_segments = std::move(tmp.line_vertices);
         buf.grip_preview_fills = std::move(tmp.fill_vertices);
+    } else if (stretch_preview_active_) {
+        // Live STRETCH: the whole selection, stretched by the current cursor delta, on
+        // the same scratch store and through the same publish channel as a grip drag --
+        // so the renderer needs nothing new. Built by stretched_commands(), i.e. by the
+        // code the commit will run, so the band shows exactly what the click will do.
+        const std::vector<StretchEdit> edits = stretched_commands(stretch_preview_delta_);
+        if (!edits.empty()) {
+            grip_preview_store_.clear();
+            grip_preview_store_.set_layer_table(store_.layers(), store_.current_layer());
+            grip_preview_store_.set_dimstyle_table(store_.dimstyles());
+            for (const StretchEdit& e : edits) {
+                const EntityProps* ep = store_.props(e.handle);
+                add_command_to_store(grip_preview_store_, e.edited,
+                                     ep != nullptr ? *ep : EntityProps{store_.current_layer()});
+            }
+            RenderSnapshot tmp;
+            build_render_snapshot(grip_preview_store_, kernel_, tmp, tess_tolerance_,
+                                  store_.ltscale());
+            buf.grip_preview_segments = std::move(tmp.line_vertices);
+            buf.grip_preview_fills = std::move(tmp.fill_vertices);
+        }
     }
 
     // Rollover (hover) candidate: the entity under the cursor's pick-box. Same

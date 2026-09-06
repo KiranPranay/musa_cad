@@ -49,6 +49,12 @@ struct PreviewSpec {
     /// PreviewKind::Polygon path the same way fixed_w/fixed_h parameterise Rectangle.
     int sides = 4;
     bool inscribed = true;
+    /// STRETCH's second-point step: besides the Segment rubber line from points[0], the
+    /// viewport streams the cursor delta to the engine, which previews the whole
+    /// selection stretched by it (StretchPreviewCommand). A flag on the existing Segment
+    /// kind rather than a new kind, so Dynamic Input's length/angle fields and ortho
+    /// behave exactly as they do for LINE with no second code path.
+    bool live_stretch = false;
     // True while the command is awaiting a single scalar/keyword at a value sub-prompt
     // (RECTANGLE Dimensions length/width, Area, Rotation) rather than the two-field
     // corner drag. With Dynamic Input on this routes the step to the at-cursor

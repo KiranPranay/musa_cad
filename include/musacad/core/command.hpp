@@ -180,6 +180,10 @@ struct SelectPickCommand {
     Vec2 world;
     double radius = 0.0;
     bool additive = false; ///< Shift: add to selection rather than replace
+    /// True while a command is at its "Select objects:" prompt: the engine then echoes
+    /// AutoCAD's "N found" / "N found, M total" through the status channel. Off for idle
+    /// selection, where that would be noise.
+    bool announce = false;
 };
 
 /// Box select. `crossing` false = window (entities fully enclosed), true =
@@ -189,6 +193,7 @@ struct SelectWindowCommand {
     Vec2 max;
     bool crossing = false;
     bool additive = false;
+    bool announce = false; ///< see SelectPickCommand::announce
 };
 
 struct SelectAllCommand {};
@@ -229,15 +234,30 @@ struct ListQueryCommand {
     double pick_radius = 0.0;
 };
 
-/// STRETCH (issue #24): move the stored points inside the crossing window `win_min..win_max`
-/// by `delta`, leaving the rest of each entity anchored. Resolved on the geometry thread
-/// against the existing spatial index -- the UI never touches the store, it just sends the
-/// window and the displacement.
+/// STRETCH (AutoCAD): move the selection by `delta` under AutoCAD's rule --
+///
+///   * an object CROSSED by a crossing window has only the vertices and endpoints that
+///     lie inside that window moved (partly enclosed => stretched);
+///   * an object completely enclosed by the window, or selected individually (a pick or
+///     an ordinary window), is MOVED whole.
+///
+/// The crossing windows are the ones that built the current selection; the engine
+/// remembers them as the selection is made (see GeometryEngine::stretch_windows_), so
+/// the command only supplies the displacement. That is also what lets objects selected
+/// BEFORE the command (noun-verb) stretch correctly: the window that picked them is
+/// still on record.
 struct StretchSelectionCommand {
-    Vec2 win_min;
-    Vec2 win_max;
     Vec2 delta;
     std::uint64_t group = 0;
+};
+
+/// The live STRETCH rubber-band. While `active`, every publish previews the selection
+/// stretched by `delta` -- on a scratch store, exactly as a grip drag does, so the real
+/// store and the op-log are untouched until the command commits. The preview is built by
+/// the SAME function as the commit, so what is shown is what will land.
+struct StretchPreviewCommand {
+    Vec2 delta;
+    bool active = true;
 };
 
 /// Copy all selected entities by `delta`, leaving the originals.
@@ -798,7 +818,7 @@ using Command =
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
                  ArrayPathCommand, AddPointCommand, DividePathCommand, BreakCommand,
-                 AlignSelectionCommand, LengthenCommand, PurgeCommand,
+                 AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,
                  BuildPlotSnapshotCommand, AddPageSetupCommand, JoinPickCommand,
                  JoinSelectionCommand, CreateDocumentCommand, SwitchDocumentCommand,
