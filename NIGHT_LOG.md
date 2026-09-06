@@ -442,3 +442,20 @@ all issues. Everything tested by script or GUI control. No release.
   new `MUSACAD_STRETCH_SHOT` harness that performs the whole gesture with synthetic mouse
   events and grabs each stage (grabWindow is black for the GL surface under Wayland;
   `import -window` during MUSACAD_DYN_HOLD works). Looked at all four frames.
+
+## 2026-09-06 — input lag after STRETCH: per-event UI cost
+
+- Measured, not guessed: the engine publishes in ~0.65 ms and never rebuilds the scene
+  during the preview; but every mouse move cost ~4.2 ms on the UI thread in EVERY state,
+  idle included, so a real mouse's event rate backed the queue up and the crosshair and
+  rubber band trailed the pointer.
+- Causes: `update_dyn_surfaces()` judged viewport focus by `container.hasFocus()`, which
+  is false while the embedded GL window is the focus window, so it called `setFocus()` on
+  every cursor event (~2 ms each); plus a status-bar label repaint, a hidden tool-window
+  move and a text refresh per event.
+- Fix: judge focus the way Qt routes keys to an embedded QWindow (focus window == the
+  viewport, or the focus widget is in the container); coalesce the readout repaint and
+  the DYN box move/refresh into a 16 ms single-shot tick (the signals only record); move
+  the live-stretch submit after the overlay hand-off; tab bars are `NoFocus`.
+- Result: 0.1–0.35 ms per move in every state. GUI harness PASS (the focus rule too), 553
+  tests, capture harness PASS with `MUSACAD_TIMING` printing the per-move cost per state.

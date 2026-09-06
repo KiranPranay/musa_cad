@@ -246,6 +246,15 @@ private:
     void toggle_properties();      ///< PR: show/hide the Properties palette dock
     void sync_properties_panel();  ///< push the latest selection summary to the panel
     void set_dyn_enabled(bool on); ///< F12: enable/disable Dynamic Input (persisted)
+    /// Per-frame cursor tick. The viewport's cursor signals arrive once per mouse event,
+    /// and everything they used to drive directly -- the status-bar coordinate readout
+    /// (a repaint), the DYN box's window move, its text refresh and two focus passes --
+    /// cost ~4 ms per event on the UI thread. A real mouse reports faster than that, so
+    /// the event queue backed up and the crosshair and rubber band trailed the pointer.
+    /// The signals now only record the latest values and arm this single-shot timer;
+    /// the work runs at most once per ~frame, on whatever the cursor is doing NOW.
+    void arm_cursor_tick();
+    void cursor_tick();
     void reposition_dyn(double local_px, double local_py); ///< anchor near the cursor
     void refocus_dyn();            ///< re-acquire DYN field focus after a viewport pick
     /// Pick the active DYN surface: during a tip-driven rubber-band (RECT/LINE/CIRCLE)
@@ -330,6 +339,15 @@ private:
     int last_ctx_family1_ = -1;
     QTabBar* file_tabs_ = nullptr;          // multi-document tab strip (mirrors the engine)
     core::Vec2 last_cursor_world_{};        // latest cursor world pos (paste-at-cursor)
+    QTimer* cursor_tick_ = nullptr;
+    core::Vec2 tick_world_{};
+    double tick_px_ = 0.0;
+    double tick_py_ = 0.0;
+    core::Vec2 tick_constrained_{};
+    bool tick_world_pending_ = false;
+    bool tick_screen_pending_ = false;
+    bool tick_constrained_pending_ = false;
+    QString coord_text_shown_;
     QComboBox* layer_combo_ = nullptr;      // ribbon current-layer control
 
     ViewportModes modes_;
