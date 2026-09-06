@@ -364,6 +364,17 @@ private:
     bool done_ = false;
 };
 
+/// STRETCH (AutoCAD S), prompt for prompt:
+///
+///   Select objects to stretch by crossing-window or crossing-polygon...
+///   Select objects:                                   -- Enter / right-click ends it
+///   Specify base point or [Displacement] <Displacement>:
+///   Specify second point or <use first point as displacement>:
+///
+/// Objects already selected when the command starts skip the first prompt (noun-verb).
+/// During the second-point step the whole selection is previewed stretched under the
+/// cursor, live, honouring ortho. Which vertices move is AutoCAD's rule, decided by the
+/// engine from the crossing windows that built the selection.
 class StretchCommand final : public ICommand {
 public:
     std::string name() const override { return "STRETCH"; }
@@ -371,17 +382,15 @@ public:
     void input(CommandContext& ctx, const std::string& text) override;
     void cancel(CommandContext& ctx) override;
     bool done() const override { return done_; }
-    /// The two crossing-window corners are region picks: no osnap, no ortho/polar.
-    bool wants_window() const override {
-        return mode_ == Mode::Corner1 || mode_ == Mode::Corner2;
-    }
+    bool in_selection_phase() const override { return mode_ == Mode::Select; }
 
 private:
-    enum class Mode { Corner1, Corner2, Base, Displacement };
+    enum class Mode { Select, Base, Displacement, Second };
+    void begin_base(CommandContext& ctx);
+    void finish(CommandContext& ctx, core::Vec2 delta);
+
     bool done_ = false;
-    Mode mode_ = Mode::Corner1;
-    core::Vec2 c1_{};
-    core::Vec2 c2_{};
+    Mode mode_ = Mode::Select;
     core::Vec2 base_{};
 };
 

@@ -2628,6 +2628,162 @@ bool MainWindow::selftest_dyn() {
     return all;
 }
 
+bool MainWindow::stretch_shot(const std::string& out_dir) {
+    const auto pump = [](int ms) {
+        for (int i = 0; i < ms / 2; ++i) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    const auto pump_until = [](auto pred) {
+        for (int i = 0; i < 1500; ++i) {
+            if (pred()) {
+                return true;
+            }
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return pred();
+    };
+    // Real mouse events, through the viewport's real handlers, at LOGICAL positions the
+    // viewport itself maps from world coordinates.
+    const auto at = [this](core::Vec2 w) {
+        const core::Vec2 l = viewport_->world_to_widget(w);
+        return QPointF(l.x, l.y);
+    };
+    const auto mouse = [this](QEvent::Type type, QPointF lp, Qt::MouseButton btn,
+                              Qt::MouseButtons held) {
+        const QPoint gp = viewport_->mapToGlobal(lp.toPoint());
+        QMouseEvent ev(type, lp, QPointF(gp), btn, held, Qt::NoModifier);
+        QCoreApplication::sendEvent(viewport_, &ev);
+    };
+    const auto move_to = [&](core::Vec2 w, Qt::MouseButtons held) {
+        mouse(QEvent::MouseMove, at(w), Qt::NoButton, held);
+        pump(60);
+    };
+    const auto click = [&](core::Vec2 w, Qt::MouseButton btn) {
+        move_to(w, Qt::NoButton);
+        mouse(QEvent::MouseButtonPress, at(w), btn, btn);
+        pump(30);
+        mouse(QEvent::MouseButtonRelease, at(w), btn, Qt::NoButton);
+        pump(60);
+    };
+    const auto grab = [this, &out_dir](const char* name) {
+        QScreen* scr = (windowHandle() != nullptr && windowHandle()->screen() != nullptr)
+                           ? windowHandle()->screen()
+                           : QApplication::primaryScreen();
+        if (scr == nullptr) {
+            return false;
+        }
+        const QPixmap shot = scr->grabWindow(winId());
+        const QString path = QString::fromStdString(out_dir) + QStringLiteral("/") + name;
+        const bool ok = !shot.isNull() && shot.save(path, "PNG");
+        std::printf("[stretch_shot] %s -> %s\n", name, ok ? "saved" : "FAILED");
+        return ok;
+    };
+    const auto bounds = [this](core::Vec2& mn, core::Vec2& mx) {
+        return viewport_->content_bounds(mn, mx);
+    };
+    // Qt's grabWindow returns black for the GL surface under a Wayland compositor, so the
+    // eyes-on capture is an external `import -window <id>` while the stage is HELD on
+    // screen (MUSACAD_DYN_HOLD): each stage prints its id and waits 3 s.
+    const auto hold = [&](const char* stage) {
+        if (qEnvironmentVariableIsSet("MUSACAD_DYN_HOLD")) {
+            std::printf("[stretch_shot] HOLD %s 0x%lx\n", stage,
+                        static_cast<unsigned long>(winId()));
+            std::fflush(stdout);
+            pump(3000);
+        }
+    };
+
+    resize(1200, 820);
+    move(60, 60);
+    show();
+    raise();
+    activateWindow();
+    pump(700);
+    engine_->submit(core::NewDocumentCommand{});
+    pump(200);
+    dyn_action_->setChecked(true); // canvas mode, as in the video
+    if (ortho_action_ != nullptr) {
+        ortho_action_->setChecked(true); // ORTHO on: the configuration that used to fail
+    }
+    pump(150);
+    if (viewport_container_ != nullptr) {
+        viewport_container_->setFocus(Qt::OtherFocusReason);
+    }
+
+    // The scene: a 100x50 rectangle with a short stub off its right side.
+    processor_->submit_line("REC");
+    processor_->submit_line("0,0");
+    processor_->submit_line("100,50");
+    processor_->submit_line("LINE");
+    processor_->submit_line("100,25");
+    processor_->submit_line("140,25");
+    processor_->submit_line("");
+    core::Vec2 mn;
+    core::Vec2 mx;
+    bool ok = pump_until([&] { return bounds(mn, mx) && mx.x > 139.0; });
+    viewport_->zoom_extents();
+    pump(400);
+    // Zoom out a touch so the stretched result stays inside the frame.
+    viewport_->zoom_scale(0.6);
+    pump(300);
+
+    // 1. STRETCH -> "Select objects:" -> a RIGHT-TO-LEFT drag over the right half (a
+    //    crossing window), captured mid-drag so the green band is on screen.
+    processor_->submit_line("S");
+    pump(120);
+    ok = ok && processor_->in_selection_phase();
+    mouse(QEvent::MouseButtonPress, at({150, 70}), Qt::LeftButton, Qt::LeftButton);
+    pump(30);
+    move_to({100, 30}, Qt::LeftButton);
+    move_to({50, -20}, Qt::LeftButton);
+    ok = grab("stretch_1_crossing_drag.png") && ok;
+    hold("crossing_drag");
+    mouse(QEvent::MouseButtonRelease, at({50, -20}), Qt::LeftButton, Qt::NoButton);
+    ok = pump_until([this] { return viewport_->selection_count() == 2; }) && ok; // rect + stub
+    std::printf("[stretch_shot] crossing drag selected %d objects (%s)\n",
+                viewport_->selection_count(), viewport_->last_status().c_str());
+    ok = grab("stretch_2_selected.png") && ok;
+    hold("selected");
+
+    // 2. Right-click ends the selection (AutoCAD: right-click is Enter).
+    click({20, 80}, Qt::RightButton);
+    ok = pump_until([this] { return !processor_->in_selection_phase(); }) && ok;
+
+    // 3. Base point.
+    click({100, 0}, Qt::LeftButton);
+    pump(100);
+    ok = ok && processor_->preview().live_stretch;
+
+    // 4. Move the cursor: the selection stretches LIVE under it (ORTHO keeps it on the
+    //    axis). Wait for the engine's preview to be published, then capture it.
+    move_to({135, 4}, Qt::NoButton);
+    move_to({140, 5}, Qt::NoButton);
+    ok = pump_until([this] { return viewport_->grip_preview_vertex_count() > 0; }) && ok;
+    std::printf("[stretch_shot] live preview vertices: %d\n",
+                viewport_->grip_preview_vertex_count());
+    ok = grab("stretch_3_live_preview.png") && ok;
+    hold("live_preview");
+    // The drawing itself has not changed yet.
+    ok = ok && bounds(mn, mx) && std::abs(mx.x - 140.0) < 0.01;
+
+    // 5. Click: commit. The right half (and the stub) moved +40 in x; the left stayed.
+    click({140, 5}, Qt::LeftButton);
+    ok = pump_until([&] { return bounds(mn, mx) && mx.x > 179.0 && mx.x < 181.0; }) && ok;
+    ok = ok && std::abs(mn.x) < 0.01 && std::abs(mx.y - 50.0) < 0.01;
+    ok = pump_until([this] { return viewport_->grip_preview_vertex_count() == 0; }) && ok;
+    std::printf("[stretch_shot] after commit: bounds (%.1f,%.1f)..(%.1f,%.1f) %s\n", mn.x, mn.y,
+                mx.x, mx.y, viewport_->last_status().c_str());
+    pump(200);
+    ok = grab("stretch_4_committed.png") && ok;
+    hold("committed");
+    std::printf("[stretch_shot] overall: %s\n", ok ? "PASS" : "FAIL");
+    std::fflush(stdout);
+    return ok;
+}
+
 bool MainWindow::cmdctl_shot(int kind, const std::string& out_png) {
     const auto pump = [](int ms) {
         for (int i = 0; i < ms / 2; ++i) {
@@ -4376,11 +4532,17 @@ bool MainWindow::selftest_commands() {
     type("0,0");
     type("100,50");
     bool stretch_ok = pump([&] { return bounds(mn, mx) && mx.x > 99.0; });
-    type("S");
-    type("50,-10");  // crossing-window corner 1
-    type("130,60");  // corner 2 -- ortho must NOT flatten this onto y=-10
-    type("100,0");   // base
-    type("130,0");   // displacement: +30 in x
+    type("S"); // "Select objects:"
+    // A crossing window over the right half -- exactly what the viewport submits from a
+    // right-to-left drag during the selection phase.
+    engine_->submit(core::SelectWindowCommand{{50, -10}, {130, 60}, /*crossing=*/true,
+                                              /*additive=*/true, /*announce=*/true});
+    stretch_ok = stretch_ok && pump([this] {
+        return viewport_->selection_count() == 1 && processor_->has_selection();
+    });
+    type("");      // Enter (or right-click) ends the selection
+    type("100,0"); // base point
+    type("130,0"); // second point: +30 in x
     stretch_ok = stretch_ok && pump([&] { return bounds(mn, mx) && mx.x > 129.0 && mx.x < 131.0; });
     stretch_ok = stretch_ok && bounds(mn, mx) && std::abs(mn.x) < 0.001 &&
                  std::abs(mx.y - 50.0) < 0.001; // the un-windowed half never moved

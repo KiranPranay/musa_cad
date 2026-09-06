@@ -422,3 +422,23 @@ all issues. Everything tested by script or GUI control. No release.
 - 526/526 unit tests; GUI harness `overall: PASS`.
 - Deliberately not done, with reasons in NIGHT_REPORT.md: DONUT (needs polyline width),
   ELLIPSE (deserves a real entity), ARRAYEDIT/ARRAYCLOSE (need associative arrays).
+
+## 2026-09-06 — STRETCH reworked to match the AutoCAD video (WCGwXZKkCCw)
+
+- Pulled the video's transcript. It shows: `S` → "Select objects:" → right-click →
+  "Specify base point or [Displacement]" → geometry stretches LIVE with the cursor
+  (ortho off: any angle; on: axis) → click; a second run shrinks; then a grip midpoint drag.
+- My first pass had fixed a real bug (ortho/osnap on the window corners) but kept a
+  two-corner prompt flow with no "Select objects:", no Enter/right-click and NO live
+  preview. That was the gap. Removed `wants_window()` and the corner prompts.
+- Now: `ICommand::in_selection_phase()`; the viewport runs its real selection gestures at
+  "Select objects:" (pick / window / crossing, accumulating, "N found" echoed); right-click
+  = Enter while a command runs; the engine records the crossing windows that built the
+  selection and applies AutoCAD's rule (crossed → only caught vertices move; enclosed or
+  picked → moves whole; a line merely passing through is left alone); arc endpoints keep
+  the sagitta; `StretchPreviewCommand` streams the cursor delta and the engine previews
+  the whole selection on the grip scratch store, built by the SAME function as the commit.
+- Verified: 27 tests; GUI self-test through the real CommandProcessor with ORTHO on; and a
+  new `MUSACAD_STRETCH_SHOT` harness that performs the whole gesture with synthetic mouse
+  events and grabs each stage (grabWindow is black for the GL surface under Wayland;
+  `import -window` during MUSACAD_DYN_HOLD works). Looked at all four frames.

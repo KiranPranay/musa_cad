@@ -10,32 +10,45 @@ merged to `main`.
 
 ---
 
-## The headline: STRETCH was broken by ORTHO, not by the stretch code
+## The headline: STRETCH now works exactly as in the AutoCAD video
 
-You said *"the stretch is not working as intended… verify carefully."* I did, and the
-engine was **correct all along** — every stretch rule and every existing test passed. The
-defect was in the pick path in front of it.
+You sent the SAS Creative Group tutorial (WCGwXZKkCCw). I pulled its transcript and
+matched it step for step. What it shows, and what Musa CAD now does:
 
-A crossing window is a **screen region, not geometry**. AutoCAD applies neither object
-snap nor ortho/polar to its corners. Musa CAD applied both, through the shared
-`resolve_pick()` that every coordinate pick goes through:
+| In the video | Musa CAD now |
+|---|---|
+| `S` → **"Select objects:"** | Same prompt. A right-to-left drag is a **crossing window** (green band), left-to-right a window, a click a pick; they accumulate and echo **"N found"** / "N found, M total" |
+| **Right-click** finishes the selection | Right-click is Enter while a command runs; Enter works too. Pre-selected objects skip the prompt (noun-verb) |
+| **"Specify base point or [Displacement]"** | Same, with the `Displacement` option and the `<Displacement>` default |
+| Moving the cursor **stretches the arrow head live**; ORTHO off lets it go at any angle, ORTHO on holds the axis | The whole selection is previewed stretched under the cursor, on the geometry thread, honouring ortho/osnap/DYN — built by the **same function as the commit**, so the band shows exactly what the click will do |
+| Click to finish; a second run *reduces* it by clicking closer | Same; the displacement can be negative, and Enter at the second point uses the first point as the displacement |
+| Then grip-dragging a midpoint leaves a gap | Grip editing, unchanged |
 
-- **ORTHO was the killer.** `StretchCommand` seeds the last point from the first window
-  corner, so ortho forced the second corner onto an axis through it. The crossing window
-  came out with **zero area** and caught nothing. Drag a box over half a rectangle, get
-  silence. With OSNAP and ORTHO on — the ordinary drafting setup, and what your status bar
-  shows — STRETCH could essentially never work.
-- **OSNAP** separately pulled a corner onto a vertex of the very object being windowed.
+**Which vertices move is AutoCAD's documented rule**, decided by the engine: an object
+*crossed* by a crossing window has only the vertices inside it moved; one fully enclosed,
+or selected by a pick or an ordinary window, moves whole; a line that merely passes
+through the window is left alone. The engine remembers the crossing windows that built the
+selection (invalidated automatically whenever the selection is replaced), so the command
+supplies only the displacement — and a set selected *before* the command stretches
+correctly too. An arc endpoint moves with the arc's height above its chord preserved (the
+arc flattens as its chord grows, rather than swinging about a fixed centre).
 
-`ICommand` grew `wants_window()`, true only while the next pick is a window corner, so the
-bypass is scoped: STRETCH's later base and displacement picks still snap and still honour
-ortho, which is what AutoCAD does. I verified the tests catch it by reverting the fix —
-with the bypass gone, the end-to-end case never even reaches "Stretched", confirming the
-window caught nothing.
+**What my first pass got wrong.** I had found a genuine bug — ortho and osnap were being
+applied to the window corners, which collapsed the crossing window to zero area — and
+fixed it, but I left the command's own flow in place: two explicit corner prompts, no
+"Select objects:", no Enter/right-click, and **no live preview at all**, just a rubber
+line. That was the gap between "the engine is correct" and "it works like AutoCAD". The
+corner-prompt flow, and the `wants_window()` mechanism that served it, are gone.
 
-STRETCH also had **no visual feedback at all**. The crossing window now rubber-bands as you
-drag it, the displacement step draws a rubber line from the base point, and the window can
-be dragged out **press-drag-release** in one gesture as well as clicked corner-to-corner.
+**Verified three ways.** 27 engine/command tests (the rule per kind, both selection
+routes, the "N found" echo, the preview leaving the store untouched, every prompt
+including Displacement, ortho on the second point, Esc). The real-window self-test drives
+it through the real `CommandProcessor` with ORTHO on. And a new capture harness
+(`MUSACAD_STRETCH_SHOT`) performs the **entire gesture with synthetic mouse events through
+the viewport's own handlers** — right-to-left drag, right-click, base click, move, click —
+and grabs a frame at each stage; I looked at all four: the green crossing band, the
+selected set with grips, the stretched preview under the cursor, and the committed result
+with the left edge untouched.
 
 ---
 
@@ -46,7 +59,7 @@ be dragged out **press-drag-release** in one gesture as well as clicked corner-t
 | 1 | DYN on by default | **Done** — and a real bug found |
 | 2 | Resize table rows and columns | **Done** |
 | 3 | Text inserts into tables | **Done** |
-| 4 | STRETCH works as in AutoCAD | **Done** — root cause was ORTHO/OSNAP on window corners |
+| 4 | STRETCH works as in AutoCAD | **Done** — matched to the video prompt for prompt, with the live preview |
 | 5 | All AutoCAD array commands | **Done** — ARRAYPATH is new; see the note on ARRAYEDIT |
 | 6 | Analyse and fix all issues | **Partly fixed, fully analysed** — see the table below |
 
@@ -112,7 +125,7 @@ says this.
 
 ## Real bugs found and fixed (beyond the objectives)
 
-1. **STRETCH vs ORTHO/OSNAP** — above. The user-visible one.
+1. **STRETCH** — above: the flow and the missing live preview, plus the ortho/osnap-on-window-corners bug.
 2. **The ARRAY dialog was passing the undo-group id in as the axis angle.** My own change
    caused it: adding `angle` before `group` in `ArrayRectCommand` silently shifted two
    **positional** initialisations, one of them the GUI dialog. The compiler cannot catch

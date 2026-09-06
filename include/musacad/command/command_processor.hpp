@@ -92,13 +92,11 @@ public:
 
     [[nodiscard]] bool has_active_command() const noexcept { return active_ != nullptr; }
 
-    /// True when the active command's next pick is a selection-window corner. Such a
-    /// pick takes the RAW cursor: no object snap, no ortho/polar (see
-    /// ICommand::wants_window). The viewport asks so its rubber band shows the region
-    /// that will actually be selected -- a band drawn through the constrained cursor
-    /// while the pick used the raw one would be a lie.
-    [[nodiscard]] bool wants_window() const {
-        return active_ != nullptr && active_->wants_window();
+    /// True while the active command is at its "Select objects:" prompt (see
+    /// ICommand::in_selection_phase). The viewport then treats presses and drags as
+    /// selection gestures rather than coordinate picks.
+    [[nodiscard]] bool in_selection_phase() const {
+        return active_ != nullptr && active_->in_selection_phase();
     }
     [[nodiscard]] const std::string& last_command() const noexcept { return last_command_alias_; }
     [[nodiscard]] const CommandRegistry& registry() const noexcept { return registry_; }
