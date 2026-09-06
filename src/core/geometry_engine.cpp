@@ -156,6 +156,20 @@ EntityHandle GeometryEngine::pick_nearest(Vec2 world, double radius) const {
             }
         }
     }
+    const auto& xl = store_.xlines();
+    for (std::uint32_t i = 0; i < xl.slot_count(); ++i) {
+        if (!xl.alive(i)) {
+            continue;
+        }
+        const EntityHandle h{i, xl.generations()[i], EntityKind::Xline};
+        if (selectable(h) && kernel_.closest_point(store_, h, world, cp)) {
+            const double d2 = length_squared(cp - world);
+            if (d2 <= best_d2) {
+                best_d2 = d2;
+                best = h;
+            }
+        }
+    }
     return best;
 }
 
@@ -194,6 +208,7 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
     // could not be picked, hovered, window-selected or erased (one created in-session
     // worked, because create_indexed inserts it directly, which is why it went unseen).
     // Pre-existing; fixed here because the GD&T arenas would have inherited it exactly.
+    collect(store_.xlines(), EntityKind::Xline);
     collect(store_.hatches(), EntityKind::Hatch);
     collect(store_.fcfs(), EntityKind::Fcf);
     collect(store_.datums(), EntityKind::Datum);
@@ -355,6 +370,37 @@ bool GeometryEngine::entity_hits_rect(EntityHandle h, Vec2 mn, Vec2 mx, bool cro
     return true;
 }
 
+namespace {
+/// Does the (semi-)infinite construction line pass through the rect [mn,mx]? Clips the
+/// parametric line base + t*dir to the rect (Liang-Barsky); a RAY restricts t >= 0.
+bool xline_hits_rect(const XlineData& x, Vec2 mn, Vec2 mx) {
+    double t0 = x.ray ? 0.0 : -std::numeric_limits<double>::infinity();
+    double t1 = std::numeric_limits<double>::infinity();
+    const double px[2] = {-x.dir.x, x.dir.x};
+    const double pq[2] = {x.base.x - mn.x, mx.x - x.base.x};
+    const double py[2] = {-x.dir.y, x.dir.y};
+    const double qy[2] = {x.base.y - mn.y, mx.y - x.base.y};
+    const auto clip = [&](double pp, double qq) {
+        if (std::abs(pp) < 1e-12) {
+            return qq >= 0.0; // parallel: inside iff on the correct side
+        }
+        const double r = qq / pp;
+        if (pp < 0.0) {
+            t0 = std::max(t0, r);
+        } else {
+            t1 = std::min(t1, r);
+        }
+        return true;
+    };
+    for (int i = 0; i < 2; ++i) {
+        if (!clip(px[i], pq[i]) || !clip(py[i], qy[i])) {
+            return false;
+        }
+    }
+    return t0 <= t1;
+}
+} // namespace
+
 void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additive,
                                    bool announce) {
     if (!additive) {
@@ -370,6 +416,21 @@ void GeometryEngine::select_window(Vec2 mn, Vec2 mx, bool crossing, bool additiv
         }
         if (entity_hits_rect(h, mn, mx, crossing)) {
             sel_add(h);
+        }
+    }
+    // Construction lines are not in the grid. A CROSSING window catches one whose
+    // infinite (or semi-infinite) line passes through the rect; a plain WINDOW never
+    // encloses an infinite line, so it is skipped there.
+    if (crossing) {
+        const auto& xl = store_.xlines();
+        for (std::uint32_t i = 0; i < xl.slot_count(); ++i) {
+            if (!xl.alive(i)) {
+                continue;
+            }
+            const EntityHandle h{i, xl.generations()[i], EntityKind::Xline};
+            if (selectable(h) && xline_hits_rect(*xl.get(i, xl.generations()[i]), mn, mx)) {
+                sel_add(h);
+            }
         }
     }
     // A CROSSING window is remembered for STRETCH: it is the record of which vertices
@@ -434,6 +495,8 @@ bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddPointCommand>) {
                 pull(x.p);
+            } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
+                pull(x.base);
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 pull(x.a);
                 pull(x.b);
@@ -532,6 +595,8 @@ void translate_cmd(Command& c, Vec2 d) {
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p += d;
+            } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
+                x.base += d;
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a += d;
                 x.b += d;
@@ -588,6 +653,10 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p = refl(x.p);
+            } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
+                const Vec2 tip = refl(x.base + x.dir);
+                x.base = refl(x.base);
+                x.dir = normalized(tip - x.base);
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = refl(x.a);
                 x.b = refl(x.b);
@@ -656,6 +725,10 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p = rot(x.p);
+            } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
+                const Vec2 tip = rot(x.base + x.dir);
+                x.base = rot(x.base);
+                x.dir = normalized(tip - x.base);
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = rot(x.a);
                 x.b = rot(x.b);
@@ -729,6 +802,8 @@ Vec2 command_anchor(const Command& c) {
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddPointCommand>) {
                 out = x.p;
+            } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
+                out = x.base;
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 out = x.a;
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
@@ -765,6 +840,8 @@ void scale_cmd(Command& c, Vec2 base, double f) {
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddPointCommand>) {
                 x.p = scl(x.p);
+            } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
+                x.base = scl(x.base);
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = scl(x.a);
                 x.b = scl(x.b);
@@ -1000,6 +1077,13 @@ void GeometryEngine::apply_list_query(Vec2 at, double radius) {
         pr != nullptr && pr->layer < store_.layers().size() ? store_.layers()[pr->layer].name : "?";
     std::string out = std::string(kind_name(h.kind)) + "  on layer \"" + layer + "\"";
     switch (h.kind) {
+    case EntityKind::Xline: {
+        const XlineData* x = store_.xline(h);
+        out += std::string(x->ray ? ",  ray from (" : ",  construction line through (") +
+               num(x->base.x) + "," + num(x->base.y) + "),  direction (" + num(x->dir.x) + "," +
+               num(x->dir.y) + ")";
+        break;
+    }
     case EntityKind::Line: {
         const LineData* l = store_.line(h);
         out += ",  from (" + num(l->a.x) + "," + num(l->a.y) + ") to (" + num(l->b.x) + "," +
@@ -2470,6 +2554,7 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
         case EntityKind::Fcf:
         case EntityKind::Datum:
         case EntityKind::Image:
+        case EntityKind::Xline:
             break; // already simple, or nothing meaningful to break into
         }
         if (parts.size() > before) {
@@ -2597,6 +2682,9 @@ void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
     double before = 0.0;
     double after = 0.0;
     switch (h.kind) {
+    case EntityKind::Xline:
+        report("Lengthen: a construction line is already infinite.");
+        return;
     case EntityKind::Line: {
         const LineData* l = store_.line(h);
         before = length(l->b - l->a);
@@ -2687,6 +2775,9 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
     };
 
     switch (h.kind) {
+    case EntityKind::Xline:
+        report("Break: a construction line cannot be broken.");
+        return;
     case EntityKind::Line: {
         const LineData* l = store_.line(h);
         const Vec2 d = l->b - l->a;
@@ -3180,6 +3271,7 @@ void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddPointCommand> ||
+                          std::is_same_v<T, AddXlineCommand> ||
                           std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> || std::is_same_v<T, AddArcCommand> ||
@@ -3586,6 +3678,8 @@ std::optional<JoinSeg> to_join_seg(const GeometryStore& store, EntityHandle h) {
     JoinSeg js;
     js.handle = h;
     switch (h.kind) {
+    case EntityKind::Xline:
+        return std::nullopt; // a construction line has no endpoints to join
     case EntityKind::Line: {
         const LineData* l = store.line(h);
         if (l == nullptr) {
@@ -3713,6 +3807,8 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
     };
     for (const EntityHandle h : all_live()) {
         switch (h.kind) {
+        case EntityKind::Xline:
+            break; // an infinite line is not a hatch boundary
         case EntityKind::Line:
         case EntityKind::Arc:
         case EntityKind::Spline:
@@ -3917,6 +4013,7 @@ void GeometryEngine::apply(const Command& command) {
         [this, &command](const auto& c) {
             using T = std::decay_t<decltype(c)>;
             if constexpr (std::is_same_v<T, AddPointCommand> ||
+                          std::is_same_v<T, AddXlineCommand> ||
                           std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> ||
@@ -4480,6 +4577,7 @@ void GeometryEngine::rebuild_and_publish() {
     if (buf.copied_geometry_id != geom_cache_id_) {
         buf.points = geom_cache_.points;
         buf.line_vertices = geom_cache_.line_vertices;
+        buf.construction_lines = geom_cache_.construction_lines;
         buf.line_batches = geom_cache_.line_batches;
         buf.point_batches = geom_cache_.point_batches;
         buf.fill_vertices = geom_cache_.fill_vertices;

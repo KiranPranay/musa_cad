@@ -542,6 +542,34 @@ private:
     bool done_ = false;
 };
 
+/// XLINE (AutoCAD XL) and RAY: construction lines. XLINE offers Hor/Ver/Ang/Bisect and
+/// the default two-point form (all repeat until Enter); Offset is deferred (it needs a
+/// picked reference, noted in docs/COMMANDS.md). RAY is start point + through points.
+class XlineCommand final : public ICommand {
+public:
+    /// `ray` = the RAY command (semi-infinite from the start point).
+    explicit XlineCommand(bool ray = false) : ray_(ray) {}
+
+    std::string name() const override { return ray_ ? "RAY" : "XLINE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { First, Through, Angle, BisectVertex, BisectStart, BisectEnd };
+    void emit(CommandContext& ctx, core::Vec2 base, core::Vec2 dir);
+
+    bool ray_ = false;
+    State state_ = State::First;
+    core::Vec2 root_{};       ///< the through-point family's fixed point (XLINE) or start (RAY)
+    core::Vec2 bvertex_{};
+    core::Vec2 bstart_{};
+    double angle_ = 0.0;      ///< radians, for the Ang option
+    int mode_ = 0;            ///< 0 = two-point/through, 1 = horizontal, 2 = vertical, 3 = angle
+    bool done_ = false;
+};
+
 /// REVCLOUD (AutoCAD). Arc length, Object (with Reverse direction), Rectangular,
 /// Polygonal, and Freehand as a clicked path (the cursor is not tracked while a button
 /// is held here, so the path is picked point by point and Enter closes it). Style

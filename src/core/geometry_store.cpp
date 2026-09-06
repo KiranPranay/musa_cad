@@ -7,6 +7,13 @@
 
 namespace musacad::core {
 
+EntityHandle GeometryStore::add_xline(Vec2 base, Vec2 dir, bool ray, EntityProps props) {
+    const double len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+    const Vec2 unit = len > 1e-12 ? Vec2{dir.x / len, dir.y / len} : Vec2{1.0, 0.0};
+    const auto slot = xlines_.insert(XlineData{base, unit, ray, props});
+    return EntityHandle{slot.index, slot.generation, EntityKind::Xline};
+}
+
 EntityHandle GeometryStore::add_point(Vec2 p, EntityProps props) {
     const auto slot = points_.insert(PointData{p, props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Point};
@@ -295,6 +302,8 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
     switch (h.kind) {
     case EntityKind::Point:
         return points_.erase(h.index, h.generation);
+    case EntityKind::Xline:
+        return xlines_.erase(h.index, h.generation);
     case EntityKind::Line:
         return lines_.erase(h.index, h.generation);
     case EntityKind::Polyline:
@@ -335,6 +344,8 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
     switch (h.kind) {
     case EntityKind::Point:
         return points_.is_valid(h.index, h.generation);
+    case EntityKind::Xline:
+        return xlines_.is_valid(h.index, h.generation);
     case EntityKind::Line:
         return lines_.is_valid(h.index, h.generation);
     case EntityKind::Polyline:
@@ -415,6 +426,10 @@ void GeometryStore::clear() noexcept {
     ltscale_ = 1.0;
     blocks_.clear();
     fonts_.assign(1, std::string{}); // reset to just the stroke font
+}
+
+const XlineData* GeometryStore::xline(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Xline ? xlines_.get(h.index, h.generation) : nullptr;
 }
 
 const PointData* GeometryStore::point(EntityHandle h) const noexcept {
@@ -587,6 +602,11 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::Xline:
+        if (const XlineData* d = xline(h)) {
+            return &d->props;
+        }
+        break;
     case EntityKind::Line:
         if (const LineData* d = line(h)) {
             return &d->props;
@@ -675,6 +695,12 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
     switch (h.kind) {
     case EntityKind::Point:
         if (PointData* d = points_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Xline:
+        if (XlineData* d = xlines_.get(h.index, h.generation)) {
             d->props = p;
             return true;
         }

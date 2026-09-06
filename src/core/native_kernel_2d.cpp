@@ -294,6 +294,8 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         out.push_back(store.point(entity)->p);
         break;
     }
+    case EntityKind::Xline:
+        break; // infinite: no finite tessellation (drawn clipped to the view instead)
     case EntityKind::Line: {
         const LineData* l = store.line(entity);
         out.push_back(l->a);
@@ -481,6 +483,15 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
     case EntityKind::Line: {
         const LineData* l = store.line(entity);
         out_point = closest_on_segment(l->a, l->b, query);
+        return true;
+    }
+    case EntityKind::Xline: {
+        const XlineData* x = store.xline(entity);
+        double t = dot(query - x->base, x->dir); // dir is unit
+        if (x->ray && t < 0.0) {
+            t = 0.0; // a ray does not extend behind its base
+        }
+        out_point = x->base + x->dir * t;
         return true;
     }
     case EntityKind::Circle: {
@@ -888,6 +899,8 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
         return false;
     }
     switch (entity.kind) {
+    case EntityKind::Xline:
+        return false; // offsetting a construction line is not supported
     case EntityKind::Line: {
         const LineData* l = store.line(entity);
         const Vec2 dir = normalized(l->b - l->a);

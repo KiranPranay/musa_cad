@@ -102,6 +102,17 @@ struct DocumentInfo {
     bool dirty = false;
 };
 
+/// A construction line (XLINE/RAY) as the renderer needs it: it is infinite, so it is
+/// NOT baked into line_vertices (which would be wrong after a pan). The render thread
+/// clips it to the viewport each frame. `ray` restricts drawing to base + t*dir, t>=0.
+struct ConstructionLineView {
+    Vec2 base;
+    Vec2 dir;
+    bool ray = false;
+    Rgb color;
+    std::uint8_t lineweight = 25;
+};
+
 struct RenderSnapshot {
     std::uint64_t version = 0;          ///< bumps every publish (snap/selection too)
     std::uint64_t geometry_version = 0; ///< bumps only when scene geometry changes
@@ -115,6 +126,7 @@ struct RenderSnapshot {
     std::uint64_t copied_selection_build = 0;
     std::vector<Vec2> points;
     std::vector<Vec2> line_vertices; // 2 entries per segment, ordered by colour batch
+    std::vector<ConstructionLineView> construction_lines; // XLINE/RAY: clipped per-frame
     std::uint64_t checksum = 0;
 
     // Per-colour batches over `line_vertices` / `points` (after ByLayer
@@ -224,6 +236,7 @@ struct RenderSnapshot {
         copied_selection_build = 0;
         points.clear();
         line_vertices.clear();
+        construction_lines.clear();
         line_batches.clear();
         point_batches.clear();
         fill_vertices.clear();

@@ -148,6 +148,10 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/break.svg", "Break a curve between two points.");
     reg({"BREAKATPOINT"}, [] { return std::make_unique<BreakCommand>(true); },
         "assets/ribbon/break.svg", "Split a curve at one point, leaving no gap.");
+    reg({"XL", "XLINE"}, [] { return std::make_unique<XlineCommand>(false); },
+        "assets/ribbon/xline.svg", "Draw an infinite construction line.");
+    reg({"RAY"}, [] { return std::make_unique<XlineCommand>(true); },
+        "assets/ribbon/ray.svg", "Draw a semi-infinite construction line.");
     reg({"REVCLOUD"}, [] { return std::make_unique<RevcloudCommand>(); },
         "assets/ribbon/revcloud.svg", "Draw a revision cloud, or turn an object into one.");
     reg({"X", "EXPLODE"}, [] { return std::make_unique<ExplodeCommand>(); },

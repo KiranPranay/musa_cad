@@ -58,7 +58,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 20;
+inline constexpr std::uint32_t kFormatVersion = 21;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -66,6 +66,14 @@ struct DocPoint {
     Vec2 p;
     EntityProps props{};
     friend bool operator==(const DocPoint&, const DocPoint&) = default;
+};
+/// A construction line (XLINE/RAY): base, unit direction, and whether it is a RAY (v21).
+struct DocXline {
+    Vec2 base;
+    Vec2 dir{1.0, 0.0};
+    bool ray = false;
+    EntityProps props{};
+    friend bool operator==(const DocXline&, const DocXline&) = default;
 };
 struct DocLine {
     Vec2 a;
@@ -289,6 +297,7 @@ struct Document {
     std::vector<PageSetup> page_setups;                    // saved PLOT configurations (v11)
 
     std::vector<DocPoint> points;
+    std::vector<DocXline> xlines;        ///< construction lines (v21)
     std::vector<DocLine> lines;
     std::vector<DocCircle> circles;
     std::vector<DocArc> arcs;
@@ -310,7 +319,8 @@ struct Document {
     std::vector<DocBlockDef> block_defs;   ///< block-definition table (not in entity_count)
 
     [[nodiscard]] std::size_t entity_count() const noexcept {
-        return points.size() + lines.size() + circles.size() + arcs.size() + polylines.size() +
+        return points.size() + xlines.size() + lines.size() + circles.size() + arcs.size() +
+               polylines.size() +
                splines.size() + texts.size() + dims.size() + leaders.size() + mtexts.size() +
                mleaders.size() + hatches.size() + inserts.size() + fcfs.size() + datums.size() +
                images.size() + tables.size();

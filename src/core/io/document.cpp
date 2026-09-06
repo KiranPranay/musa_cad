@@ -32,6 +32,13 @@ Document document_from_store(const GeometryStore& store) {
             doc.points.push_back(DocPoint{pts.data()[i].p, pts.data()[i].props});
         }
     }
+    const auto& xlines = store.xlines();
+    for (std::uint32_t i = 0; i < xlines.slot_count(); ++i) {
+        if (xlines.alive(i)) {
+            const XlineData& x = xlines.data()[i];
+            doc.xlines.push_back(DocXline{x.base, x.dir, x.ray, x.props});
+        }
+    }
     const auto& lines = store.lines();
     for (std::uint32_t i = 0; i < lines.slot_count(); ++i) {
         if (lines.alive(i)) {
@@ -366,6 +373,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     for (const DocPoint& p : doc.points) {
         store.add_point(p.p, p.props);
+    }
+    for (const DocXline& x : doc.xlines) {
+        store.add_xline(x.base, x.dir, x.ray, x.props);
     }
     for (const DocLine& l : doc.lines) {
         store.set_celtscale(store.add_line(l.a, l.b, l.props), l.celtscale);

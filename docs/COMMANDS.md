@@ -46,6 +46,8 @@ commands (Ribbon Phase A):
 | LENGTHEN (LEN) | Change the length of a line or arc. |
 | BREAK (BR) | Break a curve between two points. |
 | BREAKATPOINT | Split a curve at one point, leaving no gap. |
+| XLINE (XL) | Draw an infinite construction line. |
+| RAY | Draw a semi-infinite construction line. |
 | POINT (PO) | Place point objects; Esc ends. |
 | DIVIDE (DIV) | Mark a curve into a number of equal segments with points. |
 | MEASURE (ME) | Mark a curve at set intervals with points. |
@@ -121,6 +123,8 @@ commands (Ribbon Phase A):
 | LENGTHEN (DElta / Percent / Total; lines + arcs) | LEN | Implemented |
 | BREAK (line, arc, circle, open + closed polyline) | BR | Implemented |
 | BREAKATPOINT (split, no gap) | BREAKATPOINT | Implemented |
+| XLINE (Hor / Ver / Ang / Bisect / two-point) | XL | Implemented (Offset deferred) |
+| RAY (start + through points) | RAY | Implemented |
 | POINT | PO | Implemented |
 | DIVIDE (n equal segments) | DIV | Implemented |
 | MEASURE (fixed interval) | ME | Implemented |

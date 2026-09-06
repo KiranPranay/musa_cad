@@ -215,6 +215,17 @@ struct FcfData {
 /// feature, and the FILLED triangle that touches it. `tip` is the triangle point;
 /// `pos` anchors the box. Like the frame, all of its geometry is derived from the
 /// text height at snapshot time.
+/// A construction line (AutoCAD XLINE / RAY). Stored as a base point and a UNIT
+/// direction; `ray` makes it semi-infinite (extends only in +dir). It has no finite
+/// extent, so it is excluded from the spatial index and from ZOOM Extents, and the
+/// renderer clips it to the viewport each frame -- exactly AutoCAD's treatment.
+struct XlineData {
+    Vec2 base;
+    Vec2 dir{1.0, 0.0}; ///< unit direction
+    bool ray = false;   ///< false = XLINE (both ways), true = RAY (+dir only)
+    EntityProps props{};
+};
+
 struct DatumData {
     Vec2 tip;                     ///< the point on the feature (triangle apex)
     Vec2 pos;                     ///< box anchor (left edge, on the box's baseline)
@@ -359,6 +370,8 @@ class GeometryStore {
 public:
     // --- creation (props default to layer 0, fully ByLayer) -----------------
     EntityHandle add_point(Vec2 p, EntityProps props = {});
+    /// A construction line through `base` along unit `dir`; `ray` = semi-infinite.
+    EntityHandle add_xline(Vec2 base, Vec2 dir, bool ray, EntityProps props = {});
     EntityHandle add_line(Vec2 a, Vec2 b, EntityProps props = {});
     EntityHandle add_circle(Vec2 center, double radius, EntityProps props = {});
     EntityHandle add_arc(Vec2 center, double radius, double start_angle, double end_angle,
@@ -428,6 +441,7 @@ public:
 
     // --- typed accessors (nullptr if invalid or wrong kind) -----------------
     [[nodiscard]] const PointData* point(EntityHandle h) const noexcept;
+    [[nodiscard]] const XlineData* xline(EntityHandle h) const noexcept;
     [[nodiscard]] const LineData* line(EntityHandle h) const noexcept;
     [[nodiscard]] const CircleData* circle(EntityHandle h) const noexcept;
     [[nodiscard]] const ArcData* arc(EntityHandle h) const noexcept;
@@ -482,6 +496,7 @@ public:
 
     // --- batch arena access (const; includes dead slots) --------------------
     [[nodiscard]] const GenerationalArena<PointData>& points() const noexcept { return points_; }
+    [[nodiscard]] const GenerationalArena<XlineData>& xlines() const noexcept { return xlines_; }
     [[nodiscard]] const GenerationalArena<LineData>& lines() const noexcept { return lines_; }
     [[nodiscard]] const GenerationalArena<CircleData>& circles() const noexcept { return circles_; }
     [[nodiscard]] const GenerationalArena<ArcData>& arcs() const noexcept { return arcs_; }
@@ -672,6 +687,7 @@ private:
     }
 
     GenerationalArena<PointData> points_;
+    GenerationalArena<XlineData> xlines_;
     GenerationalArena<LineData> lines_;
     GenerationalArena<CircleData> circles_;
     GenerationalArena<ArcData> arcs_;

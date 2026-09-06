@@ -41,6 +41,11 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
         out_max = {std::max(a.x, b.x), std::max(a.y, b.y)};
     };
     switch (h.kind) {
+    case EntityKind::Xline:
+        // A construction line is infinite: it has no finite AABB, so it is excluded from
+        // the spatial index and from ZOOM Extents (as AutoCAD excludes construction
+        // geometry). Picking and window-select handle it directly instead.
+        return false;
     case EntityKind::Point: {
         out_min = out_max = store.point(h)->p;
         return true;

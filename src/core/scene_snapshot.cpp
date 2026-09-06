@@ -84,6 +84,7 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     const IFontEngine* fonts = store.font_engine();
     out.points.clear();
     out.line_vertices.clear();
+    out.construction_lines.clear();
     out.line_batches.clear();
     out.point_batches.clear();
     out.fill_vertices.clear();
@@ -356,6 +357,16 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
                                        text::Justify::Left, tseg);
             add_lines(g.text_color, g.lineweight, tseg, /*is_text=*/true, g.text_height);
         }
+    });
+
+    for_each_live(store.xlines(), EntityKind::Xline, [&](EntityHandle h) {
+        const XlineData* x = store.xline(h);
+        if (!visible(store, x->props)) {
+            return;
+        }
+        const ResolvedProps r = entity_resolved(store, x->props);
+        out.construction_lines.push_back(
+            ConstructionLineView{x->base, x->dir, x->ray, r.color, r.lineweight});
     });
 
     for_each_live(store.datums(), EntityKind::Datum, [&](EntityHandle h) {

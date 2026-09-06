@@ -110,6 +110,17 @@ struct DividePathCommand {
     std::uint64_t group = 0;
 };
 
+/// A construction line (AutoCAD XLINE / RAY): base point, unit direction, and whether
+/// it is a semi-infinite RAY. Excluded from bounds and the spatial index; the renderer
+/// clips it to the viewport each frame.
+struct AddXlineCommand {
+    Vec2 base;
+    Vec2 dir{1.0, 0.0};
+    bool ray = false;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
 /// A POINT entity (AutoCAD POINT). Points are already stored, drawn, picked, bounded
 /// and persisted; this is the command that creates one, which is what the POINT command
 /// and DIVIDE/MEASURE all needed.
@@ -842,7 +853,7 @@ using Command =
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
-                 ArrayPathCommand, AddPointCommand, DividePathCommand, BreakCommand,
+                 ArrayPathCommand, AddPointCommand, AddXlineCommand, DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,

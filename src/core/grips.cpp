@@ -173,6 +173,10 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     }
     case EntityKind::Point:
         return AddPointCommand{store.point(h)->p, 0, store.point(h)->props};
+    case EntityKind::Xline: {
+        const XlineData* x = store.xline(h);
+        return AddXlineCommand{x->base, x->dir, x->ray, 0, x->props};
+    }
     case EntityKind::Spline:
         break;
     }
@@ -187,6 +191,8 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
             using T = std::decay_t<decltype(c)>;
             if constexpr (std::is_same_v<T, AddPointCommand>) {
                 handle = store.add_point(c.p, props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
+                handle = store.add_xline(c.base, c.dir, c.ray, props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 handle = store.add_line(c.a, c.b, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);
@@ -267,6 +273,12 @@ void push(std::vector<Grip>& out, Vec2 p, GripKind k, std::uint32_t i) {
 
 void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out) {
     switch (h.kind) {
+    case EntityKind::Xline: {
+        // One grip at the root (base point): it moves the whole construction line. The
+        // line is infinite, so there is no endpoint to grip; re-aiming is ROTATE's job.
+        push(out, store.xline(h)->base, GripKind::Move, 0);
+        break;
+    }
     case EntityKind::Line: {
         const LineData* l = store.line(h);
         push(out, l->a, GripKind::Endpoint, 0);
@@ -467,7 +479,9 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
     std::visit(
         [&](auto& x) {
             using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_same_v<T, AddLineCommand>) {
+            if constexpr (std::is_same_v<T, AddXlineCommand>) {
+                x.base = newpos; // the root grip moves the whole construction line
+            } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 if (grip_index == 0) {
                     x.a = newpos;
                 } else if (grip_index == 1) {
