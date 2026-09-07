@@ -327,7 +327,7 @@ TEST_CASE("DXF round-trip: a block def's NESTED INSERT survives import") {
     REQUIRE(la->inserts[0].block_name == "B");
 }
 
-TEST_CASE("DXF import: SPLINE control points are sane; ELLIPSE becomes a real ellipse") {
+TEST_CASE("DXF import: a uniform SPLINE and an ELLIPSE become real entities") {
     // A minimal DXF with one SPLINE (4 control points, degree 3) and one ELLIPSE
     // (centre 100,100; major axis (20,0); ratio 0.5; full). Verifies the importer reads
     // the right group codes -- no stray (0,0) vertices, points near where they belong.
@@ -344,21 +344,16 @@ TEST_CASE("DXF import: SPLINE control points are sane; ELLIPSE becomes a real el
     Document doc;
     REQUIRE(parse_dxf(dxf, doc).ok);
 
-    // SPLINE -> a tessellated polyline (de Boor). Endpoints clamp to the first/last control
-    // point; every sample stays within the control polygon's bounds (x in [0,4], y in [0,2]).
-    REQUIRE(doc.polylines.size() == 1); // the spline; the ellipse is an entity (v22)
-    const DocPolyline& sp = doc.polylines[0];
-    REQUIRE(sp.points.size() >= 16);
-    REQUIRE(std::abs(sp.points.front().x - 0.0) < 1e-6);
-    REQUIRE(std::abs(sp.points.front().y - 0.0) < 1e-6);
-    REQUIRE(std::abs(sp.points.back().x - 4.0) < 1e-6);
-    REQUIRE(std::abs(sp.points.back().y - 0.0) < 1e-6);
-    for (const Vec2& p : sp.points) {
-        REQUIRE(p.x >= -0.001);
-        REQUIRE(p.x <= 4.001);
-        REQUIRE(p.y >= -0.001);
-        REQUIRE(p.y <= 2.001);
-    }
+    // SPLINE with control points and no knot vector: uniform by definition, so it is a
+    // real spline entity with exactly those control points (drawn by the same de Boor).
+    REQUIRE(doc.polylines.empty());
+    REQUIRE(doc.splines.size() == 1);
+    const DocSpline& sp = doc.splines[0];
+    REQUIRE(sp.degree == 3);
+    REQUIRE(sp.control_points.size() == 4);
+    REQUIRE(std::abs(sp.control_points[1].x - 1.0) < 1e-9);
+    REQUIRE(std::abs(sp.control_points[1].y - 2.0) < 1e-9);
+    REQUIRE(std::abs(sp.control_points[3].x - 4.0) < 1e-9);
 
     // ELLIPSE -> a real ellipse: centre (100,100), major (20,0), ratio 0.5, full.
     REQUIRE(doc.ellipses.size() == 1);

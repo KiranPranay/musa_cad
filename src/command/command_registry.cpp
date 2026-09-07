@@ -104,6 +104,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Draw a circle from a center point and a radius or diameter.");
     reg({"EL", "ELLIPSE"}, [] { return std::make_unique<EllipseCommand>(); },
         "assets/ribbon/ellipse.svg", "Draw an ellipse or an elliptical arc.");
+    reg({"SPL", "SPLINE"}, [] { return std::make_unique<SplineCommand>(); },
+        "assets/ribbon/spline.svg", "Draw a spline through fit points or by control vertices.");
     reg({"PL", "PLINE"}, [] { return std::make_unique<PolylineCommand>(); },
         "assets/ribbon/polyline.svg",
         "Draw a connected sequence of line and arc segments as one object.");

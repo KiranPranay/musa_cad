@@ -19,6 +19,7 @@
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/ellipse.hpp"
 #include "musacad/core/polygon.hpp"
+#include "musacad/core/spline_eval.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
 #include <QCursor>
@@ -946,6 +947,26 @@ void ViewportWindow::rebuild_overlay() {
         case command::PreviewKind::Circle:
             if (!pts.empty()) {
                 tess_circle(pts[0], core::distance(pts[0], cur_eff), seg);
+            }
+            break;
+        case command::PreviewKind::Spline:
+            if (!pts.empty()) {
+                std::vector<core::Vec2> through(pts.begin(), pts.end());
+                through.push_back(cur_eff);
+                std::vector<core::Vec2> ctrl;
+                if (pv.spline_fit) {
+                    ctrl = core::spline::fit_or_fallback(
+                        through, pv.spline_degree,
+                        static_cast<core::spline::FitParam>(pv.spline_knots));
+                } else {
+                    ctrl = std::move(through);
+                }
+                std::vector<core::Vec2> curve;
+                core::spline::tessellate(ctrl, static_cast<std::uint32_t>(pv.spline_degree), curve);
+                for (std::size_t i = 0; i + 1 < curve.size(); ++i) {
+                    seg.push_back(curve[i]);
+                    seg.push_back(curve[i + 1]);
+                }
             }
             break;
         case command::PreviewKind::Ellipse:

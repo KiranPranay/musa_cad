@@ -31,6 +31,7 @@ enum class PreviewKind {
     Dimension,  ///< full dimension rubber-band following the cursor to its placement
     Polygon,    ///< regular n-gon about points[0], sized by the cursor (POLYGON)
     Ellipse,    ///< ELLIPSE rubber band: see PreviewSpec's ellipse fields
+    Spline,     ///< SPLINE: the curve through/over points + cursor (see spline fields)
 };
 
 struct PreviewSpec {
@@ -66,6 +67,12 @@ struct PreviewSpec {
     double ratio = 1.0;
     int ellipse_stage = 0;
     double ellipse_start = 0.0;
+    /// SPLINE preview (PreviewKind::Spline): `points` are the fit points (spline_fit)
+    /// or the control vertices so far; the cursor is appended as the next one and the
+    /// curve is fitted/evaluated exactly as the command will commit it.
+    bool spline_fit = true;
+    int spline_degree = 3;
+    int spline_knots = 0; ///< 0 chord, 1 square root, 2 uniform
     // True while the command is awaiting a single scalar/keyword at a value sub-prompt
     // (RECTANGLE Dimensions length/width, Area, Rotation) rather than the two-field
     // corner drag. With Dynamic Input on this routes the step to the at-cursor

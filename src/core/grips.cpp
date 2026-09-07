@@ -183,8 +183,11 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         const EllipseData* e = store.ellipse(h);
         return AddEllipseCommand{e->center, e->major, e->ratio, e->start, e->end, 0, e->props};
     }
-    case EntityKind::Spline:
-        break;
+    case EntityKind::Spline: {
+        const SplineData* sp = store.spline(h);
+        const std::span<const Vec2> cp = store.control_points_of(*sp);
+        return AddSplineCommand{std::vector<Vec2>(cp.begin(), cp.end()), sp->degree, 0, sp->props};
+    }
     }
     return AddLineCommand{};
 }
@@ -202,6 +205,8 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
                 handle = store.add_ellipse(c.center, c.major, c.ratio, c.start, c.end,
                                            props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
+                handle = store.add_spline(c.control_points, c.degree, props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 handle = store.add_line(c.a, c.b, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);
@@ -497,8 +502,16 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
         break;
     }
     case EntityKind::Point:
-    case EntityKind::Spline:
+        break; // a point has no grips (as before)
+    case EntityKind::Spline: {
+        // A grip on every control point (the AutoCAD CV grips); dragging reshapes.
+        const SplineData* sp = store.spline(h);
+        std::uint32_t idx = 0;
+        for (const Vec2& p : store.control_points_of(*sp)) {
+            push(out, p, GripKind::Vertex, idx++);
+        }
         break;
+    }
     }
 }
 
@@ -510,6 +523,10 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 x.base = newpos; // the root grip moves the whole construction line
+            } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
+                if (grip_index < x.control_points.size()) {
+                    x.control_points[grip_index] = newpos;
+                }
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
                 const EllipseData e{x.center, x.major, x.ratio, x.start, x.end, {}};
                 if (grip_index == 0) {
