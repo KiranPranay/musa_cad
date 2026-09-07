@@ -626,6 +626,36 @@ private:
     bool done_ = false;
 };
 
+/// UNITS (UN, -UNITS): the command-line flow -- linear format and precision, angle
+/// format and precision, direction of angle 0, clockwise -- stored with the drawing.
+class UnitsCommand final : public ICommand {
+public:
+    std::string name() const override { return "UNITS"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Linear, LinearPrecision, Angular, AngularPrecision, Base, Clockwise };
+    State state_ = State::Linear;
+    core::DrawingUnits u_{};
+    bool done_ = false;
+};
+
+/// AUDIT: "Fix any errors detected? [Yes/No] <N>:" then the engine's report.
+class AuditDrawingCommand final : public ICommand {
+public:
+    std::string name() const override { return "AUDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// DONUT (DO): inside diameter, outside diameter, then centres until Enter. Drawn as a
 /// SOLID hatch with two circular loops (an inside diameter of 0 gives a filled disc):
 /// the polyline-with-width AutoCAD uses has no counterpart here yet.

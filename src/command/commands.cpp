@@ -15,6 +15,7 @@
 #include "musacad/core/ellipse.hpp"
 #include "musacad/core/polygon.hpp"
 #include "musacad/core/spline_eval.hpp"
+#include "musacad/core/units.hpp"
 #include "musacad/core/polyline_ops.hpp"
 
 namespace musacad::command {
@@ -1159,12 +1160,34 @@ int parse_int(const std::string& t, int fallback) {
 // PURGE: drop unused symbol-table entries
 // ---------------------------------------------------------------------------
 void PurgeCommand::start(CommandContext& ctx) {
-    ctx.submit(core::PurgeCommand{ctx.group_id()});
-    // The engine reports the count (Ph10.1); there is nothing to prompt for.
-    done_ = true;
+    ctx.set_prompt(
+        "Enter type of unused objects to purge [Blocks/Dimstyles/Groups/LAyers/Tablestyles/Images/All] <All>: ");
 }
 
-void PurgeCommand::input(CommandContext& /*ctx*/, const std::string& /*text*/) {}
+void PurgeCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    std::uint8_t what = 0;
+    if (u.empty() || u == "A" || u == "ALL") {
+        what = 0;
+    } else if (u == "B" || u == "BLOCKS") {
+        what = 1;
+    } else if (u == "D" || u == "DIMSTYLES") {
+        what = 2;
+    } else if (u == "G" || u == "GROUPS") {
+        what = 3;
+    } else if (u == "LA" || u == "LAYERS") {
+        what = 4;
+    } else if (u == "T" || u == "TABLESTYLES") {
+        what = 5;
+    } else if (u == "I" || u == "IMAGES") {
+        what = 6;
+    } else {
+        ctx.echo("Enter Blocks, Dimstyles, Groups, LAyers, Tablestyles, Images or All.");
+        return;
+    }
+    ctx.submit(core::PurgeCommand{ctx.group_id(), what}); // the engine reports what went
+    done_ = true;
+}
 
 void PurgeCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
@@ -2199,6 +2222,143 @@ void PickStyleCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     ctx.submit(core::SetPickStyleCommand{v != 0.0});
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// UNITS (-UNITS): the command-line flow, prompt by prompt
+// ---------------------------------------------------------------------------
+void UnitsCommand::start(CommandContext& ctx) {
+    u_ = ctx.units();
+    state_ = State::Linear;
+    ctx.echo(std::string("Current units: ") + core::units::linear_name(u_.linear) + ", precision " +
+             std::to_string(u_.linear_precision) + "; angles " + core::units::angular_name(u_.angular) +
+             ", precision " + std::to_string(u_.angular_precision) + "; base angle " +
+             fmt4(core::to_degrees(u_.base_angle)) + (u_.clockwise ? "; clockwise." : "; counter-clockwise."));
+    ctx.set_prompt(std::string("Enter units type [Scientific/Decimal/Engineering/Architectural/Fractional] <") +
+                   core::units::linear_name(u_.linear) + ">: ");
+}
+
+void UnitsCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void UnitsCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    double v = 0.0;
+    switch (state_) {
+    case State::Linear:
+        if (u == "S" || u == "SCIENTIFIC" || u == "1") {
+            u_.linear = core::LinearFormat::Scientific;
+        } else if (u == "D" || u == "DECIMAL" || u == "2") {
+            u_.linear = core::LinearFormat::Decimal;
+        } else if (u == "E" || u == "ENGINEERING" || u == "3") {
+            u_.linear = core::LinearFormat::Engineering;
+        } else if (u == "A" || u == "ARCHITECTURAL" || u == "4") {
+            u_.linear = core::LinearFormat::Architectural;
+        } else if (u == "F" || u == "FRACTIONAL" || u == "5") {
+            u_.linear = core::LinearFormat::Fractional;
+        } else if (!t.empty()) {
+            ctx.echo("Enter Scientific, Decimal, Engineering, Architectural or Fractional.");
+            return;
+        }
+        state_ = State::LinearPrecision;
+        ctx.set_prompt("Enter number of digits to right of decimal point (0 to 8) <" +
+                       std::to_string(u_.linear_precision) + ">: ");
+        return;
+    case State::LinearPrecision:
+        if (!t.empty()) {
+            if (!parse_number(t, v) || v < 0.0 || v > 8.0) {
+                ctx.echo("Enter a value from 0 to 8.");
+                return;
+            }
+            u_.linear_precision = static_cast<std::uint8_t>(v);
+        }
+        state_ = State::Angular;
+        ctx.set_prompt(std::string("Enter angle format [Decimal degrees/Deg-Min-Sec/Grads/Radians/Surveyor] <") +
+                       core::units::angular_name(u_.angular) + ">: ");
+        return;
+    case State::Angular:
+        if (u == "D" || u == "DECIMAL DEGREES" || u == "1") {
+            u_.angular = core::AngleFormat::DecimalDegrees;
+        } else if (u == "DMS" || u == "DEG-MIN-SEC" || u == "M" || u == "2") {
+            u_.angular = core::AngleFormat::DegMinSec;
+        } else if (u == "G" || u == "GRADS" || u == "3") {
+            u_.angular = core::AngleFormat::Grads;
+        } else if (u == "R" || u == "RADIANS" || u == "4") {
+            u_.angular = core::AngleFormat::Radians;
+        } else if (u == "S" || u == "SURVEYOR" || u == "5") {
+            u_.angular = core::AngleFormat::Surveyor;
+        } else if (!t.empty()) {
+            ctx.echo("Enter Decimal degrees, Deg-Min-Sec, Grads, Radians or Surveyor.");
+            return;
+        }
+        state_ = State::AngularPrecision;
+        ctx.set_prompt("Enter number of fractional places for display of angles (0 to 8) <" +
+                       std::to_string(u_.angular_precision) + ">: ");
+        return;
+    case State::AngularPrecision:
+        if (!t.empty()) {
+            if (!parse_number(t, v) || v < 0.0 || v > 8.0) {
+                ctx.echo("Enter a value from 0 to 8.");
+                return;
+            }
+            u_.angular_precision = static_cast<std::uint8_t>(v);
+        }
+        state_ = State::Base;
+        ctx.echo("Direction for angle 0: East 3 o'clock = 0, North 12 o'clock = 90, West 9 o'clock = 180, South 6 o'clock = 270");
+        ctx.set_prompt("Enter direction for angle 0 <" + fmt4(core::to_degrees(u_.base_angle)) + ">: ");
+        return;
+    case State::Base:
+        if (!t.empty()) {
+            if (!parse_number(t, v)) {
+                ctx.echo("Enter an angle in degrees.");
+                return;
+            }
+            u_.base_angle = core::to_radians(v);
+        }
+        state_ = State::Clockwise;
+        ctx.set_prompt(std::string("Measure angles clockwise? [Yes/No] <") + (u_.clockwise ? "Y" : "N") + ">: ");
+        return;
+    case State::Clockwise:
+        if (u == "Y" || u == "YES") {
+            u_.clockwise = true;
+        } else if (u == "N" || u == "NO") {
+            u_.clockwise = false;
+        } else if (!t.empty()) {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        ctx.submit(core::SetUnitsCommand{u_});
+        done_ = true;
+        return;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AUDIT
+// ---------------------------------------------------------------------------
+void AuditDrawingCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Fix any errors detected? [Yes/No] <N>: ");
+}
+
+void AuditDrawingCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void AuditDrawingCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    bool fix = false;
+    if (u == "Y" || u == "YES") {
+        fix = true;
+    } else if (!u.empty() && u != "N" && u != "NO") {
+        ctx.echo("Enter Yes or No.");
+        return;
+    }
+    ctx.submit(core::AuditCommand{fix});
     done_ = true;
 }
 
@@ -3665,10 +3825,13 @@ void DistCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     // Answered from the picked points alone -- no store access, so no round trip.
+    // In the drawing's display units (UNITS), as AutoCAD reports them.
     const core::Vec2 d = *p - first_;
-    const double ang = core::to_degrees(std::atan2(d.y, d.x));
-    ctx.echo("Distance = " + inum(core::length(d)) + ",  Angle = " + inum(ang) +
-             "\u00B0,  Delta X = " + inum(d.x) + ",  Delta Y = " + inum(d.y));
+    const core::DrawingUnits u = ctx.units();
+    ctx.echo("Distance = " + core::units::format_length(core::length(d), u) +
+             ",  Angle in XY Plane = " + core::units::format_angle(std::atan2(d.y, d.x), u) +
+             ",  Delta X = " + core::units::format_length(d.x, u) +
+             ",  Delta Y = " + core::units::format_length(d.y, u));
     done_ = true;
 }
 
@@ -3684,7 +3847,9 @@ void IdCommand::start(CommandContext& ctx) {
 
 void IdCommand::input(CommandContext& ctx, const std::string& text) {
     if (const auto p = read_point(ctx, text)) {
-        ctx.echo("X = " + inum(p->x) + ",  Y = " + inum(p->y));
+        const core::DrawingUnits u = ctx.units();
+        ctx.echo("X = " + core::units::format_length(p->x, u) + ",  Y = " +
+                 core::units::format_length(p->y, u));
         done_ = true;
     }
 }

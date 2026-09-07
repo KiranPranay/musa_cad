@@ -156,6 +156,10 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/xline.svg", "Draw an infinite construction line.");
     reg({"RAY"}, [] { return std::make_unique<XlineCommand>(true); },
         "assets/ribbon/ray.svg", "Draw a semi-infinite construction line.");
+    reg({"UN", "UNITS", "-UNITS"}, [] { return std::make_unique<UnitsCommand>(); }, "",
+        "Set the display format and precision of lengths and angles.");
+    reg({"AUDIT"}, [] { return std::make_unique<AuditDrawingCommand>(); }, "",
+        "Check the drawing for bad references and structure; optionally fix them.");
     reg({"DO", "DONUT"}, [] { return std::make_unique<DonutCommand>(); },
         "assets/ribbon/donut.svg", "Draw a filled ring (or disc) from inside/outside diameters.");
     reg({"V", "VIEW", "-VIEW"}, [] { return std::make_unique<ViewCommand>(); },

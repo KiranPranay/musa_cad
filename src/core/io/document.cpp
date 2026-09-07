@@ -157,6 +157,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.ltscale = store.ltscale();
     doc.page_setups = store.page_setups();
     doc.views = store.named_views();
+    doc.display_units = store.units();
     for (const EntityGroup& g : store.groups()) {
         DocGroup dg;
         dg.name = g.name;
@@ -553,6 +554,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.add_spline(s.control_points, s.degree, s.props);
     }
     store.set_named_views(doc.views);
+    store.set_units(doc.display_units);
     std::vector<EntityGroup> groups;
     for (const DocGroup& dg : doc.groups) {
         EntityGroup g;

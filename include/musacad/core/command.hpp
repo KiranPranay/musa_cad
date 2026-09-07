@@ -14,6 +14,7 @@
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/table_types.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/units.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 #include "musacad/core/properties_palette.hpp"
@@ -60,6 +61,18 @@ struct ExplodeSelectionCommand {
 /// Reports how many went, so an empty purge says so rather than looking like success.
 struct PurgeCommand {
     std::uint64_t group = 0;
+    /// What to purge: 0 all, 1 blocks, 2 dimstyles, 3 groups, 4 layers, 5 table styles,
+    /// 6 image definitions.
+    std::uint8_t what = 0;
+};
+
+/// UNITS: set how lengths and angles are displayed (stored with the drawing).
+struct SetUnitsCommand {
+    DrawingUnits units;
+};
+/// AUDIT: validate references and structure; with `fix`, repair what can be repaired.
+struct AuditCommand {
+    bool fix = false;
 };
 
 /// ALIGN (AutoCAD): move, rotate and optionally uniformly scale the selection so that
@@ -908,7 +921,8 @@ using Command =
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
                  ArrayPathCommand, AddPointCommand, AddXlineCommand, AddEllipseCommand,
                  AddSplineCommand, SaveNamedViewCommand, DeleteNamedViewCommand,
-                 CreateGroupCommand, UngroupCommand, SetPickStyleCommand,
+                 CreateGroupCommand, UngroupCommand, SetPickStyleCommand, SetUnitsCommand,
+                 AuditCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

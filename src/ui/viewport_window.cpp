@@ -146,6 +146,11 @@ std::vector<core::NamedView> ViewportWindow::named_views() {
     return named_views_;
 }
 
+core::DrawingUnits ViewportWindow::units() {
+    std::scoped_lock lock(layers_mutex_);
+    return units_;
+}
+
 void ViewportWindow::zoom_scale(double factor) {
     std::scoped_lock lock(camera_mutex_);
     const double cx = static_cast<double>(camera_.viewport_width()) * 0.5;
@@ -436,6 +441,7 @@ void ViewportWindow::render_loop(std::stop_token token) {
             std::scoped_lock lock(layers_mutex_);
             layers_ = snap.layers;
             named_views_ = snap.named_views;
+            units_ = snap.units;
         }
 
         // Surface the engine's command-result message (honest feedback) once.

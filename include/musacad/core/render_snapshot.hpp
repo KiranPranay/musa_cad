@@ -12,6 +12,7 @@
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/units.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 #include "musacad/core/properties_palette.hpp"
@@ -141,6 +142,7 @@ struct RenderSnapshot {
     std::vector<PageSetup> page_setups; // saved PLOT page setups (for the PLOT dialog)
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)
     std::vector<std::string> group_names; // GROUP table names (for GROUP ?)
+    DrawingUnits units;                    // UNITS: display formats (readout, DYN, inquiry)
 
     // Filled triangles (3 Vec2 per triangle), batched by colour -- arrowheads and
     // any future hatching. `lineweight_display` is the LWDISPLAY toggle.
