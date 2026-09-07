@@ -93,6 +93,7 @@ add_executable(musacad_tests
     test_revcloud.cpp
     test_explode.cpp
     test_xline.cpp
+    test_undo_remap.cpp
     test_break.cpp
     test_align_lengthen.cpp
     test_inquiry.cpp

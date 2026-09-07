@@ -173,8 +173,9 @@ private:
 
     // --- undo/redo ---
     void push_create_item(std::uint64_t group, EntityHandle handle, Command data);
-    void push_erase_item(std::uint64_t group, Command data);
+    void push_erase_item(std::uint64_t group, EntityHandle erased, Command data);
     void do_undo_group();
+    void remap_history_handle(EntityHandle from, EntityHandle to, Group& in_flight);
     void do_redo_group();
     void do_undo_op();
 

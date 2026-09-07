@@ -224,11 +224,13 @@ void GeometryEngine::push_create_item(std::uint64_t group, EntityHandle handle, 
     undo_.back().items.push_back(Item{std::move(data), handle, true});
 }
 
-void GeometryEngine::push_erase_item(std::uint64_t group, Command data) {
+void GeometryEngine::push_erase_item(std::uint64_t group, EntityHandle erased, Command data) {
     if (undo_.empty() || undo_.back().id != group) {
         undo_.push_back(Group{group, {}});
     }
-    undo_.back().items.push_back(Item{std::move(data), EntityHandle::null(), false});
+    // The erased entity's (now dead) handle is kept as its identity in the history, so
+    // when undo re-creates it the neighbouring items can be remapped to the new handle.
+    undo_.back().items.push_back(Item{std::move(data), erased, false});
 }
 
 void GeometryEngine::do_undo_group() {
@@ -238,13 +240,16 @@ void GeometryEngine::do_undo_group() {
     Group g = std::move(undo_.back());
     undo_.pop_back();
     // Reverse the items in reverse order so a mixed (erase+create) group undoes
-    // cleanly.
+    // cleanly. A re-created entity gets a NEW handle; every history item that named the
+    // old one is rewritten to it (see remap_history_handle). Handles are never nulled:
+    // a dead handle stays as the identity token the next remap keys on.
     for (auto it = g.items.rbegin(); it != g.items.rend(); ++it) {
         if (it->is_create) {
             remove_indexed(it->handle);
-            it->handle = EntityHandle::null();
         } else {
+            const EntityHandle old = it->handle;
             it->handle = create_indexed(it->data);
+            remap_history_handle(old, it->handle, g);
         }
     }
     redo_.push_back(std::move(g));
@@ -258,13 +263,40 @@ void GeometryEngine::do_redo_group() {
     redo_.pop_back();
     for (Item& it : g.items) {
         if (it.is_create) {
+            const EntityHandle old = it.handle;
             it.handle = create_indexed(it.data);
+            remap_history_handle(old, it.handle, g);
         } else {
             remove_indexed(it.handle);
-            it.handle = EntityHandle::null();
         }
     }
     undo_.push_back(std::move(g));
+}
+
+// An entity re-created by undo/redo comes back under a NEW generational handle. Its
+// other history items -- the create item of the edit that first made it, the erase item
+// of a later edit that replaced it -- still name the old handle; left stale, the next
+// undo's remove misses silently and the drawing keeps a duplicate (move, rotate, undo,
+// undo once left two objects). Handles are unique over time, so rewriting old -> new
+// across both stacks and the group in flight is exact.
+void GeometryEngine::remap_history_handle(EntityHandle from, EntityHandle to, Group& in_flight) {
+    if (from == to || from.is_null()) {
+        return;
+    }
+    const auto fix = [&](Group& g) {
+        for (Item& i : g.items) {
+            if (i.handle == from) {
+                i.handle = to;
+            }
+        }
+    };
+    fix(in_flight);
+    for (Group& g : undo_) {
+        fix(g);
+    }
+    for (Group& g : redo_) {
+        fix(g);
+    }
 }
 
 void GeometryEngine::do_undo_op() {
@@ -909,7 +941,7 @@ void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
         translate_cmd(result, delta);
         if (!copy) {
             remove_indexed(h);
-            push_erase_item(group, original);
+            push_erase_item(group, h, original);
         }
         const EntityHandle nh = create_indexed(result);
         push_create_item(group, nh, result);
@@ -1208,7 +1240,7 @@ void GeometryEngine::apply_stretch(Vec2 delta, std::uint64_t group) {
     for (const StretchEdit& e : edits) {
         const Command original = capture_entity(e.handle);
         remove_indexed(e.handle);
-        push_erase_item(group, original);
+        push_erase_item(group, e.handle, original);
         const EntityHandle nh = create_indexed(e.edited);
         push_create_item(group, nh, e.edited);
         result.push_back(nh);
@@ -1273,7 +1305,7 @@ void GeometryEngine::apply_cut_clipboard(std::uint64_t group) {
         }
         const Command original = capture_entity(h);
         remove_indexed(h);
-        push_erase_item(group, original);
+        push_erase_item(group, h, original);
         ++erased;
     }
     selection_.clear();
@@ -1414,7 +1446,7 @@ void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64
         mirror_cmd(mirrored, a, b);
         if (erase_source) {
             remove_indexed(h);
-            push_erase_item(group, original);
+            push_erase_item(group, h, original);
         }
         const EntityHandle nh = create_indexed(mirrored);
         push_create_item(group, nh, mirrored);
@@ -1438,7 +1470,7 @@ void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group) 
         Command result = original;
         rotate_cmd(result, base, angle);
         remove_indexed(h);
-        push_erase_item(group, original);
+        push_erase_item(group, h, original);
         const EntityHandle nh = create_indexed(result);
         push_create_item(group, nh, result);
         out.push_back(nh);
@@ -1464,7 +1496,7 @@ void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group) 
         Command result = original;
         scale_cmd(result, base, factor);
         remove_indexed(h);
-        push_erase_item(group, original);
+        push_erase_item(group, h, original);
         const EntityHandle nh = create_indexed(result);
         push_create_item(group, nh, result);
         out.push_back(nh);
@@ -1875,7 +1907,7 @@ void GeometryEngine::apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t g
                  : AddArcCommand{centre, r, start - best, start + total, 0, props, cts};
     const Command original = capture_entity(h);
     remove_indexed(h);
-    push_erase_item(group, original);
+    push_erase_item(group, h, original);
     push_create_item(group, create_indexed(extended), extended);
     redo_.clear();
     geom_dirty_ = true;
@@ -1971,7 +2003,7 @@ void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group)
     const double cts = store_.celtscale(h);
     const Command original = capture_entity(h);
     remove_indexed(h);
-    push_erase_item(group, original);
+    push_erase_item(group, h, original);
     const Command extended = AddLineCommand{fix, target, 0, props, cts};
     push_create_item(group, create_indexed(extended), extended);
     redo_.clear();
@@ -2210,7 +2242,7 @@ void GeometryEngine::apply_revcloud_object(const RevcloudObjectCommand& c) {
     // AutoCAD converts the object: the cloud replaces it, as one undo group.
     const Command original = capture_entity(h);
     remove_indexed(h);
-    push_erase_item(c.group, original);
+    push_erase_item(c.group, h, original);
     const Command cmd = cloud;
     const EntityHandle nh = create_indexed(cmd);
     push_create_item(c.group, nh, cmd);
@@ -2242,7 +2274,7 @@ void GeometryEngine::apply_revcloud_reverse(std::uint64_t group) {
         }
         const Command original = capture_entity(h);
         remove_indexed(h);
-        push_erase_item(group, original);
+        push_erase_item(group, h, original);
         const EntityHandle nh = create_indexed(edited);
         push_create_item(group, nh, edited);
         out.push_back(nh);
@@ -2572,7 +2604,7 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
     for (const EntityHandle h : exploded) {
         const Command original = capture_entity(h);
         remove_indexed(h);
-        push_erase_item(group, original);
+        push_erase_item(group, h, original);
     }
     for (const Command& part : parts) {
         const EntityHandle nh = create_indexed(part);
@@ -2645,7 +2677,7 @@ void GeometryEngine::apply_align(const AlignSelectionCommand& c) {
         }
         translate_cmd(result, c.dst1 - c.src1);
         remove_indexed(h);
-        push_erase_item(c.group, original);
+        push_erase_item(c.group, h, original);
         const EntityHandle nh = create_indexed(result);
         push_create_item(c.group, nh, result);
         out.push_back(nh);
@@ -2744,7 +2776,7 @@ void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
 
     const Command original = capture_entity(h);
     remove_indexed(h);
-    push_erase_item(c.group, original);
+    push_erase_item(c.group, h, original);
     const EntityHandle nh = create_indexed(edited);
     push_create_item(c.group, nh, edited);
     selection_ = {nh};
@@ -2925,7 +2957,7 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
     }
     const Command original = capture_entity(h);
     remove_indexed(h);
-    push_erase_item(c.group, original);
+    push_erase_item(c.group, h, original);
     std::vector<EntityHandle> made;
     for (const Command& piece : pieces) {
         const EntityHandle nh = create_indexed(piece);
@@ -2972,7 +3004,7 @@ void GeometryEngine::apply_grip_commit(std::uint64_t group) {
     const Command original = capture_entity(grip_handle_);
     const Command edited = edit_for_grip_drag(store_, grip_handle_, grip_index_, grip_pos_);
     remove_indexed(grip_handle_);
-    push_erase_item(group, original);
+    push_erase_item(group, grip_handle_, original);
     const EntityHandle nh = create_indexed(edited);
     push_create_item(group, nh, edited);
     selection_ = {nh}; // keep the edited entity selected (grips follow)
@@ -3066,7 +3098,7 @@ void GeometryEngine::apply_text_edit(Vec2 at, double pick_radius, const std::str
         edited);
     const Command original = capture_entity(target);
     remove_indexed(target);
-    push_erase_item(group, original);
+    push_erase_item(group, target, original);
     const EntityHandle nh = create_indexed(edited);
     push_create_item(group, nh, edited);
     selection_ = {nh};
@@ -3106,7 +3138,7 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
         const bool closed = pl->closed;
         const Command orig = capture_entity(h1);
         remove_indexed(h1);
-        push_erase_item(group, orig);
+        push_erase_item(group, h1, orig);
         const Command np = AddPolylineCommand{std::move(pts), closed, 0, {}, std::move(bulges)};
         push_create_item(group, create_indexed(np), np);
         redo_.clear();
@@ -3166,9 +3198,9 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
     const Command o1 = capture_entity(h1);
     const Command o2 = capture_entity(h2);
     remove_indexed(h1);
-    push_erase_item(group, o1);
+    push_erase_item(group, h1, o1);
     remove_indexed(h2);
-    push_erase_item(group, o2);
+    push_erase_item(group, h2, o2);
     const Command e1 = AddLineCommand{k1, t1, 0};
     push_create_item(group, create_indexed(e1), e1);
     const Command e2 = AddLineCommand{k2, t2, 0};
@@ -3217,7 +3249,7 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
         const bool closed = pl->closed;
         const Command orig = capture_entity(h1);
         remove_indexed(h1);
-        push_erase_item(group, orig);
+        push_erase_item(group, h1, orig);
         const Command np = AddPolylineCommand{std::move(pts), closed, 0};
         push_create_item(group, create_indexed(np), np);
         redo_.clear();
@@ -3248,9 +3280,9 @@ void GeometryEngine::apply_chamfer(Vec2 pick1, Vec2 pick2, double dist1, double 
     const Command o1 = capture_entity(h1);
     const Command o2 = capture_entity(h2);
     remove_indexed(h1);
-    push_erase_item(group, o1);
+    push_erase_item(group, h1, o1);
     remove_indexed(h2);
-    push_erase_item(group, o2);
+    push_erase_item(group, h2, o2);
     const Command e1 = AddLineCommand{k1, t1, 0};
     push_create_item(group, create_indexed(e1), e1);
     const Command e2 = AddLineCommand{k2, t2, 0};
@@ -3302,7 +3334,7 @@ void GeometryEngine::apply_props_change(const std::function<void(EntityProps&)>&
         Command modified = original; // carries the entity's exact props
         modify_cmd_props(modified, modify);
         remove_indexed(h);
-        push_erase_item(group, original);
+        push_erase_item(group, h, original);
         const EntityHandle nh = create_indexed(modified);
         push_create_item(group, nh, modified);
         out.push_back(nh);
@@ -3334,7 +3366,7 @@ void GeometryEngine::apply_set_property(PropertyId id, const PropertyValue& valu
         Command modified = original;
         write_property(modified, id, value);
         remove_indexed(h);
-        push_erase_item(group, original);
+        push_erase_item(group, h, original);
         const EntityHandle nh = create_indexed(modified);
         push_create_item(group, nh, modified);
         out.push_back(nh);
@@ -3407,7 +3439,7 @@ void GeometryEngine::apply_match_apply(Vec2 point, double radius, const MatchPro
         return; // every category filtered off -> nothing to do, no undo entry
     }
     remove_indexed(h);
-    push_erase_item(group, original);
+    push_erase_item(group, h, original);
     const EntityHandle nh = create_indexed(modified);
     push_create_item(group, nh, modified);
     redo_.clear();
@@ -3641,7 +3673,7 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
     }
     const Command original = capture_entity(h);
     remove_indexed(h);
-    push_erase_item(group, original);
+    push_erase_item(group, h, original);
     for (const Command& piece : pieces) {
         push_create_item(group, create_indexed(piece), piece);
     }
@@ -3974,7 +4006,7 @@ void GeometryEngine::join_entities(const std::vector<EntityHandle>& ents, double
             }
             const Command original = capture_entity(h);
             remove_indexed(h);
-            push_erase_item(group, original);
+            push_erase_item(group, h, original);
         }
         AddPolylineCommand cmd;
         cmd.points = cv;
@@ -4041,7 +4073,7 @@ void GeometryEngine::apply(const Command& command) {
                 for (const EntityHandle h : targets) {
                     Command restore = capture_entity(h);
                     remove_indexed(h);
-                    push_erase_item(c.group, std::move(restore));
+                    push_erase_item(c.group, h, std::move(restore));
                 }
                 redo_.clear();
                 geom_dirty_ = true;
@@ -4050,7 +4082,7 @@ void GeometryEngine::apply(const Command& command) {
                 if (!h.is_null()) {
                     Command restore = capture_entity(h);
                     remove_indexed(h);
-                    push_erase_item(c.group, std::move(restore));
+                    push_erase_item(c.group, h, std::move(restore));
                     redo_.clear();
                     geom_dirty_ = true;
                 }
@@ -4078,7 +4110,7 @@ void GeometryEngine::apply(const Command& command) {
                     }
                     Command restore = capture_entity(h);
                     remove_indexed(h);
-                    push_erase_item(c.group, std::move(restore));
+                    push_erase_item(c.group, h, std::move(restore));
                 }
                 selection_.clear();
                 redo_.clear();
