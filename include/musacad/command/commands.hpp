@@ -626,6 +626,28 @@ private:
     bool done_ = false;
 };
 
+/// PEDIT (PE): select a polyline (a line or arc is converted), then AutoCAD's option
+/// menu: Close/Open, Join (through JOIN), Edit vertex (Insert/Delete/Move), Spline,
+/// Decurve, Reverse, Undo. Width, Fit and Ltype gen are reported as not supported.
+class PeditCommand final : public ICommand {
+public:
+    std::string name() const override { return "PEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Select, Option, JoinTargets, Vertex, VInsert, VDelete, VMoveFrom, VMoveTo };
+    void prompt_option(CommandContext& ctx) const;
+    void prompt_vertex(CommandContext& ctx) const;
+    State state_ = State::Select;
+    core::Vec2 pick_{};
+    core::Vec2 vfrom_{};
+    std::vector<core::Vec2> join_picks_;
+    bool done_ = false;
+};
+
 /// BLOCK (B, -BLOCK): name, base point, then "Select objects:"; Enter makes the
 /// selection a block definition and replaces it with one insert in place. Redefining an
 /// existing name updates every insert of it.

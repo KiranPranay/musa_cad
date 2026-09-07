@@ -4,6 +4,7 @@
 #include "musacad/core/geometry_engine.hpp"
 
 #include "musacad/core/ellipse.hpp"
+#include "musacad/core/spline_eval.hpp"
 #include "musacad/core/units.hpp"
 
 #include "musacad/core/dimension.hpp"
@@ -4511,6 +4512,178 @@ void GeometryEngine::apply_offset(Vec2 pick, double radius, double distance, Vec
     }
 }
 
+// PEDIT: every option is "capture the polyline, change the vertex list, re-create it"
+// as one undo group, so undo, redo and the file see an ordinary polyline edit. A line
+// or arc under the pick becomes a polyline first (AutoCAD's "turn it into one?").
+void GeometryEngine::apply_pedit(const PeditCommand& c) {
+    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    if (h.is_null()) {
+        report("PEDIT: nothing under the pick.");
+        return;
+    }
+    std::vector<Vec2> v;
+    std::vector<double> b;
+    bool closed = false;
+    EntityProps props{};
+    double cts = 1.0;
+    bool converted = false;
+    if (h.kind == EntityKind::Polyline) {
+        const PolylineData* pl = store_.polyline(h);
+        const auto vs = store_.vertices_of(*pl);
+        const auto bs = store_.bulges_of(*pl);
+        v.assign(vs.begin(), vs.end());
+        b.assign(v.size(), 0.0);
+        if (!bs.empty()) {
+            b.assign(bs.begin(), bs.end());
+        }
+        closed = pl->closed;
+        props = pl->props;
+        cts = store_.celtscale(h);
+    } else if (h.kind == EntityKind::Line) {
+        const LineData* l = store_.line(h);
+        v = {l->a, l->b};
+        b = {0.0, 0.0};
+        props = l->props;
+        cts = store_.celtscale(h);
+        converted = true;
+    } else if (h.kind == EntityKind::Arc) {
+        const ArcData* a = store_.arc(h);
+        double sweep = a->end_angle - a->start_angle;
+        while (sweep <= 0.0) {
+            sweep += kTwoPi;
+        }
+        v = {{a->center.x + a->radius * std::cos(a->start_angle),
+              a->center.y + a->radius * std::sin(a->start_angle)},
+             {a->center.x + a->radius * std::cos(a->end_angle),
+              a->center.y + a->radius * std::sin(a->end_angle)}};
+        b = {std::tan(sweep / 4.0), 0.0};
+        props = a->props;
+        cts = store_.celtscale(h);
+        converted = true;
+    } else {
+        report("PEDIT: select a polyline (or a line or arc to convert).");
+        return;
+    }
+    const std::size_t n = v.size();
+    std::optional<Command> replacement;
+    std::string what;
+    const auto nearest_vertex = [&](Vec2 p) {
+        std::size_t best = 0;
+        double bd = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 0; i < n; ++i) {
+            const double d = length_squared(v[i] - p);
+            if (d < bd) {
+                bd = d;
+                best = i;
+            }
+        }
+        return best;
+    };
+    switch (c.op) {
+    case 0: // Close
+        if (n < 3) {
+            report("PEDIT: a polyline needs three vertices to close.");
+            return;
+        }
+        closed = true;
+        what = "Closed.";
+        break;
+    case 1: // Open
+        closed = false;
+        what = "Opened.";
+        break;
+    case 2: { // Reverse: vertices backwards; each segment's bulge flips sign
+        std::vector<Vec2> rv(v.rbegin(), v.rend());
+        std::vector<double> rb(n, 0.0);
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t src = (n + n - 2 - i) % n; // old segment now traversed backwards
+            if (closed || i + 1 < n) {
+                rb[i] = -b[src];
+            }
+        }
+        v = std::move(rv);
+        b = std::move(rb);
+        what = "Reversed.";
+        break;
+    }
+    case 3: // Decurve
+        std::fill(b.begin(), b.end(), 0.0);
+        what = "Decurved.";
+        break;
+    case 4: { // Spline: a fit spline through the vertices (back to the first when closed)
+        std::vector<Vec2> fit = v;
+        if (closed && n >= 2) {
+            fit.push_back(v.front());
+        }
+        if (fit.size() < 2) {
+            report("PEDIT: not enough vertices for a spline.");
+            return;
+        }
+        AddSplineCommand sp;
+        sp.control_points = spline::fit_or_fallback(fit, 3, spline::FitParam::Chord);
+        sp.degree = 3;
+        sp.props = props;
+        replacement = sp;
+        what = "Converted to a spline.";
+        break;
+    }
+    case 5: { // Insert a vertex at p1, into the nearest segment
+        double q = 0.0;
+        double dist = 0.0;
+        polyline_param(v, b, closed, c.p1, q, dist);
+        const auto seg = static_cast<std::size_t>(std::floor(q + 1e-12));
+        const std::size_t at = std::min(seg + 1, n);
+        v.insert(v.begin() + static_cast<std::ptrdiff_t>(at), c.p1);
+        b.insert(b.begin() + static_cast<std::ptrdiff_t>(at), 0.0);
+        if (seg < b.size()) {
+            b[seg] = 0.0; // the split segment becomes straight on both sides
+        }
+        what = "Vertex inserted.";
+        break;
+    }
+    case 6: { // Delete the vertex nearest p1
+        if ((closed && n <= 3) || (!closed && n <= 2)) {
+            report("PEDIT: cannot delete -- too few vertices would remain.");
+            return;
+        }
+        const std::size_t i = nearest_vertex(c.p1);
+        v.erase(v.begin() + static_cast<std::ptrdiff_t>(i));
+        b.erase(b.begin() + static_cast<std::ptrdiff_t>(i));
+        if (i > 0 && i - 1 < b.size()) {
+            b[i - 1] = 0.0; // the segment bridging the gap is straight
+        }
+        what = "Vertex deleted.";
+        break;
+    }
+    case 7: { // Move the vertex nearest p1 to p2
+        const std::size_t i = nearest_vertex(c.p1);
+        v[i] = c.p2;
+        what = "Vertex moved.";
+        break;
+    }
+    default:
+        report("PEDIT: unknown option.");
+        return;
+    }
+    if (!replacement) {
+        bool any_bulge = false;
+        for (const double bb : b) {
+            any_bulge = any_bulge || std::abs(bb) > 1e-12;
+        }
+        replacement = AddPolylineCommand{v, closed, 0, props, any_bulge ? b : std::vector<double>{}, cts};
+    }
+    const Command original = capture_entity(h);
+    remove_indexed(h);
+    push_erase_item(c.group, h, original);
+    const EntityHandle nh = create_indexed(*replacement);
+    push_create_item(c.group, nh, *replacement);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    report((converted ? "Converted to a polyline. " : "") + what);
+}
+
 void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
     const EntityHandle h = pick_nearest(pick, radius);
     if (h.is_null()) {
@@ -5563,6 +5736,8 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, RegenCommand>) {
                 geom_dirty_ = true;
                 report("Regenerating model.");
+            } else if constexpr (std::is_same_v<T, PeditCommand>) {
+                apply_pedit(c);
             } else if constexpr (std::is_same_v<T, SetCurrentTextStyleCommand>) {
                 const std::uint16_t i = store_.text_style_index(c.name);
                 if (i == 0xFFFF) {

@@ -101,6 +101,19 @@ struct WriteBlockCommand {
 /// REGEN: rebuild and republish the scene.
 struct RegenCommand {};
 
+/// PEDIT: one edit on the polyline under `pick` (a line or arc there is turned into a
+/// polyline first, as AutoCAD offers). `op`: 0 Close, 1 Open, 2 Reverse, 3 Decurve,
+/// 4 Spline (a fit spline through the vertices), 5 insert a vertex at p1, 6 delete the
+/// vertex nearest p1, 7 move the vertex nearest p1 to p2. One undo group each.
+struct PeditCommand {
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    std::uint8_t op = 0;
+    Vec2 p1{};
+    Vec2 p2{};
+    std::uint64_t group = 0;
+};
+
 /// STYLE: add or replace a text style; optionally make it current.
 struct SetTextStyleCommand {
     TextStyle style;
@@ -962,7 +975,7 @@ using Command =
                  AddSplineCommand, SaveNamedViewCommand, DeleteNamedViewCommand,
                  CreateGroupCommand, UngroupCommand, SetPickStyleCommand, SetUnitsCommand,
                  AuditCommand, SetTextStyleCommand, SetCurrentTextStyleCommand, DefineBlockCommand,
-                 InsertBlockCommand, WriteBlockCommand, RegenCommand,
+                 InsertBlockCommand, WriteBlockCommand, RegenCommand, PeditCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

@@ -156,6 +156,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/xline.svg", "Draw an infinite construction line.");
     reg({"RAY"}, [] { return std::make_unique<XlineCommand>(true); },
         "assets/ribbon/ray.svg", "Draw a semi-infinite construction line.");
+    reg({"PE", "PEDIT"}, [] { return std::make_unique<PeditCommand>(); }, "",
+        "Edit a polyline: close/open, join, vertices, spline, decurve, reverse.");
     reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },
         "assets/ribbon/block.svg", "Make the selection a block definition (replaced by an insert).");
     reg({"I", "INSERT", "-INSERT"}, [] { return std::make_unique<InsertCommand>(); },

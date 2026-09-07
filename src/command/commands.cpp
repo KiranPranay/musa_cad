@@ -2228,6 +2228,156 @@ void PickStyleCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 // ---------------------------------------------------------------------------
+// PEDIT
+// ---------------------------------------------------------------------------
+void PeditCommand::prompt_option(CommandContext& ctx) const {
+    ctx.set_prompt(
+        "Enter an option [Close/Open/Join/Width/Edit vertex/Fit/Spline/Decurve/Ltype gen/Reverse/Undo]: ");
+}
+
+void PeditCommand::prompt_vertex(CommandContext& ctx) const {
+    ctx.set_prompt("Enter a vertex editing option [Insert/Delete/Move/eXit] <X>: ");
+}
+
+void PeditCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Select;
+    ctx.set_prompt("Select polyline or [Multiple]: ");
+}
+
+void PeditCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void PeditCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    const auto op = [&](std::uint8_t code, core::Vec2 p1 = {}, core::Vec2 p2 = {}) {
+        ctx.submit(core::PeditCommand{pick_, ctx.pick_radius(), code, p1, p2, ctx.new_group()});
+    };
+    switch (state_) {
+    case State::Select:
+        if (u == "M" || u == "MULTIPLE") {
+            ctx.echo("Multiple is not supported yet; select one polyline.");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pick_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Option;
+            prompt_option(ctx);
+        }
+        return;
+    case State::Option:
+        if (t.empty() || u == "X" || u == "EXIT") {
+            done_ = true;
+            return;
+        }
+        if (u == "C" || u == "CLOSE") {
+            op(0);
+        } else if (u == "O" || u == "OPEN") {
+            op(1);
+        } else if (u == "J" || u == "JOIN") {
+            join_picks_ = {pick_};
+            state_ = State::JoinTargets;
+            ctx.set_prompt("Select objects to join: ");
+            return;
+        } else if (u == "W" || u == "WIDTH") {
+            ctx.echo("Width is not supported: polylines have no width here yet.");
+        } else if (u == "E" || u == "EDIT VERTEX" || u == "EDIT") {
+            state_ = State::Vertex;
+            prompt_vertex(ctx);
+            return;
+        } else if (u == "F" || u == "FIT") {
+            ctx.echo("Fit is not supported; Spline makes a fit spline through the vertices.");
+        } else if (u == "S" || u == "SPLINE") {
+            op(4);
+            done_ = true; // the polyline is a spline now
+            return;
+        } else if (u == "D" || u == "DECURVE") {
+            op(3);
+        } else if (u == "L" || u == "LTYPE GEN" || u == "LTYPE") {
+            ctx.echo("Ltype gen is not supported yet.");
+        } else if (u == "R" || u == "REVERSE") {
+            op(2);
+        } else if (u == "U" || u == "UNDO") {
+            ctx.submit(core::UndoLastGroupCommand{});
+        } else {
+            ctx.echo("Enter Close, Open, Join, Edit vertex, Spline, Decurve, Reverse, Undo or Enter to finish.");
+        }
+        prompt_option(ctx);
+        return;
+    case State::JoinTargets:
+        if (t.empty()) {
+            if (join_picks_.size() > 1) {
+                ctx.submit(core::JoinPickCommand{join_picks_, ctx.pick_radius(), ctx.new_group()});
+            }
+            state_ = State::Option;
+            prompt_option(ctx);
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            join_picks_.push_back(*p);
+            ctx.set_prompt("Select objects to join: ");
+        }
+        return;
+    case State::Vertex:
+        if (t.empty() || u == "X" || u == "EXIT") {
+            state_ = State::Option;
+            prompt_option(ctx);
+            return;
+        }
+        if (u == "I" || u == "INSERT") {
+            state_ = State::VInsert;
+            ctx.set_prompt("Specify location of new vertex: ");
+        } else if (u == "D" || u == "DELETE") {
+            state_ = State::VDelete;
+            ctx.set_prompt("Specify vertex to delete: ");
+        } else if (u == "M" || u == "MOVE") {
+            state_ = State::VMoveFrom;
+            ctx.set_prompt("Specify vertex to move: ");
+        } else {
+            ctx.echo("Enter Insert, Delete, Move or eXit.");
+            prompt_vertex(ctx);
+        }
+        return;
+    case State::VInsert:
+        if (const auto p = read_point(ctx, text)) {
+            op(5, *p);
+            state_ = State::Vertex;
+            prompt_vertex(ctx);
+        }
+        return;
+    case State::VDelete:
+        if (const auto p = read_point(ctx, text)) {
+            op(6, *p);
+            state_ = State::Vertex;
+            prompt_vertex(ctx);
+        }
+        return;
+    case State::VMoveFrom:
+        if (const auto p = read_point(ctx, text)) {
+            vfrom_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::VMoveTo;
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            ctx.set_prompt("Specify new location: ");
+        }
+        return;
+    case State::VMoveTo:
+        if (const auto p = read_point(ctx, text)) {
+            op(7, vfrom_, *p);
+            pick_ = *p; // the moved vertex is on the polyline: keep picking there
+            ctx.set_preview({});
+            state_ = State::Vertex;
+            prompt_vertex(ctx);
+        }
+        return;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BLOCK / INSERT / WBLOCK / REGEN
 // ---------------------------------------------------------------------------
 namespace {

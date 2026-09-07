@@ -262,6 +262,7 @@ private:
     void apply_audit(bool fix);
     void apply_define_block(const DefineBlockCommand& c);
     void apply_write_block(const WriteBlockCommand& c);
+    void apply_pedit(const PeditCommand& c);
     [[nodiscard]] std::string fmt_len(double v) const;
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);

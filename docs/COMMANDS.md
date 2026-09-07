@@ -42,6 +42,7 @@ commands (Ribbon Phase A):
 | REVCLOUD | Draw a revision cloud, or turn an object into one. |
 | EXPLODE (X) | Break compound objects into their components. |
 | PURGE (PU) | Remove unused layers, dimension styles, table styles, blocks, image definitions or empty groups (type prompt, All by default). |
+| PEDIT (PE) | Edit a polyline: Close/Open, Join, Edit vertex (Insert/Delete/Move), Spline (a fit spline through the vertices), Decurve, Reverse, Undo; a picked line or arc is converted first. |
 | BLOCK (B, -BLOCK) | Make the selection a block definition (name, base point, select objects); the originals are replaced by one insert in place. |
 | INSERT (I, -INSERT) | Insert a block by name: insertion point, X/Y scale, rotation (? lists blocks). |
 | WBLOCK (W) | Write a block (base point at the origin) or the whole drawing to a .musa file. |
@@ -149,6 +150,7 @@ commands (Ribbon Phase A):
 | UNITS (Scientific/Decimal/Engineering/Architectural/Fractional; degrees/DMS/grads/radians/surveyor) | UN | Implemented (dimension text keeps the dimstyle precision, as DIMLUNIT does) |
 | STYLE (text-style table; width factor and oblique applied to TEXT; DXF STYLE table both ways) | ST | Implemented (backwards/upside-down/vertical deferred; MTEXT keeps fonts directly) |
 | BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented (ATTDEF/ATTRIB and REFEDIT deferred) |
+| PEDIT (Close/Open/Join/Edit vertex/Spline/Decurve/Reverse/Undo) | PE | Implemented (Width, Fit, Ltype gen, Multiple deferred; Spline yields a SPLINE entity) |
 | Properties palette: editable Start/End/Center X-Y, Radius, Position X-Y | PR | Implemented |
 | DXF TOLERANCE: feature control frames both ways (cells joined by %%v, GD&T symbols as {\\Fgdt;x}); datum symbols written as one-cell frames | DXFOUT/DXFIN | Implemented (a datum's leader triangle has no DXF form) |
 | AUDIT | AUDIT | Implemented |
