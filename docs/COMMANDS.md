@@ -41,7 +41,9 @@ commands (Ribbon Phase A):
 | POLYGON (POL) | Draw a regular polygon by centre or by one edge. |
 | REVCLOUD | Draw a revision cloud, or turn an object into one. |
 | EXPLODE (X) | Break compound objects into their components. |
-| PURGE (PU) | Remove unused layers from the drawing. |
+| PURGE (PU) | Remove unused layers, dimension styles, table styles, blocks, image definitions or empty groups (type prompt, All by default). |
+| UNITS (UN, -UNITS) | Length/angle display format and precision, base angle, clockwise; used by the readout and inquiry commands. |
+| AUDIT | Validate layer/style/font/block/image references and entity shape; Yes fixes them. |
 | VIEW (V) | Save, Restore, Delete and list (?) named views; Window saves a framed view. |
 | GROUP (G) | Make the selection a named group (Name/Description); picking a member selects the group. |
 | UNGROUP | Dissolve a group by pick or by name. |
@@ -139,6 +141,9 @@ commands (Ribbon Phase A):
 | DONUT | DO | Implemented (as a SOLID two-loop hatch; no polyline width) |
 | VIEW Save/Restore/Delete/?/Window | V | Implemented (Orthographic/Ucs are 3D-only) |
 | GROUP / UNGROUP / PICKSTYLE | G | Implemented (group membership persists in .musa; not on the undo stack) |
+| UNITS (Scientific/Decimal/Engineering/Architectural/Fractional; degrees/DMS/grads/radians/surveyor) | UN | Implemented (dimension text keeps the dimstyle precision, as DIMLUNIT does) |
+| AUDIT | AUDIT | Implemented |
+| PURGE by type (blocks, dimstyles, table styles, image defs, groups, layers) | PU | Implemented (text styles: not a table yet, see #29) |
 | RAY (start + through points) | RAY | Implemented |
 | POINT | PO | Implemented |
 | DIVIDE (n equal segments) | DIV | Implemented |

@@ -44,8 +44,8 @@ TEST_CASE("#30: AREA reports a circle's exact area and circumference") {
 
     engine.submit(AreaQueryCommand{{10.0, 0.0}, 2.0}); // pick on the circumference
     // pi r^2 = 314.159..., 2 pi r = 62.83...
-    REQUIRE(status_contains(engine, "Area = 314.2"));
-    REQUIRE(engine.snapshot().status.find("Circumference = 62.83") != std::string::npos);
+    REQUIRE(status_contains(engine, "Area = 314.1593")); // UNITS default: 4 decimals
+    REQUIRE(engine.snapshot().status.find("Circumference = 62.8319") != std::string::npos);
 }
 
 TEST_CASE("#30: AREA of a closed polyline uses the shoelace formula") {
@@ -122,8 +122,8 @@ TEST_CASE("#30: LIST names a circle's centre and radius") {
     engine.submit(ListQueryCommand{{12.0, 6.0}, 2.0});
     REQUIRE(status_contains(engine, "Circle"));
     const std::string s = engine.snapshot().status;
-    REQUIRE(s.find("centre (5,6)") != std::string::npos);
-    REQUIRE(s.find("radius 7") != std::string::npos);
+    REQUIRE(s.find("centre (5.0000,6.0000)") != std::string::npos); // UNITS default: 4 decimals
+    REQUIRE(s.find("radius 7.0000") != std::string::npos);
 }
 
 TEST_CASE("#30: an inquiry never mutates the drawing") {

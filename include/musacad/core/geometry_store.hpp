@@ -19,6 +19,7 @@
 #include "musacad/core/entity_group.hpp"
 #include "musacad/core/named_view.hpp"
 #include "musacad/core/page_setup.hpp"
+#include "musacad/core/units.hpp"
 #include "musacad/core/properties.hpp"
 
 namespace musacad::core {
@@ -680,6 +681,20 @@ public:
     [[nodiscard]] const std::vector<PageSetup>& page_setups() const noexcept { return page_setups_; }
     void set_page_setups(std::vector<PageSetup> setups) { page_setups_ = std::move(setups); }
     /// Adds a setup, replacing any existing one with the same name (names are unique).
+    // --- drawing units (UNITS): how lengths/angles are displayed ----------------
+    [[nodiscard]] const DrawingUnits& units() const noexcept { return units_; }
+    void set_units(const DrawingUnits& u) noexcept { units_ = u; }
+
+    // --- table purges (PURGE): remove an UNUSED entry and reindex references ----
+    [[nodiscard]] bool dimstyle_in_use(std::uint16_t index) const noexcept;
+    bool remove_dimstyle(std::uint16_t index);
+    [[nodiscard]] bool table_style_in_use(std::uint16_t index) const noexcept;
+    bool remove_table_style(std::uint16_t index);
+    [[nodiscard]] bool block_in_use(std::uint16_t index) const noexcept;
+    bool remove_block(std::uint16_t index);
+    [[nodiscard]] bool image_def_in_use(std::uint16_t index) const noexcept;
+    bool remove_image_def(std::uint16_t index);
+
     // --- named views (VIEW) -------------------------------------------------
     [[nodiscard]] const std::vector<NamedView>& named_views() const noexcept { return named_views_; }
     void set_named_views(std::vector<NamedView> views) { named_views_ = std::move(views); }
@@ -818,6 +833,7 @@ private:
     std::unordered_map<std::uint64_t, double> celtscale_;  // sparse per-entity CELTSCALE (def 1.0)
     std::vector<PageSetup> page_setups_;
     std::vector<NamedView> named_views_;
+    DrawingUnits units_;
     std::vector<EntityGroup> groups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"

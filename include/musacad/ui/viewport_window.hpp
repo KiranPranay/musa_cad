@@ -57,6 +57,7 @@ public:
     bool viewport_size(int& w, int& h) const override;
     /// The drawing's saved views, from the last consumed snapshot (GUI thread).
     std::vector<core::NamedView> named_views();
+    core::DrawingUnits units();
     void zoom_scale(double factor) override;
     void open_properties() override;
     void import_dwg() override;
@@ -494,6 +495,7 @@ private:
     core::Vec2 pending_view_center_{};
     double pending_view_scale_ = 1.0;
     std::vector<core::NamedView> named_views_; ///< under layers_mutex_
+    core::DrawingUnits units_{};                ///< under layers_mutex_
 
     // Cursor (device px) shared GUI->render for the crosshair.
     std::atomic<bool> cursor_inside_{false};

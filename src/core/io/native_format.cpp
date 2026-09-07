@@ -3,6 +3,7 @@
 
 #include "musacad/core/io/native_format.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <fstream>
 #include <sstream>
@@ -759,6 +760,20 @@ std::string serialize_native(const Document& doc) {
     for (std::size_t i = 0; i < doc.polylines.size(); ++i) {
         emit_celt(3, i, doc.polylines[i].celtscale);
     }
+    // v25: UNITSFMT linear precision angular aprecision clockwise base_angle
+    s += "UNITSFMT ";
+    append_uint(s, static_cast<std::uint64_t>(doc.display_units.linear));
+    s += ' ';
+    append_uint(s, doc.display_units.linear_precision);
+    s += ' ';
+    append_uint(s, static_cast<std::uint64_t>(doc.display_units.angular));
+    s += ' ';
+    append_uint(s, doc.display_units.angular_precision);
+    s += ' ';
+    append_uint(s, doc.display_units.clockwise ? 1 : 0);
+    s += ' ';
+    append_double(s, doc.display_units.base_angle);
+    s += '\n';
     // v24: VIEW cx cy scale name  and  GROUP selectable n k1 i1 ... kn in name description
     // (names/descriptions space-escaped like PAGESETUP's strings; "-" = empty).
     for (const NamedView& v : doc.views) {
@@ -1071,6 +1086,18 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed LTSCALE");
             }
             doc.ltscale = ls;
+        } else if (key == "UNITSFMT") {
+            std::uint64_t v[5] = {2, 4, 0, 0, 0};
+            if (tok.size() != 7 || !to_uint(tok[1], v[0]) || !to_uint(tok[2], v[1]) ||
+                !to_uint(tok[3], v[2]) || !to_uint(tok[4], v[3]) || !to_uint(tok[5], v[4]) ||
+                !to_double(tok[6], doc.display_units.base_angle)) {
+                return fail("malformed UNITSFMT");
+            }
+            doc.display_units.linear = static_cast<LinearFormat>(std::clamp<std::uint64_t>(v[0], 1, 5));
+            doc.display_units.linear_precision = static_cast<std::uint8_t>(std::min<std::uint64_t>(v[1], 8));
+            doc.display_units.angular = static_cast<AngleFormat>(std::min<std::uint64_t>(v[2], 4));
+            doc.display_units.angular_precision = static_cast<std::uint8_t>(std::min<std::uint64_t>(v[3], 8));
+            doc.display_units.clockwise = v[4] != 0;
         } else if (key == "VIEW") {
             if (tok.size() != 5) {
                 return fail("malformed VIEW");

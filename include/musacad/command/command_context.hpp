@@ -10,6 +10,7 @@
 
 #include "musacad/core/command.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/units.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 
@@ -174,7 +175,9 @@ public:
 
     [[nodiscard]] virtual ViewControl* view() = 0;
     /// The drawing's saved views (VIEW Restore / ?), as last published by the engine.
-    [[nodiscard]] virtual std::vector<core::NamedView> named_views() const { return {}; }       ///< may be null in tests
+    [[nodiscard]] virtual std::vector<core::NamedView> named_views() const { return {}; }
+    /// The drawing's display units (UNITS), as last published by the engine.
+    [[nodiscard]] virtual core::DrawingUnits units() const { return {}; }       ///< may be null in tests
 };
 
 } // namespace musacad::command

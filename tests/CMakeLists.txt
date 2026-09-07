@@ -98,6 +98,7 @@ add_executable(musacad_tests
     test_modify_curves.cpp
     test_dim_types.cpp
     test_views_groups.cpp
+    test_units.cpp
     test_undo_remap.cpp
     test_break.cpp
     test_align_lengthen.cpp

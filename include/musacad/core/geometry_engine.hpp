@@ -258,7 +258,10 @@ private:
     void apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2,
                              double radius, std::uint64_t group);
     void apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t group);
-    void apply_purge();
+    void apply_purge(std::uint8_t what);
+    void apply_audit(bool fix);
+    [[nodiscard]] std::string fmt_len(double v) const;
+    [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);
     void apply_revcloud_reverse(std::uint64_t group);
     void apply_explode(std::uint64_t group);

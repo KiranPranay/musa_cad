@@ -66,6 +66,7 @@
 
 #include "musacad/command/command_processor.hpp"
 #include "musacad/core/command.hpp"
+#include "musacad/core/units.hpp"
 #include "musacad/core/table_types.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/hatch_pattern.hpp"
@@ -307,6 +308,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         const int sel = viewport_->selection_count();
         processor_->set_selection_count(sel);
         processor_->set_named_views(viewport_->named_views());
+        processor_->set_units(viewport_->units());
         processor_->set_hovered_kind(viewport_->hovered_kind()); // smart DIM preview
         for (QToolButton* b : selection_required_buttons_) {
             b->setEnabled(sel > 0);
@@ -1718,9 +1720,9 @@ void MainWindow::cursor_tick() {
     if (tick_world_pending_) {
         tick_world_pending_ = false;
         // Only repaint the readout when the text actually changed.
-        const QString t = QStringLiteral("%1, %2")
-                              .arg(tick_world_.x, 0, 'f', 3)
-                              .arg(tick_world_.y, 0, 'f', 3);
+        // In the drawing's display units (UNITS), like the inquiry commands.
+        const QString t =
+            QString::fromStdString(core::units::format_point(tick_world_, viewport_->units()));
         if (t != coord_text_shown_ && coord_label_ != nullptr) {
             coord_text_shown_ = t;
             coord_label_->setText(t);

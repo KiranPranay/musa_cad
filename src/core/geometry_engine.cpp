@@ -4,6 +4,7 @@
 #include "musacad/core/geometry_engine.hpp"
 
 #include "musacad/core/ellipse.hpp"
+#include "musacad/core/units.hpp"
 
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/properties_registry.hpp"
@@ -1010,13 +1011,6 @@ void GeometryEngine::apply_move(Vec2 delta, bool copy, std::uint64_t group) {
 }
 
 namespace {
-/// Shortest human-readable form of a number for an inquiry report: enough precision to
-/// be useful, no trailing noise.
-std::string num(double v) {
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "%.4g", v);
-    return std::string(buf);
-}
 /// Signed area of a closed point list (the shoelace formula); the sign encodes winding,
 /// which callers do not need, so they take the absolute value.
 double shoelace(const std::vector<Vec2>& p) {
@@ -1130,7 +1124,7 @@ void GeometryEngine::apply_area_query(Vec2 at, double radius) {
     if (h.kind == EntityKind::Circle) {
         const CircleData* c = store_.circle(h);
         const double r = c->radius;
-        report("Area = " + num(kPi * r * r) + ",  Circumference = " + num(kTwoPi * r));
+        report("Area = " + fmt_len(kPi * r * r) + ",  Circumference = " + fmt_len(kTwoPi * r));
         return;
     }
     std::vector<Vec2> pts;
@@ -1145,12 +1139,12 @@ void GeometryEngine::apply_area_query(Vec2 at, double radius) {
         closed = closed || pl->closed;
     }
     if (closed) {
-        report("Area = " + num(std::abs(shoelace(pts))) + ",  Perimeter = " +
-               num(path_length(pts, true)));
+        report("Area = " + fmt_len(std::abs(shoelace(pts))) + ",  Perimeter = " +
+               fmt_len(path_length(pts, true)));
     } else {
         // An open path has no area; saying so is better than reporting the area of the
         // polygon you would get by closing it, which is what the number would mean.
-        report("Length = " + num(path_length(pts, false)) + "  (open object -- no area)");
+        report("Length = " + fmt_len(path_length(pts, false)) + "  (open object -- no area)");
     }
 }
 
@@ -1168,39 +1162,39 @@ void GeometryEngine::apply_list_query(Vec2 at, double radius) {
     case EntityKind::Ellipse: {
         const EllipseData* e = store_.ellipse(h);
         const double a = length(e->major);
-        out += ",  center (" + num(e->center.x) + "," + num(e->center.y) + "),  major radius " +
-               num(a) + ",  minor radius " + num(a * e->ratio) + ",  rotation " +
-               num(to_degrees(std::atan2(e->major.y, e->major.x))) + " deg";
+        out += ",  center (" + fmt_len(e->center.x) + "," + fmt_len(e->center.y) + "),  major radius " +
+               fmt_len(a) + ",  minor radius " + fmt_len(a * e->ratio) + ",  rotation " +
+               fmt_ang(std::atan2(e->major.y, e->major.x));
         if (!ellipse::is_full(*e)) {
-            out += ",  start parameter " + num(to_degrees(e->start)) + " deg,  end parameter " +
-                   num(to_degrees(e->end)) + " deg";
+            out += ",  start parameter " + fmt_ang(e->start) + ",  end parameter " +
+                   fmt_ang(e->end);
         }
         break;
     }
     case EntityKind::Xline: {
         const XlineData* x = store_.xline(h);
         out += std::string(x->ray ? ",  ray from (" : ",  construction line through (") +
-               num(x->base.x) + "," + num(x->base.y) + "),  direction (" + num(x->dir.x) + "," +
-               num(x->dir.y) + ")";
+               fmt_len(x->base.x) + "," + fmt_len(x->base.y) + "),  direction (" + fmt_len(x->dir.x) + "," +
+               fmt_len(x->dir.y) + ")";
         break;
     }
     case EntityKind::Line: {
         const LineData* l = store_.line(h);
-        out += ",  from (" + num(l->a.x) + "," + num(l->a.y) + ") to (" + num(l->b.x) + "," +
-               num(l->b.y) + "),  length " + num(distance(l->a, l->b));
+        out += ",  from (" + fmt_len(l->a.x) + "," + fmt_len(l->a.y) + ") to (" + fmt_len(l->b.x) + "," +
+               fmt_len(l->b.y) + "),  length " + fmt_len(distance(l->a, l->b));
         break;
     }
     case EntityKind::Circle: {
         const CircleData* c = store_.circle(h);
-        out += ",  centre (" + num(c->center.x) + "," + num(c->center.y) + "),  radius " +
-               num(c->radius);
+        out += ",  centre (" + fmt_len(c->center.x) + "," + fmt_len(c->center.y) + "),  radius " +
+               fmt_len(c->radius);
         break;
     }
     case EntityKind::Arc: {
         const ArcData* a = store_.arc(h);
-        out += ",  centre (" + num(a->center.x) + "," + num(a->center.y) + "),  radius " +
-               num(a->radius) + ",  from " + num(to_degrees(a->start_angle)) + "\u00B0 to " +
-               num(to_degrees(a->end_angle)) + "\u00B0";
+        out += ",  centre (" + fmt_len(a->center.x) + "," + fmt_len(a->center.y) + "),  radius " +
+               fmt_len(a->radius) + ",  from " + fmt_ang(a->start_angle) + " to " +
+               fmt_ang(a->end_angle);
         break;
     }
     case EntityKind::Polyline: {
@@ -1211,14 +1205,14 @@ void GeometryEngine::apply_list_query(Vec2 at, double radius) {
     }
     case EntityKind::Text: {
         const TextData* t = store_.text(h);
-        out += ",  height " + num(t->height) + ",  \"" + std::string(store_.string_of(*t)) + "\"";
+        out += ",  height " + fmt_len(t->height) + ",  \"" + std::string(store_.string_of(*t)) + "\"";
         break;
     }
     case EntityKind::Dimension: {
         const DimData* d = store_.dimension(h);
         // Report the MEASURED value -- the whole point of the entity is that this is
         // computed from the def points and cannot have been authored.
-        out += ",  measures " + num(dim_measure(*d));
+        out += ",  measures " + fmt_len(dim_measure(*d));
         if (!store_.dim_override(*d).empty()) {
             out += ",  text override \"" + std::string(store_.dim_override(*d)) + "\"";
         }
@@ -2848,24 +2842,262 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
     report(msg);
 }
 
-void GeometryEngine::apply_purge() {
-    // Walk BACKWARDS: remove_layer reindexes every reference above the slot it drops, so
-    // going down means the indices still to be examined never move under us.
-    int purged = 0;
-    for (std::size_t i = store_.layer_count(); i-- > 1;) {
-        if (store_.remove_layer(static_cast<std::uint16_t>(i))) {
-            ++purged;
+std::string GeometryEngine::fmt_len(double v) const {
+    return units::format_length(v, store_.units());
+}
+
+std::string GeometryEngine::fmt_ang(double radians) const {
+    return units::format_angle(radians, store_.units());
+}
+
+void GeometryEngine::apply_purge(std::uint8_t what) {
+    // Walk each table BACKWARDS: a removal reindexes every reference above the slot it
+    // drops, so going down means the indices still to be examined never move under us.
+    const bool all = what == 0;
+    int layers = 0;
+    int dimstyles = 0;
+    int tstyles = 0;
+    int blocks = 0;
+    int images = 0;
+    int groups = 0;
+    if (all || what == 4) {
+        for (std::size_t i = store_.layer_count(); i-- > 1;) {
+            layers += store_.remove_layer(static_cast<std::uint16_t>(i)) ? 1 : 0;
         }
     }
-    if (purged == 0) {
+    if (all || what == 2) {
+        for (std::size_t i = store_.dimstyles().size(); i-- > 1;) {
+            dimstyles += store_.remove_dimstyle(static_cast<std::uint16_t>(i)) ? 1 : 0;
+        }
+    }
+    if (all || what == 5) {
+        for (std::size_t i = store_.table_styles().size(); i-- > 1;) {
+            tstyles += store_.remove_table_style(static_cast<std::uint16_t>(i)) ? 1 : 0;
+        }
+    }
+    if (all || what == 1) {
+        // Repeat until stable: a block only referenced from another unused block frees
+        // up once that block is gone.
+        for (bool again = true; again;) {
+            again = false;
+            for (std::size_t i = store_.block_count(); i-- > 0;) {
+                if (store_.remove_block(static_cast<std::uint16_t>(i))) {
+                    ++blocks;
+                    again = true;
+                }
+            }
+        }
+    }
+    if (all || what == 6) {
+        for (std::size_t i = store_.image_defs().size(); i-- > 0;) {
+            images += store_.remove_image_def(static_cast<std::uint16_t>(i)) ? 1 : 0;
+        }
+    }
+    if (all || what == 3) {
+        std::vector<EntityGroup> kept;
+        for (const EntityGroup& g : store_.groups()) {
+            bool alive = false;
+            for (const EntityHandle m : g.members) {
+                alive = alive || store_.is_valid(m);
+            }
+            if (alive) {
+                kept.push_back(g);
+            } else {
+                ++groups;
+            }
+        }
+        if (groups > 0) {
+            store_.set_groups(std::move(kept));
+        }
+    }
+    const int total = layers + dimstyles + tstyles + blocks + images + groups;
+    if (total == 0) {
         report("Purge: nothing to purge.");
         return;
     }
-    // Layer indices moved, so every cached AABB key is stale in the same way a layer
-    // change is; a full re-publish is the cheapest correct answer.
+    // Indices moved, so every cached AABB key is stale in the same way a layer change
+    // is; a full re-publish is the cheapest correct answer.
     geom_dirty_ = true;
     dirty_ = true;
-    report("Purged " + std::to_string(purged) + (purged == 1 ? " layer." : " layers."));
+    std::string msg = "Purged";
+    const auto part = [&](int n, const char* one, const char* many) {
+        if (n > 0) {
+            msg += " " + std::to_string(n) + " " + (n == 1 ? one : many) + ",";
+        }
+    };
+    part(layers, "layer", "layers");
+    part(dimstyles, "dimension style", "dimension styles");
+    part(tstyles, "table style", "table styles");
+    part(blocks, "block", "blocks");
+    part(images, "image definition", "image definitions");
+    part(groups, "empty group", "empty groups");
+    msg.back() = '.';
+    report(msg);
+}
+
+// AUDIT: every reference an entity carries must point inside its table; every entity
+// must have the shape its kind requires. Findings are counted; with `fix`, a bad
+// reference is reset to the default entry (a re-create, one undo group), a degenerate
+// entity or one referencing a missing definition is erased, and dead group members
+// are dropped. The report follows AutoCAD's AUDIT wording.
+void GeometryEngine::apply_audit(bool fix) {
+    int errors = 0;
+    int fixed = 0;
+    const std::uint64_t group = fix ? 0xA0D17ull : 0;
+    std::vector<EntityHandle> to_erase;
+    std::vector<std::pair<EntityHandle, Command>> to_replace;
+    const std::size_t nlayers = store_.layer_count();
+    const std::size_t nstyles = store_.dimstyles().size();
+    const std::size_t nfonts = store_.fonts().size();
+    const std::size_t ntstyles = store_.table_styles().size();
+    const std::size_t nblocks = store_.block_count();
+    const std::size_t nimages = store_.image_defs().size();
+
+    for (const EntityHandle h : all_live()) {
+        const EntityProps* pr = store_.props(h);
+        bool bad_layer = pr != nullptr && pr->layer >= nlayers;
+        bool bad_ref = false;   // fixable: style / font -> default
+        bool erase = false;     // unfixable: missing definition or degenerate shape
+        switch (h.kind) {
+        case EntityKind::Dimension:
+            bad_ref = store_.dimension(h)->style >= nstyles;
+            break;
+        case EntityKind::Leader:
+            bad_ref = store_.leader(h)->style >= nstyles || store_.leader(h)->font >= nfonts;
+            break;
+        case EntityKind::MLeader:
+            bad_ref = store_.mleader(h)->style >= nstyles;
+            break;
+        case EntityKind::Fcf:
+            bad_ref = store_.fcf(h)->style >= nstyles;
+            break;
+        case EntityKind::Datum:
+            bad_ref = store_.datum(h)->style >= nstyles;
+            break;
+        case EntityKind::Text:
+            bad_ref = store_.text(h)->font >= nfonts;
+            break;
+        case EntityKind::Table:
+            bad_ref = store_.table(h)->style >= ntstyles;
+            break;
+        case EntityKind::Insert:
+            erase = store_.insert(h)->block >= nblocks;
+            break;
+        case EntityKind::Image:
+            erase = store_.image(h)->def >= nimages;
+            break;
+        case EntityKind::Polyline:
+            erase = store_.polyline(h)->count < 2;
+            break;
+        case EntityKind::Hatch: {
+            const HatchData* hd = store_.hatch(h);
+            for (const auto& loop : store_.hatch_loops(*hd)) {
+                if (loop.size() < 3) {
+                    erase = true;
+                }
+            }
+            break;
+        }
+        case EntityKind::Point:
+        case EntityKind::Line:
+        case EntityKind::Circle:
+        case EntityKind::Arc:
+        case EntityKind::Spline:
+        case EntityKind::MText:
+        case EntityKind::Xline:
+        case EntityKind::Ellipse:
+            break;
+        }
+        if (bad_layer) {
+            ++errors;
+        }
+        if (bad_ref) {
+            ++errors;
+        }
+        if (erase) {
+            ++errors;
+        }
+        if (!fix) {
+            continue;
+        }
+        if (erase) {
+            to_erase.push_back(h);
+            fixed += (bad_layer ? 1 : 0) + (bad_ref ? 1 : 0) + 1;
+            continue;
+        }
+        if (bad_layer && !bad_ref) {
+            EntityProps fixed_props = *pr;
+            fixed_props.layer = 0;
+            store_.set_props(h, fixed_props);
+            ++fixed;
+            continue;
+        }
+        if (bad_ref) {
+            Command c = capture_entity(h);
+            std::visit(
+                [&](auto& x) {
+                    if constexpr (requires { x.style; }) {
+                        if constexpr (std::is_same_v<std::decay_t<decltype(x.style)>, std::uint16_t>) {
+                            x.style = 0;
+                        }
+                    }
+                    if constexpr (requires { x.font; }) {
+                        if constexpr (std::is_same_v<std::decay_t<decltype(x.font)>, std::string>) {
+                            x.font.clear();
+                        }
+                    }
+                    if constexpr (requires { x.props; }) {
+                        if (bad_layer && x.props.has_value()) {
+                            x.props->layer = 0;
+                        }
+                    }
+                },
+                c);
+            to_replace.emplace_back(h, std::move(c));
+            fixed += (bad_layer ? 1 : 0) + 1;
+        }
+    }
+    // Groups: dead members.
+    {
+        std::vector<EntityGroup> gs = store_.groups();
+        bool changed = false;
+        for (EntityGroup& g : gs) {
+            const std::size_t n = g.members.size();
+            std::erase_if(g.members, [&](EntityHandle m) { return !store_.is_valid(m); });
+            if (g.members.size() != n) {
+                errors += static_cast<int>(n - g.members.size());
+                if (fix) {
+                    fixed += static_cast<int>(n - g.members.size());
+                    changed = true;
+                }
+            }
+        }
+        if (fix && changed) {
+            std::erase_if(gs, [](const EntityGroup& g) { return g.members.empty(); });
+            store_.set_groups(std::move(gs));
+        }
+    }
+    if (fix) {
+        for (const EntityHandle h : to_erase) {
+            const Command original = capture_entity(h);
+            remove_indexed(h);
+            push_erase_item(group, h, original);
+        }
+        for (auto& [h, c] : to_replace) {
+            const Command original = capture_entity(h);
+            remove_indexed(h);
+            push_erase_item(group, h, original);
+            push_create_item(group, create_indexed(c), c);
+        }
+        if (!to_erase.empty() || !to_replace.empty()) {
+            redo_.clear();
+        }
+        prune_selection();
+        geom_dirty_ = true;
+        dirty_ = dirty_ || fixed > 0;
+    }
+    report("Auditing Header  Auditing Tables  Auditing Entities Pass 1  Total errors found " +
+           std::to_string(errors) + " fixed " + std::to_string(fixed) + ".");
 }
 
 void GeometryEngine::apply_align(const AlignSelectionCommand& c) {
@@ -4893,7 +5125,7 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, BreakCommand>) {
                 apply_break(c);
             } else if constexpr (std::is_same_v<T, PurgeCommand>) {
-                apply_purge();
+                apply_purge(c.what);
             } else if constexpr (std::is_same_v<T, RevcloudObjectCommand>) {
                 apply_revcloud_object(c);
             } else if constexpr (std::is_same_v<T, RevcloudReverseCommand>) {
@@ -5101,6 +5333,16 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, SetPickStyleCommand>) {
                 pickstyle_group_ = c.group_select;
                 report(std::string("PICKSTYLE = ") + (c.group_select ? "1" : "0") + ".");
+            } else if constexpr (std::is_same_v<T, SetUnitsCommand>) {
+                store_.set_units(c.units);
+                dirty_ = true;
+                geom_dirty_ = true; // republish: the readout and inquiry formats follow
+                report(std::string("Units: ") + units::linear_name(c.units.linear) + ", precision " +
+                       std::to_string(c.units.linear_precision) + "; angles " +
+                       units::angular_name(c.units.angular) + ", precision " +
+                       std::to_string(c.units.angular_precision) + ".");
+            } else if constexpr (std::is_same_v<T, AuditCommand>) {
+                apply_audit(c.fix);
             }
         },
         command);
@@ -5397,6 +5639,7 @@ void GeometryEngine::rebuild_and_publish() {
     // Dimension styles for the UI placement preview (cheap; few entries).
     buf.dimstyles.assign(store_.dimstyles().begin(), store_.dimstyles().end());
     buf.named_views = store_.named_views(); // VIEW table (Restore / ?)
+    buf.units = store_.units();
     buf.group_names.clear();
     for (const EntityGroup& g : store_.groups()) {
         buf.group_names.push_back(g.name); // GROUP names (feedback / ?)

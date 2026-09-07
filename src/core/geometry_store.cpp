@@ -965,6 +965,9 @@ bool GeometryStore::layer_in_use(std::uint16_t index) const noexcept {
     for_each_live_const(datums_, check);
     for_each_live_const(images_, check);
     for_each_live_const(tables_, check);
+    for_each_live_const(inserts_, check);
+    for_each_live_const(xlines_, check);
+    for_each_live_const(ellipses_, check);
     return used;
 }
 
@@ -990,6 +993,9 @@ void GeometryStore::shift_layer_refs_after_removal(std::uint16_t removed) noexce
     for_each_live_mut(datums_, fix);
     for_each_live_mut(images_, fix);
     for_each_live_mut(tables_, fix);
+    for_each_live_mut(inserts_, fix);
+    for_each_live_mut(xlines_, fix);
+    for_each_live_mut(ellipses_, fix);
 }
 
 bool GeometryStore::remove_layer(std::uint16_t index) {
@@ -1001,6 +1007,125 @@ bool GeometryStore::remove_layer(std::uint16_t index) {
     if (current_layer_ > index) {
         --current_layer_;
     }
+    return true;
+}
+
+
+// --- PURGE support: remove an unused table entry and reindex every reference ----------
+
+bool GeometryStore::dimstyle_in_use(std::uint16_t index) const noexcept {
+    bool used = false;
+    const auto check = [&](const auto& d) {
+        if (d.style == index) {
+            used = true;
+        }
+    };
+    for_each_live_const(dims_, check);
+    for_each_live_const(leaders_, check);
+    for_each_live_const(mleaders_, check);
+    for_each_live_const(fcfs_, check);
+    for_each_live_const(datums_, check);
+    return used;
+}
+
+bool GeometryStore::remove_dimstyle(std::uint16_t index) {
+    if (index == 0 || index >= dimstyles_.size() || dimstyle_in_use(index)) {
+        return false; // style 0 is the default and stays; a used style stays
+    }
+    dimstyles_.erase(dimstyles_.begin() + index);
+    const auto fix = [&](auto& d) {
+        if (d.style > index) {
+            --d.style;
+        }
+    };
+    for_each_live_mut(dims_, fix);
+    for_each_live_mut(leaders_, fix);
+    for_each_live_mut(mleaders_, fix);
+    for_each_live_mut(fcfs_, fix);
+    for_each_live_mut(datums_, fix);
+    return true;
+}
+
+bool GeometryStore::table_style_in_use(std::uint16_t index) const noexcept {
+    bool used = false;
+    for_each_live_const(tables_, [&](const TableData& t) {
+        if (t.style == index) {
+            used = true;
+        }
+    });
+    return used;
+}
+
+bool GeometryStore::remove_table_style(std::uint16_t index) {
+    if (index == 0 || index >= table_styles_.size() || table_style_in_use(index)) {
+        return false;
+    }
+    table_styles_.erase(table_styles_.begin() + index);
+    for_each_live_mut(tables_, [&](TableData& t) {
+        if (t.style > index) {
+            --t.style;
+        }
+    });
+    return true;
+}
+
+bool GeometryStore::block_in_use(std::uint16_t index) const noexcept {
+    bool used = false;
+    for_each_live_const(inserts_, [&](const InsertData& i) {
+        if (i.block == index) {
+            used = true;
+        }
+    });
+    for (const BlockDef& b : blocks_) {
+        for (const InsertData& i : b.content.inserts) {
+            if (i.block == index) {
+                used = true; // referenced from inside another block
+            }
+        }
+    }
+    return used;
+}
+
+bool GeometryStore::remove_block(std::uint16_t index) {
+    if (index >= blocks_.size() || block_in_use(index)) {
+        return false;
+    }
+    blocks_.erase(blocks_.begin() + index);
+    for_each_live_mut(inserts_, [&](InsertData& i) {
+        if (i.block > index) {
+            --i.block;
+        }
+    });
+    for (BlockDef& b : blocks_) {
+        for (InsertData& i : b.content.inserts) {
+            if (i.block > index) {
+                --i.block;
+            }
+        }
+    }
+    return true;
+}
+
+bool GeometryStore::image_def_in_use(std::uint16_t index) const noexcept {
+    bool used = false;
+    for_each_live_const(images_, [&](const ImageData& im) {
+        if (im.def == index) {
+            used = true;
+        }
+    });
+    return used;
+}
+
+bool GeometryStore::remove_image_def(std::uint16_t index) {
+    if (index >= image_defs_.size() || image_def_in_use(index)) {
+        return false;
+    }
+    image_defs_.erase(image_defs_.begin() + index);
+    for_each_live_mut(images_, [&](ImageData& im) {
+        if (im.def > index) {
+            --im.def;
+        }
+    });
     return true;
 }
 
