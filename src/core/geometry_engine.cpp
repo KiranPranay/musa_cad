@@ -535,6 +535,10 @@ bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
                 pull(x.base);
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
                 pull(x.center); // rigid, like a circle: moves whole when its centre is caught
+            } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
+                for (Vec2& p : x.control_points) {
+                    pull(p); // control points inside the window move, the rest stay
+                }
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 pull(x.a);
                 pull(x.b);
@@ -637,6 +641,10 @@ void translate_cmd(Command& c, Vec2 d) {
                 x.base += d;
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
                 x.center += d;
+            } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
+                for (Vec2& p : x.control_points) {
+                    p += d;
+                }
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a += d;
                 x.b += d;
@@ -697,6 +705,10 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
                 const Vec2 tip = refl(x.base + x.dir);
                 x.base = refl(x.base);
                 x.dir = normalized(tip - x.base);
+            } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
+                for (Vec2& p : x.control_points) {
+                    p = refl(p);
+                }
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
                 // Reflection reverses orientation: the mirrored curve is the ellipse with
                 // the reflected axes traversed through parameters -end..-start.
@@ -790,6 +802,10 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 const Vec2 tip = rot(x.center + x.major);
                 x.center = rot(x.center);
                 x.major = tip - x.center;
+            } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
+                for (Vec2& p : x.control_points) {
+                    p = rot(p);
+                }
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = rot(x.a);
                 x.b = rot(x.b);
@@ -867,6 +883,8 @@ Vec2 command_anchor(const Command& c) {
                 out = x.base;
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
                 out = x.center;
+            } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
+                out = x.control_points.empty() ? Vec2{0.0, 0.0} : x.control_points.front();
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 out = x.a;
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
@@ -908,6 +926,10 @@ void scale_cmd(Command& c, Vec2 base, double f) {
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
                 x.center = scl(x.center);
                 x.major = x.major * f;
+            } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
+                for (Vec2& p : x.control_points) {
+                    p = scl(p);
+                }
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = scl(x.a);
                 x.b = scl(x.b);
@@ -3358,6 +3380,7 @@ void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
             if constexpr (std::is_same_v<T, AddPointCommand> ||
                           std::is_same_v<T, AddXlineCommand> ||
                           std::is_same_v<T, AddEllipseCommand> ||
+                          std::is_same_v<T, AddSplineCommand> ||
                           std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> || std::is_same_v<T, AddArcCommand> ||
@@ -4106,6 +4129,7 @@ void GeometryEngine::apply(const Command& command) {
             if constexpr (std::is_same_v<T, AddPointCommand> ||
                           std::is_same_v<T, AddXlineCommand> ||
                           std::is_same_v<T, AddEllipseCommand> ||
+                          std::is_same_v<T, AddSplineCommand> ||
                           std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> ||

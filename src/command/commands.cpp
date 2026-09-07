@@ -14,6 +14,7 @@
 #include "musacad/core/hatch_pattern.hpp"
 #include "musacad/core/ellipse.hpp"
 #include "musacad/core/polygon.hpp"
+#include "musacad/core/spline_eval.hpp"
 #include "musacad/core/polyline_ops.hpp"
 
 namespace musacad::command {
@@ -1635,6 +1636,214 @@ void EllipseCommand::input(CommandContext& ctx, const std::string& text) {
         commit(ctx);
         return;
     }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SPLINE
+// ---------------------------------------------------------------------------
+namespace {
+const char* knots_name(int k) {
+    return k == 1 ? "Square root" : (k == 2 ? "Uniform" : "Chord");
+}
+} // namespace
+
+void SplineCommand::prompt_first(CommandContext& ctx) const {
+    ctx.set_prompt(fit_ ? "Specify first point or [Method/Knots/Object]: "
+                        : "Specify first point or [Method/Degree/Object]: ");
+}
+
+void SplineCommand::prompt_next(CommandContext& ctx) const {
+    const std::size_t n = pts_.size();
+    if (fit_) {
+        if (n < 2) {
+            ctx.set_prompt("Enter next point or [start Tangency/toLerance]: ");
+        } else if (n < 3) {
+            ctx.set_prompt("Enter next point or [end Tangency/toLerance/Undo]: ");
+        } else {
+            ctx.set_prompt("Enter next point or [end Tangency/toLerance/Undo/Close]: ");
+        }
+    } else {
+        if (n < 2) {
+            ctx.set_prompt("Enter next point: ");
+        } else if (n < 3) {
+            ctx.set_prompt("Enter next point or [Undo]: ");
+        } else {
+            ctx.set_prompt("Enter next point or [Close/Undo]: ");
+        }
+    }
+}
+
+void SplineCommand::refresh_preview(CommandContext& ctx) const {
+    PreviewSpec pv{PreviewKind::Spline, pts_};
+    pv.spline_fit = fit_;
+    pv.spline_degree = degree_;
+    pv.spline_knots = knots_;
+    ctx.set_preview(std::move(pv));
+}
+
+void SplineCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    fit_ = s_fit_;
+    degree_ = s_degree_;
+    knots_ = s_knots_;
+    pts_.clear();
+    state_ = State::First;
+    if (fit_) {
+        ctx.echo(std::string("Current settings: Method=Fit   Knots=") + knots_name(knots_));
+    } else {
+        ctx.echo("Current settings: Method=CV   Degree=" + std::to_string(degree_));
+    }
+    prompt_first(ctx);
+}
+
+void SplineCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.set_preview({});
+    done_ = true;
+}
+
+void SplineCommand::finish(CommandContext& ctx, bool close) {
+    if (pts_.size() < 2) {
+        ctx.echo("A spline needs at least two points.");
+        ctx.set_preview({});
+        done_ = true;
+        return;
+    }
+    std::vector<core::Vec2> through = pts_;
+    if (close) {
+        through.push_back(pts_.front()); // back to the start (C0 at the seam)
+    }
+    std::vector<core::Vec2> ctrl;
+    if (fit_) {
+        ctrl = core::spline::fit_or_fallback(through, degree_,
+                                             static_cast<core::spline::FitParam>(knots_));
+    } else {
+        ctrl = std::move(through);
+    }
+    ctx.submit(core::AddSplineCommand{std::move(ctrl), static_cast<std::uint32_t>(degree_),
+                                      ctx.group_id(), {}});
+    ctx.set_preview({});
+    done_ = true;
+}
+
+void SplineCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::First:
+        if (u == "M" || u == "METHOD") {
+            state_ = State::MethodPick;
+            ctx.set_prompt(std::string("Enter spline creation method [Fit/CV] <") +
+                           (fit_ ? "Fit" : "CV") + ">: ");
+            return;
+        }
+        if (fit_ && (u == "K" || u == "KNOTS")) {
+            state_ = State::KnotsPick;
+            ctx.set_prompt(std::string("Enter knot parameterization [Chord/Square root/Uniform] <") +
+                           knots_name(knots_) + ">: ");
+            return;
+        }
+        if (!fit_ && (u == "D" || u == "DEGREE")) {
+            state_ = State::DegreePick;
+            ctx.set_prompt("Enter degree <" + std::to_string(degree_) + ">: ");
+            return;
+        }
+        if (u == "O" || u == "OBJECT") {
+            ctx.echo("Object: converting spline-fit polylines is not supported yet.");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pts_.push_back(*p);
+            ctx.set_last_point(*p);
+            state_ = State::Next;
+            refresh_preview(ctx);
+            prompt_next(ctx);
+        }
+        return;
+    case State::MethodPick:
+        if (u == "F" || u == "FIT" || (t.empty() && fit_)) {
+            fit_ = true;
+        } else if (u == "CV" || u == "C" || (t.empty() && !fit_)) {
+            fit_ = false;
+        } else {
+            ctx.echo("Enter Fit or CV.");
+            return;
+        }
+        s_fit_ = fit_;
+        state_ = State::First;
+        prompt_first(ctx);
+        return;
+    case State::KnotsPick:
+        if (u == "C" || u == "CHORD") {
+            knots_ = 0;
+        } else if (u == "S" || u == "SQUARE ROOT" || u == "SQRT") {
+            knots_ = 1;
+        } else if (u == "U" || u == "UNIFORM") {
+            knots_ = 2;
+        } else if (!t.empty()) {
+            ctx.echo("Enter Chord, Square root or Uniform.");
+            return;
+        }
+        s_knots_ = knots_;
+        state_ = State::First;
+        prompt_first(ctx);
+        return;
+    case State::DegreePick: {
+        double v = static_cast<double>(degree_);
+        if (!t.empty() && (!parse_number(t, v) || v < 1.0 || v > 10.0)) {
+            ctx.echo("Degree must be between 1 and 10.");
+            return;
+        }
+        degree_ = static_cast<int>(v);
+        s_degree_ = degree_;
+        state_ = State::First;
+        prompt_first(ctx);
+        return;
+    }
+    case State::Next:
+        if (t.empty()) {
+            finish(ctx, false);
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (!pts_.empty()) {
+                pts_.pop_back();
+            }
+            if (pts_.empty()) {
+                state_ = State::First;
+                ctx.set_preview({});
+                prompt_first(ctx);
+            } else {
+                ctx.set_last_point(pts_.back());
+                refresh_preview(ctx);
+                prompt_next(ctx);
+            }
+            return;
+        }
+        if (u == "C" || u == "CLOSE") {
+            if (pts_.size() < 3) {
+                ctx.echo("Close needs at least three points.");
+                return;
+            }
+            finish(ctx, true);
+            return;
+        }
+        if (fit_ && (u == "T" || u == "TANGENCY")) {
+            ctx.echo("Tangency is not supported yet; the end is left free.");
+            return;
+        }
+        if (fit_ && (u == "L" || u == "TOLERANCE")) {
+            ctx.echo("Fit tolerance other than 0 is not supported yet.");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pts_.push_back(*p);
+            ctx.set_last_point(*p);
+            refresh_preview(ctx);
+            prompt_next(ctx);
+        }
+        return;
     }
 }
 

@@ -3,6 +3,8 @@
 
 #include "musacad/core/io/dxf.hpp"
 
+#include "musacad/core/spline_eval.hpp"
+
 #include "musacad/core/dimension.hpp"
 
 #include <algorithm>
@@ -338,6 +340,31 @@ std::string serialize_dxf(const Document& doc) {
         code_d(s, 40, e.ratio);
         code_d(s, 41, e.start);
         code_d(s, 42, e.end);
+    }
+    // SPLINE: 70 flags (8 = planar), 71 degree, 72/73 knot/control counts, 40 knots
+    // (the clamped uniform vector we draw with), 10/20 control points.
+    for (const DocSpline& sp : doc.splines) {
+        const int n = static_cast<int>(sp.control_points.size());
+        if (n < 2) {
+            continue;
+        }
+        const int deg = spline::effective_degree(n, static_cast<int>(sp.degree));
+        const std::vector<double> knots = spline::clamped_knots(n, deg);
+        code(s, 0, "SPLINE");
+        emit_props(s, doc, sp.props);
+        code(s, 70, "8");
+        code(s, 71, std::to_string(deg).c_str());
+        code(s, 72, std::to_string(knots.size()).c_str());
+        code(s, 73, std::to_string(n).c_str());
+        code(s, 74, "0");
+        for (const double k : knots) {
+            code_d(s, 40, k);
+        }
+        for (const Vec2& p : sp.control_points) {
+            code_d(s, 10, p.x);
+            code_d(s, 20, p.y);
+            code_d(s, 30, 0.0);
+        }
     }
     // XLINE / RAY: DXF code 10 = base (first) point, code 11 = unit direction vector.
     for (const DocXline& x : doc.xlines) {
@@ -1030,6 +1057,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         std::vector<DocHatch>* hatches = nullptr;
         std::vector<DocXline>* xlines = nullptr;
         std::vector<DocEllipse>* ellipses = nullptr;
+        std::vector<DocSpline>* splines = nullptr;
     };
 
     const auto build_entity = [&](Sink& sink, const std::string& type,
@@ -1299,7 +1327,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             // via de Boor and store the tessellated curve as a polyline -- real DXF splines
             // are non-uniform, so a uniform approximation gives wild curves. Falls back to
             // fit points (11/21) if there are no control points.
-            if (sink.polylines == nullptr) {
+            if (sink.polylines == nullptr && sink.splines == nullptr) {
                 ++skipped[type];
                 return;
             }
@@ -1322,7 +1350,8 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     knots.push_back(to_d(p.value));
                 }
             }
-            if (ctrl.empty()) { // fall back to fit points (11/21); no usable knots then
+            std::vector<Vec2> fit;
+            if (ctrl.empty()) { // no control points: the FIT points (11/21) define it
                 have_x = false;
                 knots.clear();
                 for (const Pair& p : body) {
@@ -1330,10 +1359,60 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                         x = to_d(p.value);
                         have_x = true;
                     } else if (p.code == 21 && have_x) {
-                        ctrl.push_back({x, to_d(p.value)});
+                        fit.push_back({x, to_d(p.value)});
                         have_x = false;
                     }
                 }
+            }
+            if (sink.splines != nullptr) {
+                // A REAL spline whenever it can be represented exactly: fit points are
+                // interpolated (chord parameterisation, AutoCAD's default), and control
+                // points whose knot vector is (or defaults to) our clamped uniform one are
+                // taken as they are. Anything else -- a genuinely non-uniform knot vector --
+                // is drawn faithfully as a tessellated polyline below.
+                const auto is_clamped_uniform = [&](const std::vector<double>& k) {
+                    const int cp_count = static_cast<int>(ctrl.size());
+                    const int deg = spline::effective_degree(cp_count, degree);
+                    const std::vector<double> ref = spline::clamped_knots(cp_count, deg);
+                    if (k.size() != ref.size()) {
+                        return false;
+                    }
+                    const double k0 = k.front();
+                    const double kr = k.back() - k0;
+                    if (!(kr > 0.0)) {
+                        return false;
+                    }
+                    for (std::size_t ki = 0; ki < k.size(); ++ki) {
+                        if (std::abs((k[ki] - k0) / kr - ref[ki]) > 1e-9) {
+                            return false;
+                        }
+                    }
+                    return true;
+                };
+                if (ctrl.empty() && fit.size() >= 2) {
+                    DocSpline sp;
+                    sp.control_points =
+                        spline::fit_or_fallback(fit, degree, spline::FitParam::Chord);
+                    sp.degree = static_cast<std::uint32_t>(degree);
+                    sp.props = props_of(body);
+                    sink.splines->push_back(std::move(sp));
+                    return;
+                }
+                if (ctrl.size() >= 2 && (knots.empty() || is_clamped_uniform(knots))) {
+                    DocSpline sp;
+                    sp.control_points = ctrl;
+                    sp.degree = static_cast<std::uint32_t>(degree);
+                    sp.props = props_of(body);
+                    sink.splines->push_back(std::move(sp));
+                    return;
+                }
+            }
+            if (sink.polylines == nullptr) {
+                ++skipped[type];
+                return;
+            }
+            if (ctrl.empty()) {
+                ctrl = fit; // legacy approximation: fit points evaluated as control points
             }
             if (ctrl.size() < 2) {
                 ++skipped[type];
@@ -1393,7 +1472,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     // (dims/leaders/points inside a block route to the skip catalog).
     Sink model_sink{&doc.lines,  &doc.circles, &doc.arcs,    &doc.polylines, &doc.texts,
                     &doc.mtexts, &doc.dims,    &doc.leaders, &doc.points,    &doc.inserts,
-                    &doc.hatches, &doc.xlines, &doc.ellipses};
+                    &doc.hatches, &doc.xlines, &doc.ellipses, &doc.splines};
 
     // The block currently being read in the BLOCKS section. Its sink takes the
     // importable subset; dims/leaders/points/nested-INSERT-targets that a block can't

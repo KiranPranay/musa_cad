@@ -4,6 +4,7 @@
 #include "musacad/core/native_kernel_2d.hpp"
 
 #include "musacad/core/ellipse.hpp"
+#include "musacad/core/spline_eval.hpp"
 
 #include "musacad/core/gdt.hpp"
 #include "musacad/core/image.hpp"
@@ -112,94 +113,6 @@ Vec2 closest_on_segment(Vec2 a, Vec2 b, Vec2 q) {
     return a + ab * t;
 }
 
-// --- B-spline (clamped, uniform interior knots) evaluation -----------------
-
-std::vector<double> make_clamped_knots(int control_count, int degree) {
-    const int knot_count = control_count + degree + 1;
-    std::vector<double> u(static_cast<std::size_t>(knot_count), 0.0);
-    for (int i = 0; i <= degree; ++i) {
-        u[static_cast<std::size_t>(i)] = 0.0;
-    }
-    const int interior = control_count - degree - 1; // may be <= 0
-    for (int j = 1; j <= interior; ++j) {
-        u[static_cast<std::size_t>(degree + j)] =
-            static_cast<double>(j) / static_cast<double>(control_count - degree);
-    }
-    for (int i = control_count; i < knot_count; ++i) {
-        u[static_cast<std::size_t>(i)] = 1.0;
-    }
-    return u;
-}
-
-int find_span(int n, int degree, double t, const std::vector<double>& u) {
-    if (t >= u[static_cast<std::size_t>(n + 1)]) {
-        return n;
-    }
-    if (t <= u[static_cast<std::size_t>(degree)]) {
-        return degree;
-    }
-    int low = degree;
-    int high = n + 1;
-    int mid = (low + high) / 2;
-    while (t < u[static_cast<std::size_t>(mid)] || t >= u[static_cast<std::size_t>(mid + 1)]) {
-        if (t < u[static_cast<std::size_t>(mid)]) {
-            high = mid;
-        } else {
-            low = mid;
-        }
-        mid = (low + high) / 2;
-    }
-    return mid;
-}
-
-Vec2 de_boor(int span, double t, int degree, const std::vector<double>& u,
-             std::span<const Vec2> ctrl) {
-    std::vector<Vec2> d(static_cast<std::size_t>(degree + 1));
-    for (int j = 0; j <= degree; ++j) {
-        d[static_cast<std::size_t>(j)] = ctrl[static_cast<std::size_t>(span - degree + j)];
-    }
-    for (int r = 1; r <= degree; ++r) {
-        for (int j = degree; j >= r; --j) {
-            const double left = u[static_cast<std::size_t>(span - degree + j)];
-            const double right = u[static_cast<std::size_t>(span + 1 + j - r)];
-            const double denom = right - left;
-            const double alpha = denom > 0.0 ? (t - left) / denom : 0.0;
-            d[static_cast<std::size_t>(j)] =
-                d[static_cast<std::size_t>(j - 1)] * (1.0 - alpha) +
-                d[static_cast<std::size_t>(j)] * alpha;
-        }
-    }
-    return d[static_cast<std::size_t>(degree)];
-}
-
-void tessellate_spline(std::span<const Vec2> ctrl, std::uint32_t degree_in, std::vector<Vec2>& out) {
-    const int count = static_cast<int>(ctrl.size());
-    if (count <= 0) {
-        return;
-    }
-    if (count == 1) {
-        out.push_back(ctrl[0]);
-        return;
-    }
-    int degree = static_cast<int>(degree_in);
-    if (degree < 1) {
-        degree = 1;
-    }
-    if (degree > count - 1) {
-        degree = count - 1;
-    }
-    const std::vector<double> knots = make_clamped_knots(count, degree);
-    const int n = count - 1;
-    const auto samples = std::clamp<std::size_t>(static_cast<std::size_t>(count - 1) * 16,
-                                                 std::size_t{2}, std::size_t{8192});
-    out.reserve(out.size() + samples + 1);
-    for (std::size_t i = 0; i <= samples; ++i) {
-        double t = static_cast<double>(i) / static_cast<double>(samples);
-        t = std::clamp(t, 0.0, 1.0);
-        const int span = find_span(n, degree, t, knots);
-        out.push_back(de_boor(span, t, degree, knots, ctrl));
-    }
-}
 
 /// Closest point on the angular arc; falls back to the nearer endpoint when the
 /// query projects outside the sweep.
@@ -362,7 +275,7 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
     }
     case EntityKind::Spline: {
         const SplineData* sp = store.spline(entity);
-        tessellate_spline(store.control_points_of(*sp), sp->degree, out);
+        spline::tessellate(store.control_points_of(*sp), sp->degree, out);
         break;
     }
     case EntityKind::Text: {

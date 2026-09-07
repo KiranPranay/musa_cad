@@ -133,6 +133,16 @@ struct AddEllipseCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// A SPLINE entity: a clamped B-spline with uniform interior knots through these
+/// CONTROL points (the SPLINE command's Fit method interpolates the fit points into
+/// control points before submitting, see core/spline_eval.hpp).
+struct AddSplineCommand {
+    std::vector<Vec2> control_points;
+    std::uint32_t degree = 3;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
 /// A POINT entity (AutoCAD POINT). Points are already stored, drawn, picked, bounded
 /// and persisted; this is the command that creates one, which is what the POINT command
 /// and DIVIDE/MEASURE all needed.
@@ -866,6 +876,7 @@ using Command =
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
                  ArrayPathCommand, AddPointCommand, AddXlineCommand, AddEllipseCommand,
+                 AddSplineCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

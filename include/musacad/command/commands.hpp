@@ -594,6 +594,38 @@ private:
     bool done_ = false;
 };
 
+/// SPLINE (AutoCAD SPL). Method Fit (the curve passes through the picked points; the
+/// Knots option chooses chord / square-root / uniform parameterisation) or CV (the
+/// picked points are the control vertices; Degree 1..10). Undo drops the last point,
+/// Close returns to the first. Tangency, fit tolerance and Object are reported as not
+/// supported rather than silently ignored. Settings persist for the session.
+class SplineCommand final : public ICommand {
+public:
+    std::string name() const override { return "SPLINE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { First, MethodPick, KnotsPick, DegreePick, Next };
+    void prompt_first(CommandContext& ctx) const;
+    void prompt_next(CommandContext& ctx) const;
+    void refresh_preview(CommandContext& ctx) const;
+    void finish(CommandContext& ctx, bool close);
+
+    inline static bool s_fit_ = true;
+    inline static int s_degree_ = 3;
+    inline static int s_knots_ = 0;
+
+    State state_ = State::First;
+    bool fit_ = true;
+    int degree_ = 3;
+    int knots_ = 0;
+    std::vector<core::Vec2> pts_;
+    bool done_ = false;
+};
+
 /// XLINE (AutoCAD XL) and RAY: construction lines. XLINE offers Hor/Ver/Ang/Bisect and
 /// the default two-point form (all repeat until Enter); Offset is deferred (it needs a
 /// picked reference, noted in docs/COMMANDS.md). RAY is start point + through points.

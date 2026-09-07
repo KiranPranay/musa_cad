@@ -1110,6 +1110,8 @@ EntityKind kind_of(const Command& c) noexcept {
                 k = EntityKind::Xline;
             } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
                 k = EntityKind::Ellipse;
+            } else if constexpr (std::is_same_v<T, AddSplineCommand>) {
+                k = EntityKind::Spline;
             } else if constexpr (std::is_same_v<T, AddImageCommand>) {
                 k = EntityKind::Image;
             } else if constexpr (std::is_same_v<T, AddTableCommand>) {
