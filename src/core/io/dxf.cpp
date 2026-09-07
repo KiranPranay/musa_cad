@@ -116,6 +116,73 @@ void code_d(std::string& s, int c, double v) {
 }
 void code_i(std::string& s, int c, long v) { code(s, c, std::to_string(v)); }
 
+// GD&T symbols: Musa keeps them as \U+XXXX escapes inside a frame cell; AutoCAD's
+// TOLERANCE string uses the gdt font's letters as {\Fgdt;x}. Both directions.
+struct GdtSym {
+    const char* uni; // "\U+2316"
+    char letter;
+};
+constexpr GdtSym kGdt[] = {
+    {"\\U+2316", 'j'}, // position
+    {"\\U+25CE", 'r'}, // concentricity
+    {"\\U+232F", 'i'}, // symmetry
+    {"\\U+2225", 'f'}, // parallelism
+    {"\\U+27C2", 'b'}, // perpendicularity
+    {"\\U+22A5", 'b'}, // perpendicularity (alternate code point)
+    {"\\U+2220", 'a'}, // angularity
+    {"\\U+232D", 'g'}, // cylindricity
+    {"\\U+23E5", 'c'}, // flatness
+    {"\\U+25CB", 'e'}, // circularity
+    {"\\U+23E4", 'u'}, // straightness
+    {"\\U+2313", 'd'}, // profile of a surface
+    {"\\U+2312", 'k'}, // profile of a line
+    {"\\U+2197", 'h'}, // circular runout
+    {"\\U+2330", 't'}, // total runout
+    {"\\U+24C2", 'm'}, // MMC
+    {"\\U+24C1", 'l'}, // LMC
+    {"\\U+24C8", 's'}, // RFS
+    {"\\U+2300", 'n'}, // diameter
+    {"\\U+24C5", 'p'}, // projected tolerance zone
+    {"\\U+24C9", 'w'}, // tangent plane
+    {"\\U+24BB", 'x'}, // free state
+};
+std::string gdt_to_dxf(std::string cell) {
+    for (const GdtSym& g : kGdt) {
+        const std::string u(g.uni);
+        std::size_t at = 0;
+        while ((at = cell.find(u, at)) != std::string::npos) {
+            const std::string rep = std::string("{\\Fgdt;") + g.letter + "}";
+            cell.replace(at, u.size(), rep);
+            at += rep.size();
+        }
+    }
+    return cell;
+}
+std::string gdt_from_dxf(std::string cell) {
+    std::size_t at = 0;
+    while ((at = cell.find("{\\Fgdt;", at)) != std::string::npos) {
+        const std::size_t close = cell.find('}', at);
+        if (close == std::string::npos || close != at + 8) {
+            at += 7;
+            continue;
+        }
+        const char letter = cell[at + 7];
+        std::string rep;
+        for (const GdtSym& g : kGdt) {
+            if (g.letter == letter) {
+                rep = g.uni;
+                break;
+            }
+        }
+        if (rep.empty()) {
+            rep = std::string(1, letter); // an unmapped gdt glyph: keep the letter
+        }
+        cell.replace(at, close - at + 1, rep);
+        at += rep.size();
+    }
+    return cell;
+}
+
 const char* linetype_name(Linetype t) {
     switch (t) {
     case Linetype::Dashed:
@@ -561,6 +628,41 @@ std::string serialize_dxf(const Document& doc) {
     // Leaders: exported as a DXF LEADER (vertices) plus a TEXT label so any reader
     // shows them. Import reconstructs them as line + text (see docs); Musa keeps
     // leaders as first-class entities via the native format.
+    // TOLERANCE (GD&T): a feature control frame is its cell strings joined by %%v, the
+    // dimstyle it draws with, its insertion point and x-axis direction. A datum feature
+    // symbol is written as a one-cell frame holding the datum letter (AutoCAD's own
+    // form); its leader triangle has no DXF counterpart.
+    for (const DocFcf& f : doc.fcfs) {
+        code(s, 0, "TOLERANCE");
+        emit_props(s, doc, f.props);
+        code(s, 3, f.style < doc.dimstyles.size() ? doc.dimstyles[f.style].name : std::string("Standard"));
+        code_d(s, 10, f.pos.x);
+        code_d(s, 20, f.pos.y);
+        code_d(s, 30, 0.0);
+        std::string text;
+        for (std::size_t i = 0; i < f.cells.size(); ++i) {
+            if (i > 0) {
+                text += "%%v";
+            }
+            text += gdt_to_dxf(f.cells[i]);
+        }
+        code(s, 1, text);
+        code_d(s, 11, std::cos(f.rotation));
+        code_d(s, 21, std::sin(f.rotation));
+        code_d(s, 31, 0.0);
+    }
+    for (const DocDatum& d : doc.datums) {
+        code(s, 0, "TOLERANCE");
+        emit_props(s, doc, d.props);
+        code(s, 3, d.style < doc.dimstyles.size() ? doc.dimstyles[d.style].name : std::string("Standard"));
+        code_d(s, 10, d.pos.x);
+        code_d(s, 20, d.pos.y);
+        code_d(s, 30, 0.0);
+        code(s, 1, d.letter);
+        code_d(s, 11, std::cos(d.rotation));
+        code_d(s, 21, std::sin(d.rotation));
+        code_d(s, 31, 0.0);
+    }
     for (const DocLeader& l : doc.leaders) {
         code(s, 0, "LEADER");
         emit_props(s, doc, l.props);
@@ -1121,6 +1223,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         std::vector<DocXline>* xlines = nullptr;
         std::vector<DocEllipse>* ellipses = nullptr;
         std::vector<DocSpline>* splines = nullptr;
+        std::vector<DocFcf>* fcfs = nullptr;
     };
 
     const auto build_entity = [&](Sink& sink, const std::string& type,
@@ -1246,6 +1349,33 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 d.style = ensure_dimstyle(*st);
             }
             sink.dims->push_back(std::move(d));
+            return;
+        }
+        if (type == "TOLERANCE") {
+            if (sink.fcfs == nullptr) {
+                ++skipped[type];
+                return;
+            }
+            DocFcf f;
+            f.props = props_of(body);
+            f.pos = {getd(body, 10), getd(body, 20)};
+            f.rotation = std::atan2(getd(body, 21, 0.0), getd(body, 11, 1.0));
+            if (const std::string* st = find(body, 3)) {
+                f.style = ensure_dimstyle(*st);
+            }
+            const std::string tol_text = find(body, 1) != nullptr ? *find(body, 1) : std::string{};
+            // Cells are separated by %%v; symbols come back as \U+ escapes.
+            std::size_t start = 0;
+            for (;;) {
+                const std::size_t sep = tol_text.find("%%v", start);
+                f.cells.push_back(gdt_from_dxf(
+                    tol_text.substr(start, sep == std::string::npos ? std::string::npos : sep - start)));
+                if (sep == std::string::npos) {
+                    break;
+                }
+                start = sep + 3;
+            }
+            sink.fcfs->push_back(std::move(f));
             return;
         }
         if (type == "LEADER") {
@@ -1545,7 +1675,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     // (dims/leaders/points inside a block route to the skip catalog).
     Sink model_sink{&doc.lines,  &doc.circles, &doc.arcs,    &doc.polylines, &doc.texts,
                     &doc.mtexts, &doc.dims,    &doc.leaders, &doc.points,    &doc.inserts,
-                    &doc.hatches, &doc.xlines, &doc.ellipses, &doc.splines};
+                    &doc.hatches, &doc.xlines, &doc.ellipses, &doc.splines, &doc.fcfs};
 
     // The block currently being read in the BLOCKS section. Its sink takes the
     // importable subset; dims/leaders/points/nested-INSERT-targets that a block can't
