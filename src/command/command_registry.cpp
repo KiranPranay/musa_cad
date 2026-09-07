@@ -102,6 +102,8 @@ CommandRegistry CommandRegistry::make_default() {
         "Create a series of straight-line segments.");
     reg({"C", "CIRCLE"}, [] { return std::make_unique<CircleCommand>(); }, "assets/ribbon/circle.svg",
         "Draw a circle from a center point and a radius or diameter.");
+    reg({"EL", "ELLIPSE"}, [] { return std::make_unique<EllipseCommand>(); },
+        "assets/ribbon/ellipse.svg", "Draw an ellipse or an elliptical arc.");
     reg({"PL", "PLINE"}, [] { return std::make_unique<PolylineCommand>(); },
         "assets/ribbon/polyline.svg",
         "Draw a connected sequence of line and arc segments as one object.");

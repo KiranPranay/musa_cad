@@ -121,6 +121,18 @@ struct AddXlineCommand {
     std::optional<EntityProps> props = {};
 };
 
+/// An ellipse / elliptical arc (AutoCAD ELLIPSE): centre, major half-axis vector, ratio
+/// (minor/major, 0..1], counter-clockwise parameter range (full = 0..2pi).
+struct AddEllipseCommand {
+    Vec2 center;
+    Vec2 major{1.0, 0.0};
+    double ratio = 1.0;
+    double start = 0.0;
+    double end = 6.283185307179586;
+    std::uint64_t group = 0;
+    std::optional<EntityProps> props = {};
+};
+
 /// A POINT entity (AutoCAD POINT). Points are already stored, drawn, picked, bounded
 /// and persisted; this is the command that creates one, which is what the POINT command
 /// and DIVIDE/MEASURE all needed.
@@ -853,7 +865,8 @@ using Command =
                  SetDimStyleCommand, SetLineweightDisplayCommand, AddLeaderCommand,
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
-                 ArrayPathCommand, AddPointCommand, AddXlineCommand, DividePathCommand, BreakCommand,
+                 ArrayPathCommand, AddPointCommand, AddXlineCommand, AddEllipseCommand,
+                 DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,
                  SetPropertyCommand, SetLtscaleCommand, AddInsertCommand,

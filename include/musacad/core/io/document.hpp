@@ -58,7 +58,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 21;
+inline constexpr std::uint32_t kFormatVersion = 22;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -66,6 +66,16 @@ struct DocPoint {
     Vec2 p;
     EntityProps props{};
     friend bool operator==(const DocPoint&, const DocPoint&) = default;
+};
+/// An ellipse / elliptical arc (v22): centre, major half-axis, ratio, parameter range.
+struct DocEllipse {
+    Vec2 center;
+    Vec2 major{1.0, 0.0};
+    double ratio = 1.0;
+    double start = 0.0;
+    double end = 6.283185307179586;
+    EntityProps props{};
+    friend bool operator==(const DocEllipse&, const DocEllipse&) = default;
 };
 /// A construction line (XLINE/RAY): base, unit direction, and whether it is a RAY (v21).
 struct DocXline {
@@ -298,6 +308,7 @@ struct Document {
 
     std::vector<DocPoint> points;
     std::vector<DocXline> xlines;        ///< construction lines (v21)
+    std::vector<DocEllipse> ellipses;    ///< ellipses / elliptical arcs (v22)
     std::vector<DocLine> lines;
     std::vector<DocCircle> circles;
     std::vector<DocArc> arcs;
@@ -319,7 +330,8 @@ struct Document {
     std::vector<DocBlockDef> block_defs;   ///< block-definition table (not in entity_count)
 
     [[nodiscard]] std::size_t entity_count() const noexcept {
-        return points.size() + xlines.size() + lines.size() + circles.size() + arcs.size() +
+        return points.size() + xlines.size() + ellipses.size() + lines.size() + circles.size() +
+               arcs.size() +
                polylines.size() +
                splines.size() + texts.size() + dims.size() + leaders.size() + mtexts.size() +
                mleaders.size() + hatches.size() + inserts.size() + fcfs.size() + datums.size() +

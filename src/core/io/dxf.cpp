@@ -324,6 +324,21 @@ std::string serialize_dxf(const Document& doc) {
         code_d(s, 20, p.p.y);
         code_d(s, 30, 0.0);
     }
+    // ELLIPSE: 10/20 centre, 11/21 major-axis endpoint RELATIVE to the centre, 40
+    // minor/major ratio, 41/42 start/end parameters (radians) -- our exact definition.
+    for (const DocEllipse& e : doc.ellipses) {
+        code(s, 0, "ELLIPSE");
+        emit_props(s, doc, e.props);
+        code_d(s, 10, e.center.x);
+        code_d(s, 20, e.center.y);
+        code_d(s, 30, 0.0);
+        code_d(s, 11, e.major.x);
+        code_d(s, 21, e.major.y);
+        code_d(s, 31, 0.0);
+        code_d(s, 40, e.ratio);
+        code_d(s, 41, e.start);
+        code_d(s, 42, e.end);
+    }
     // XLINE / RAY: DXF code 10 = base (first) point, code 11 = unit direction vector.
     for (const DocXline& x : doc.xlines) {
         code(s, 0, x.ray ? "RAY" : "XLINE");
@@ -1014,6 +1029,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         std::vector<DocInsert>* inserts = nullptr;
         std::vector<DocHatch>* hatches = nullptr;
         std::vector<DocXline>* xlines = nullptr;
+        std::vector<DocEllipse>* ellipses = nullptr;
     };
 
     const auto build_entity = [&](Sink& sink, const std::string& type,
@@ -1328,9 +1344,20 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             pl.props = props_of(body);
             sink.polylines->push_back(std::move(pl));
         } else if (type == "ELLIPSE") {
-            // Musa has no ellipse primitive -- tessellate to a polyline (one path, no
-            // phantom connectors). DXF: 10/20 centre, 11/21 major-axis endpoint RELATIVE
-            // to centre, 40 minor/major ratio, 41/42 start/end angle (radians).
+            // DXF: 10/20 centre, 11/21 major-axis endpoint RELATIVE to centre, 40
+            // minor/major ratio, 41/42 start/end parameters (radians) -- the same
+            // definition as our ELLIPSE entity, so model space gets a real ellipse.
+            // Block definitions hold no ellipses yet, so there it is tessellated to a
+            // polyline (one path, no phantom connectors) as before.
+            if (sink.ellipses != nullptr) {
+                sink.ellipses->push_back(DocEllipse{{getd(body, 10), getd(body, 20)},
+                                                    {getd(body, 11), getd(body, 21)},
+                                                    getd(body, 40, 1.0),
+                                                    getd(body, 41, 0.0),
+                                                    getd(body, 42, 6.283185307179586),
+                                                    props_of(body)});
+                return;
+            }
             if (sink.polylines == nullptr) {
                 ++skipped[type];
                 return;
@@ -1366,7 +1393,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     // (dims/leaders/points inside a block route to the skip catalog).
     Sink model_sink{&doc.lines,  &doc.circles, &doc.arcs,    &doc.polylines, &doc.texts,
                     &doc.mtexts, &doc.dims,    &doc.leaders, &doc.points,    &doc.inserts,
-                    &doc.hatches, &doc.xlines};
+                    &doc.hatches, &doc.xlines, &doc.ellipses};
 
     // The block currently being read in the BLOCKS section. Its sink takes the
     // importable subset; dims/leaders/points/nested-INSERT-targets that a block can't

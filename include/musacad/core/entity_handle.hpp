@@ -29,6 +29,7 @@ enum class EntityKind : std::uint16_t {
     Image, ///< placed raster image
     Table, ///< a grid of text cells (BOM, revision block, parts list)
     Xline, ///< construction line: infinite (XLINE) or semi-infinite (RAY)
+    Ellipse, ///< ellipse or elliptical arc (centre, major axis, ratio, param range)
 };
 
 /// Coarse classification of an EntityKind, used by MATCHPROP to decide when
@@ -84,6 +85,7 @@ enum class EntityFamily : std::uint8_t {
     case EntityKind::Arc:
     case EntityKind::Spline:
     case EntityKind::Xline:
+    case EntityKind::Ellipse:
         return EntityFamily::SimpleGeometry;
     }
     return EntityFamily::SimpleGeometry;

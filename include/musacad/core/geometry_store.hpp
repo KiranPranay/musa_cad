@@ -226,6 +226,19 @@ struct XlineData {
     EntityProps props{};
 };
 
+/// An ellipse or elliptical arc (AutoCAD ELLIPSE). Centre, MAJOR half-axis vector (its
+/// length is the major radius, its direction the rotation), minor/major RATIO in (0,1],
+/// and a counter-clockwise parameter range (full = 0..2pi). Everything drawn is derived
+/// from these through core/ellipse.hpp; the DXF ELLIPSE entity has the same fields.
+struct EllipseData {
+    Vec2 center;
+    Vec2 major{1.0, 0.0};
+    double ratio = 1.0;
+    double start = 0.0;
+    double end = kTwoPi;
+    EntityProps props{};
+};
+
 struct DatumData {
     Vec2 tip;                     ///< the point on the feature (triangle apex)
     Vec2 pos;                     ///< box anchor (left edge, on the box's baseline)
@@ -372,6 +385,9 @@ public:
     EntityHandle add_point(Vec2 p, EntityProps props = {});
     /// A construction line through `base` along unit `dir`; `ray` = semi-infinite.
     EntityHandle add_xline(Vec2 base, Vec2 dir, bool ray, EntityProps props = {});
+    /// An ellipse / elliptical arc; ratio is clamped to (0,1], a full range is 0..2pi.
+    EntityHandle add_ellipse(Vec2 center, Vec2 major, double ratio, double start, double end,
+                             EntityProps props = {});
     EntityHandle add_line(Vec2 a, Vec2 b, EntityProps props = {});
     EntityHandle add_circle(Vec2 center, double radius, EntityProps props = {});
     EntityHandle add_arc(Vec2 center, double radius, double start_angle, double end_angle,
@@ -442,6 +458,7 @@ public:
     // --- typed accessors (nullptr if invalid or wrong kind) -----------------
     [[nodiscard]] const PointData* point(EntityHandle h) const noexcept;
     [[nodiscard]] const XlineData* xline(EntityHandle h) const noexcept;
+    [[nodiscard]] const EllipseData* ellipse(EntityHandle h) const noexcept;
     [[nodiscard]] const LineData* line(EntityHandle h) const noexcept;
     [[nodiscard]] const CircleData* circle(EntityHandle h) const noexcept;
     [[nodiscard]] const ArcData* arc(EntityHandle h) const noexcept;
@@ -497,6 +514,9 @@ public:
     // --- batch arena access (const; includes dead slots) --------------------
     [[nodiscard]] const GenerationalArena<PointData>& points() const noexcept { return points_; }
     [[nodiscard]] const GenerationalArena<XlineData>& xlines() const noexcept { return xlines_; }
+    [[nodiscard]] const GenerationalArena<EllipseData>& ellipses() const noexcept {
+        return ellipses_;
+    }
     [[nodiscard]] const GenerationalArena<LineData>& lines() const noexcept { return lines_; }
     [[nodiscard]] const GenerationalArena<CircleData>& circles() const noexcept { return circles_; }
     [[nodiscard]] const GenerationalArena<ArcData>& arcs() const noexcept { return arcs_; }
@@ -688,6 +708,7 @@ private:
 
     GenerationalArena<PointData> points_;
     GenerationalArena<XlineData> xlines_;
+    GenerationalArena<EllipseData> ellipses_;
     GenerationalArena<LineData> lines_;
     GenerationalArena<CircleData> circles_;
     GenerationalArena<ArcData> arcs_;

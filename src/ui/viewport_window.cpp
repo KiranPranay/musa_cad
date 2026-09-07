@@ -17,6 +17,7 @@
 #include "musacad/core/font_engine.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/dimension.hpp"
+#include "musacad/core/ellipse.hpp"
 #include "musacad/core/polygon.hpp"
 #include "musacad/core/text/stroke_font.hpp"
 
@@ -945,6 +946,47 @@ void ViewportWindow::rebuild_overlay() {
         case command::PreviewKind::Circle:
             if (!pts.empty()) {
                 tess_circle(pts[0], core::distance(pts[0], cur_eff), seg);
+            }
+            break;
+        case command::PreviewKind::Ellipse:
+            if (!pts.empty()) {
+                core::EllipseData e;
+                e.center = pts[0];
+                e.major = pv.major;
+                e.ratio = pv.ratio;
+                bool draw = true;
+                if (pv.ellipse_stage == 0) {
+                    // The other half-axis follows the cursor; axes swap past the major.
+                    const double a = core::length(pv.major);
+                    const double d = core::distance(cur_eff, pts[0]);
+                    if (a <= 1e-9 || d <= 1e-9) {
+                        draw = false;
+                    } else if (d <= a) {
+                        e.ratio = d / a;
+                    } else {
+                        const core::Vec2 mh = pv.major * (1.0 / a);
+                        e.major = core::Vec2{-mh.y, mh.x} * d;
+                        e.ratio = a / d;
+                    }
+                } else if (pv.ellipse_stage == 2) {
+                    e.start = pv.ellipse_start;
+                    e.end = core::ellipse::param_of(e, cur);
+                    if (std::abs(e.end - e.start) < 1e-9) {
+                        e.end = e.start + core::kTwoPi;
+                    }
+                }
+                if (draw) {
+                    std::vector<core::Vec2> ring;
+                    core::ellipse::tessellate(e, core::length(e.major) / 2000.0, ring);
+                    for (std::size_t i = 0; i + 1 < ring.size(); ++i) {
+                        seg.push_back(ring[i]);
+                        seg.push_back(ring[i + 1]);
+                    }
+                    if (pv.ellipse_stage == 1) {
+                        seg.push_back(pts[0]); // rubber line: the start angle being picked
+                        seg.push_back(cur);
+                    }
+                }
             }
             break;
         case command::PreviewKind::Polygon:

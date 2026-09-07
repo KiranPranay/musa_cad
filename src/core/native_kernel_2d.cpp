@@ -3,6 +3,8 @@
 
 #include "musacad/core/native_kernel_2d.hpp"
 
+#include "musacad/core/ellipse.hpp"
+
 #include "musacad/core/gdt.hpp"
 #include "musacad/core/image.hpp"
 #include "musacad/core/table.hpp"
@@ -296,6 +298,9 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
     }
     case EntityKind::Xline:
         break; // infinite: no finite tessellation (drawn clipped to the view instead)
+    case EntityKind::Ellipse:
+        ellipse::tessellate(*store.ellipse(entity), tolerance, out);
+        break;
     case EntityKind::Line: {
         const LineData* l = store.line(entity);
         out.push_back(l->a);
@@ -484,6 +489,11 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         const LineData* l = store.line(entity);
         out_point = closest_on_segment(l->a, l->b, query);
         return true;
+    }
+    case EntityKind::Ellipse: {
+        std::vector<Vec2> pts;
+        ellipse::tessellate(*store.ellipse(entity), kDefaultTessTolerance, pts);
+        return nearest_on_segments(pts, query, out_point);
     }
     case EntityKind::Xline: {
         const XlineData* x = store.xline(entity);
@@ -901,6 +911,8 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     switch (entity.kind) {
     case EntityKind::Xline:
         return false; // offsetting a construction line is not supported
+    case EntityKind::Ellipse:
+        return false; // an offset ellipse is not an ellipse (AutoCAD makes a spline)
     case EntityKind::Line: {
         const LineData* l = store.line(entity);
         const Vec2 dir = normalized(l->b - l->a);

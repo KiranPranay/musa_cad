@@ -3,6 +3,8 @@
 
 #include "musacad/core/osnap.hpp"
 
+#include "musacad/core/ellipse.hpp"
+
 #include <array>
 #include <cmath>
 #include <optional>
@@ -211,6 +213,24 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
         case EntityKind::Fcf:
         case EntityKind::Datum:
         case EntityKind::Image:
+        case EntityKind::Ellipse: {
+            const EllipseData* e = store.ellipse(h);
+            consider(SnapType::Center, e->center);
+            // Quadrants are the axis endpoints (parameters 0, 90, 180, 270 degrees) that
+            // lie on the drawn portion; an arc also has its ends and midpoint.
+            for (const double t : {0.0, kHalfPi, kPi, kPi + kHalfPi}) {
+                if (ellipse::param_in_range(*e, t)) {
+                    consider(SnapType::Quadrant, ellipse::point_at(*e, t));
+                }
+            }
+            if (!ellipse::is_full(*e)) {
+                const double sw = ellipse::sweep_of(*e);
+                consider(SnapType::Endpoint, ellipse::point_at(*e, e->start));
+                consider(SnapType::Endpoint, ellipse::point_at(*e, e->start + sw));
+                consider(SnapType::Midpoint, ellipse::point_at(*e, e->start + sw * 0.5));
+            }
+            break;
+        }
         case EntityKind::Table:
         case EntityKind::Xline:
             break; // no object-snap points (nearest, if any, handled below)

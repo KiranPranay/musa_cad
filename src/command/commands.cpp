@@ -12,6 +12,7 @@
 
 #include "musacad/command/coordinate.hpp"
 #include "musacad/core/hatch_pattern.hpp"
+#include "musacad/core/ellipse.hpp"
 #include "musacad/core/polygon.hpp"
 #include "musacad/core/polyline_ops.hpp"
 
@@ -1355,6 +1356,286 @@ void BreakCommand::input(CommandContext& ctx, const std::string& text) {
 void BreakCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
     done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// ELLIPSE
+// ---------------------------------------------------------------------------
+core::EllipseData EllipseCommand::shape() const {
+    core::EllipseData e;
+    e.center = center_;
+    e.major = major_;
+    e.ratio = ratio_;
+    e.start = start_;
+    e.end = end_;
+    return e;
+}
+
+void EllipseCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Start;
+    arc_ = false;
+    ctx.set_prompt("Specify axis endpoint of ellipse or [Arc/Center]: ");
+}
+
+void EllipseCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.set_preview({});
+    done_ = true;
+}
+
+// The first axis is known (centre, unit direction, half-length); the other half-axis
+// is `other_half`. AutoCAD stores the LONGER axis as the major one, so if the second
+// axis is longer the two swap and the ratio is inverted -- arc angles are still taken
+// from the first axis the user gave (see param_from_input).
+void EllipseCommand::define_axes(CommandContext& ctx, double other_half) {
+    if (other_half <= 1e-9 || half_ <= 1e-9) {
+        ctx.echo("Invalid axis length.");
+        return;
+    }
+    if (other_half <= half_) {
+        major_ = first_dir_ * half_;
+        ratio_ = other_half / half_;
+        swapped_ = false;
+    } else {
+        major_ = core::Vec2{-first_dir_.y, first_dir_.x} * other_half;
+        ratio_ = half_ / other_half;
+        swapped_ = true;
+    }
+    after_axes(ctx);
+}
+
+void EllipseCommand::after_axes(CommandContext& ctx) {
+    if (!arc_) {
+        start_ = 0.0;
+        end_ = core::kTwoPi;
+        commit(ctx);
+        return;
+    }
+    state_ = State::ArcStart;
+    start_param_mode_ = false;
+    PreviewSpec pv{PreviewKind::Ellipse, {center_}};
+    pv.major = major_;
+    pv.ratio = ratio_;
+    pv.ellipse_stage = 1;
+    ctx.set_preview(std::move(pv));
+    ctx.set_prompt("Specify start angle or [Parameter]: ");
+}
+
+// An arc angle/parameter from typed input: a number (degrees, from the first axis --
+// or a parameter in Parameter mode) or a point (the parameter on the centre->point ray).
+double EllipseCommand::param_from_input(const std::string& text, bool parameter_mode, bool* ok,
+                                        CommandContext& ctx) const {
+    *ok = true;
+    double v = 0.0;
+    if (parse_number(text, v)) {
+        const double a = core::to_radians(v);
+        if (parameter_mode) {
+            return a;
+        }
+        // Angles are measured from the FIRST axis; if the axes swapped, the major axis
+        // sits 90 degrees from it.
+        const double rel = swapped_ ? a - core::kHalfPi : a;
+        return core::ellipse::angle_to_param(rel, ratio_);
+    }
+    if (const auto p = read_point(ctx, text)) {
+        return core::ellipse::param_of(shape(), *p);
+    }
+    *ok = false;
+    return 0.0;
+}
+
+void EllipseCommand::commit(CommandContext& ctx) {
+    ctx.submit(core::AddEllipseCommand{center_, major_, ratio_, start_, end_, ctx.group_id(), {}});
+    ctx.set_preview({});
+    done_ = true;
+}
+
+void EllipseCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Start:
+        if (u == "A" || u == "ARC") {
+            arc_ = true;
+            ctx.set_prompt("Specify axis endpoint of elliptical arc or [Center]: ");
+            return;
+        }
+        if (u == "C" || u == "CENTER") {
+            state_ = State::Center;
+            ctx.set_prompt(arc_ ? "Specify center of elliptical arc: "
+                                : "Specify center of ellipse: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            axis_a_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::OtherEnd;
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            ctx.set_prompt("Specify other endpoint of axis: ");
+        }
+        return;
+    case State::Center:
+        if (const auto p = read_point(ctx, text)) {
+            center_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::AxisEnd;
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            ctx.set_prompt("Specify endpoint of axis: ");
+        }
+        return;
+    case State::AxisEnd:
+        if (const auto p = read_point(ctx, text)) {
+            const core::Vec2 v = *p - center_;
+            half_ = core::length(v);
+            if (half_ <= 1e-9) {
+                ctx.echo("Invalid axis length.");
+                return;
+            }
+            first_dir_ = v * (1.0 / half_);
+            state_ = State::OtherDist;
+            PreviewSpec pv{PreviewKind::Ellipse, {center_}};
+            pv.major = first_dir_ * half_;
+            pv.ellipse_stage = 0;
+            ctx.set_preview(std::move(pv));
+            ctx.set_prompt("Specify distance to other axis or [Rotation]: ");
+        }
+        return;
+    case State::OtherEnd:
+        if (const auto p = read_point(ctx, text)) {
+            const core::Vec2 v = *p - axis_a_;
+            const double len = core::length(v);
+            if (len <= 1e-9) {
+                ctx.echo("Invalid axis length.");
+                return;
+            }
+            center_ = (axis_a_ + *p) * 0.5;
+            half_ = len * 0.5;
+            first_dir_ = v * (1.0 / len);
+            ctx.set_last_point(*p);
+            state_ = State::OtherDist;
+            PreviewSpec pv{PreviewKind::Ellipse, {center_}};
+            pv.major = first_dir_ * half_;
+            pv.ellipse_stage = 0;
+            ctx.set_preview(std::move(pv));
+            ctx.set_prompt("Specify distance to other axis or [Rotation]: ");
+        }
+        return;
+    case State::OtherDist: {
+        if (u == "R" || u == "ROTATION") {
+            state_ = State::Rotation;
+            ctx.set_prompt("Specify rotation around major axis: ");
+            return;
+        }
+        double d = 0.0;
+        if (parse_number(t, d)) {
+            define_axes(ctx, d);
+        } else if (const auto p = read_point(ctx, text)) {
+            // AutoCAD: the distance from the midpoint of the first axis to the point.
+            define_axes(ctx, core::distance(center_, *p));
+        }
+        return;
+    }
+    case State::Rotation: {
+        // Rotation about the major axis: the ellipse is the first-axis circle seen at
+        // that angle, so ratio = cos(angle). AutoCAD accepts 0 <= angle < 89.4 degrees.
+        double deg = 0.0;
+        if (!parse_number(t, deg)) {
+            if (const auto p = read_point(ctx, text)) {
+                const core::Vec2 v = *p - center_;
+                deg = core::to_degrees(std::atan2(v.y, v.x) -
+                                       std::atan2(first_dir_.y, first_dir_.x));
+            } else {
+                return;
+            }
+        }
+        deg = std::abs(std::fmod(deg, 180.0));
+        if (deg > 90.0) {
+            deg = 180.0 - deg;
+        }
+        if (deg >= 89.4) {
+            ctx.echo("Rotation must be less than 89.4 degrees.");
+            return;
+        }
+        major_ = first_dir_ * half_;
+        ratio_ = std::max(std::cos(core::to_radians(deg)), 1e-6);
+        swapped_ = false;
+        after_axes(ctx);
+        return;
+    }
+    case State::ArcStart: {
+        if (u == "P" || u == "PARAMETER") {
+            start_param_mode_ = !start_param_mode_;
+            ctx.set_prompt(start_param_mode_ ? "Specify start parameter or [Angle]: "
+                                             : "Specify start angle or [Parameter]: ");
+            return;
+        }
+        if (u == "A" || u == "ANGLE") {
+            start_param_mode_ = false;
+            ctx.set_prompt("Specify start angle or [Parameter]: ");
+            return;
+        }
+        bool ok = false;
+        const double v = param_from_input(text, start_param_mode_, &ok, ctx);
+        if (!ok) {
+            return;
+        }
+        start_ = v;
+        state_ = State::ArcEnd;
+        end_param_mode_ = start_param_mode_;
+        PreviewSpec pv{PreviewKind::Ellipse, {center_}};
+        pv.major = major_;
+        pv.ratio = ratio_;
+        pv.ellipse_stage = 2;
+        pv.ellipse_start = start_;
+        ctx.set_preview(std::move(pv));
+        ctx.set_prompt(end_param_mode_ ? "Specify end parameter or [Angle/Included angle]: "
+                                       : "Specify end angle or [Parameter/Included angle]: ");
+        return;
+    }
+    case State::ArcEnd: {
+        if (u == "P" || u == "PARAMETER") {
+            end_param_mode_ = true;
+            ctx.set_prompt("Specify end parameter or [Angle/Included angle]: ");
+            return;
+        }
+        if (u == "A" || u == "ANGLE") {
+            end_param_mode_ = false;
+            ctx.set_prompt("Specify end angle or [Parameter/Included angle]: ");
+            return;
+        }
+        if (u == "I" || u == "INCLUDED") {
+            state_ = State::ArcIncluded;
+            ctx.set_prompt("Specify included angle for arc <180>: ");
+            return;
+        }
+        bool ok = false;
+        const double v = param_from_input(text, end_param_mode_, &ok, ctx);
+        if (!ok) {
+            return;
+        }
+        end_ = v;
+        commit(ctx);
+        return;
+    }
+    case State::ArcIncluded: {
+        double deg = 180.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            ctx.echo("Enter an included angle in degrees.");
+            return;
+        }
+        if (std::abs(deg) < 1e-9) {
+            ctx.echo("Included angle must be non-zero.");
+            return;
+        }
+        // Included ANGLE (from the first axis) -> the end angle -> its parameter.
+        const double start_angle_rel = std::atan2(ratio_ * std::sin(start_), std::cos(start_));
+        const double end_rel = start_angle_rel + core::to_radians(deg);
+        end_ = core::ellipse::angle_to_param(end_rel, ratio_);
+        commit(ctx);
+        return;
+    }
+    }
 }
 
 // ---------------------------------------------------------------------------

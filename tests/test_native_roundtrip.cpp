@@ -327,7 +327,7 @@ TEST_CASE("DXF round-trip: a block def's NESTED INSERT survives import") {
     REQUIRE(la->inserts[0].block_name == "B");
 }
 
-TEST_CASE("DXF import: SPLINE control points + ELLIPSE tessellation are geometrically sane") {
+TEST_CASE("DXF import: SPLINE control points are sane; ELLIPSE becomes a real ellipse") {
     // A minimal DXF with one SPLINE (4 control points, degree 3) and one ELLIPSE
     // (centre 100,100; major axis (20,0); ratio 0.5; full). Verifies the importer reads
     // the right group codes -- no stray (0,0) vertices, points near where they belong.
@@ -346,7 +346,7 @@ TEST_CASE("DXF import: SPLINE control points + ELLIPSE tessellation are geometri
 
     // SPLINE -> a tessellated polyline (de Boor). Endpoints clamp to the first/last control
     // point; every sample stays within the control polygon's bounds (x in [0,4], y in [0,2]).
-    REQUIRE(doc.polylines.size() == 2); // spline + ellipse
+    REQUIRE(doc.polylines.size() == 1); // the spline; the ellipse is an entity (v22)
     const DocPolyline& sp = doc.polylines[0];
     REQUIRE(sp.points.size() >= 16);
     REQUIRE(std::abs(sp.points.front().x - 0.0) < 1e-6);
@@ -360,14 +360,15 @@ TEST_CASE("DXF import: SPLINE control points + ELLIPSE tessellation are geometri
         REQUIRE(p.y <= 2.001);
     }
 
-    const DocPolyline& e = doc.polylines[1]; // ellipse -> polyline
-    REQUIRE(e.closed);
-    REQUIRE(e.points.size() >= 24);
-    // Every vertex must lie on the ellipse around (100,100), |x-100|<=20, |y-100|<=10.
-    for (const Vec2& p : e.points) {
-        REQUIRE(std::abs(p.x - 100.0) <= 20.001);
-        REQUIRE(std::abs(p.y - 100.0) <= 10.001);
-    }
+    // ELLIPSE -> a real ellipse: centre (100,100), major (20,0), ratio 0.5, full.
+    REQUIRE(doc.ellipses.size() == 1);
+    const DocEllipse& e = doc.ellipses[0];
+    REQUIRE(std::abs(e.center.x - 100.0) < 1e-9);
+    REQUIRE(std::abs(e.center.y - 100.0) < 1e-9);
+    REQUIRE(std::abs(e.major.x - 20.0) < 1e-9);
+    REQUIRE(std::abs(e.major.y) < 1e-9);
+    REQUIRE(std::abs(e.ratio - 0.5) < 1e-9);
+    REQUIRE(e.end - e.start > 6.28);
 }
 
 TEST_CASE("Plot line-batch convention: for_each_line_segment yields exact pairs, no phantoms") {

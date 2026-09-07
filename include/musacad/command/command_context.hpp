@@ -30,6 +30,7 @@ enum class PreviewKind {
     Scale,      ///< ghost of the selection scaled about points[0] by |cursor - base|
     Dimension,  ///< full dimension rubber-band following the cursor to its placement
     Polygon,    ///< regular n-gon about points[0], sized by the cursor (POLYGON)
+    Ellipse,    ///< ELLIPSE rubber band: see PreviewSpec's ellipse fields
 };
 
 struct PreviewSpec {
@@ -55,6 +56,16 @@ struct PreviewSpec {
     /// kind rather than a new kind, so Dynamic Input's length/angle fields and ortho
     /// behave exactly as they do for LINE with no second code path.
     bool live_stretch = false;
+    /// ELLIPSE preview (PreviewKind::Ellipse): points[0] is the centre and `major` the
+    /// major half-axis. Stage 0: the other half-axis follows the cursor, axes swapping
+    /// when it grows past the major -- the same rule the command commits with. Stage 1:
+    /// the ellipse is fixed (`ratio`) and a rubber line from the centre shows the start
+    /// angle being picked. Stage 2: the elliptical arc from `ellipse_start` to the
+    /// cursor's parameter.
+    core::Vec2 major{};
+    double ratio = 1.0;
+    int ellipse_stage = 0;
+    double ellipse_start = 0.0;
     // True while the command is awaiting a single scalar/keyword at a value sub-prompt
     // (RECTANGLE Dimensions length/width, Area, Rotation) rather than the two-field
     // corner drag. With Dynamic Input on this routes the step to the at-cursor

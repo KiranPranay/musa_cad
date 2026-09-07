@@ -9,6 +9,10 @@
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/properties.hpp"
 
+namespace musacad::core {
+struct EllipseData; // returned by value from EllipseCommand::shape (defined in the .cpp)
+} // namespace musacad::core
+
 namespace musacad::command {
 
 // Each command is a small state machine. They share no control flow with the
@@ -539,6 +543,54 @@ private:
     State state_ = State::Select;
     core::Vec2 pick_{};
     core::Vec2 p1_{};
+    bool done_ = false;
+};
+
+/// ELLIPSE (AutoCAD EL): axis-endpoint and Center methods, the Rotation option for the
+/// second axis, and Arc (elliptical arc) with start/end by angle, parameter or included
+/// angle. Commits a real ellipse entity; the second axis may come out longer than the
+/// first, in which case the axes swap so the stored major is the longer one (AutoCAD's
+/// rule), and arc angles are still measured from the FIRST axis the user gave.
+class EllipseCommand final : public ICommand {
+public:
+    std::string name() const override { return "ELLIPSE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State {
+        Start,      ///< first axis endpoint or [Arc/Center]
+        Center,     ///< centre point (Center method)
+        AxisEnd,    ///< axis endpoint after a centre
+        OtherEnd,   ///< other endpoint of the first axis
+        OtherDist,  ///< distance to the other axis or [Rotation]
+        Rotation,   ///< rotation angle about the major axis
+        ArcStart,   ///< start angle or [Parameter]
+        ArcEnd,     ///< end angle or [Parameter/Included angle]
+        ArcIncluded ///< included angle
+    };
+    void define_axes(CommandContext& ctx, double other_half);
+    void after_axes(CommandContext& ctx);
+    double param_from_input(const std::string& text, bool parameter_mode, bool* ok,
+                            CommandContext& ctx) const;
+    void commit(CommandContext& ctx);
+    core::EllipseData shape() const;
+
+    State state_ = State::Start;
+    bool arc_ = false;
+    bool swapped_ = false;
+    bool start_param_mode_ = false;
+    bool end_param_mode_ = false;
+    core::Vec2 axis_a_{};
+    core::Vec2 center_{};
+    core::Vec2 first_dir_{1.0, 0.0}; ///< unit direction of the FIRST axis the user gave
+    double half_ = 0.0;              ///< half-length of that first axis
+    core::Vec2 major_{};
+    double ratio_ = 1.0;
+    double start_ = 0.0;
+    double end_ = 0.0;
     bool done_ = false;
 };
 
