@@ -87,11 +87,11 @@ EntityHandle GeometryStore::add_spline(std::span<const Vec2> control_points, std
 
 EntityHandle GeometryStore::add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
                                      std::string_view content, EntityProps props,
-                                     std::uint16_t font) {
+                                     std::uint16_t font, std::uint16_t style) {
     const auto offset = static_cast<std::uint32_t>(string_pool_.size());
     string_pool_.insert(string_pool_.end(), content.begin(), content.end());
     const auto slot =
-        texts_.insert(TextData{pos, height, rotation, justify, font, offset,
+        texts_.insert(TextData{pos, height, rotation, justify, font, style, offset,
                                static_cast<std::uint32_t>(content.size()), props});
     return EntityHandle{slot.index, slot.generation, EntityKind::Text};
 }
@@ -1126,6 +1126,33 @@ bool GeometryStore::remove_image_def(std::uint16_t index) {
             --im.def;
         }
     });
+    return true;
+}
+
+bool GeometryStore::text_style_in_use(std::uint16_t index) const noexcept {
+    bool used = false;
+    for_each_live_const(texts_, [&](const TextData& t) {
+        if (t.style == index) {
+            used = true;
+        }
+    });
+    return used;
+}
+
+bool GeometryStore::remove_text_style(std::uint16_t index) {
+    if (index == 0 || index >= text_styles_.size() || index == current_text_style_ ||
+        text_style_in_use(index)) {
+        return false;
+    }
+    text_styles_.erase(text_styles_.begin() + index);
+    for_each_live_mut(texts_, [&](TextData& t) {
+        if (t.style > index) {
+            --t.style;
+        }
+    });
+    if (current_text_style_ > index) {
+        --current_text_style_;
+    }
     return true;
 }
 

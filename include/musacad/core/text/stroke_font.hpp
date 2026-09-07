@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <string_view>
 #include <vector>
 
@@ -48,5 +49,39 @@ void append_text_segments(std::string_view text, Vec2 origin, double height, dou
 /// Total advance width of `text` at `height` (world units). Used for justification
 /// and pick bounds.
 [[nodiscard]] double text_width(std::string_view text, double height);
+
+/// Applies a text STYLE's width factor and obliquing angle to already laid-out world
+/// points: in the text's own frame (un-rotated about `anchor`, the justification
+/// point) x is scaled by `width_factor` and sheared by y * tan(oblique), then the
+/// frame is re-rotated. Scaling about the anchor keeps every justification put.
+/// Shared by drawing, picking and bounds so they can never disagree.
+inline void apply_text_style(std::vector<Vec2>& pts, Vec2 anchor, double rotation,
+                             double width_factor, double oblique) {
+    if (width_factor == 1.0 && oblique == 0.0) {
+        return;
+    }
+    const double cs = std::cos(rotation);
+    const double sn = std::sin(rotation);
+    const double shear = std::tan(oblique);
+    for (Vec2& p : pts) {
+        const Vec2 d = p - anchor;
+        const double lx = d.x * cs + d.y * sn;
+        const double ly = -d.x * sn + d.y * cs;
+        const double nx = lx * width_factor + ly * shear;
+        p = {anchor.x + nx * cs - ly * sn, anchor.y + nx * sn + ly * cs};
+    }
+}
+
+/// The four corners of a text's box in its own frame (baseline-left at the origin),
+/// after the style's width factor and shear: (0,0), (w*wf,0), (w*wf + h*tan, h), (h*tan, h).
+inline void text_box_corners(double advance, double height, double width_factor, double oblique,
+                             Vec2 (&out)[4]) {
+    const double w = advance * width_factor;
+    const double t = std::tan(oblique) * height;
+    out[0] = {0.0, 0.0};
+    out[1] = {w, 0.0};
+    out[2] = {w + t, height};
+    out[3] = {t, height};
+}
 
 } // namespace musacad::core::text

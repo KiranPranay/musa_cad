@@ -14,6 +14,7 @@
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/table_types.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
@@ -73,6 +74,15 @@ struct SetUnitsCommand {
 /// AUDIT: validate references and structure; with `fix`, repair what can be repaired.
 struct AuditCommand {
     bool fix = false;
+};
+/// STYLE: add or replace a text style; optionally make it current.
+struct SetTextStyleCommand {
+    TextStyle style;
+    bool make_current = true;
+};
+/// STYLE: make an existing style current (by name).
+struct SetCurrentTextStyleCommand {
+    std::string name;
 };
 
 /// ALIGN (AutoCAD): move, rotate and optionally uniformly scale the selection so that
@@ -561,6 +571,9 @@ struct AddTextCommand {
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
     std::string font{}; ///< font name ("" = stroke "Standard")
+    /// Text style NAME ("" = Standard). Resolved to the style table on add; a style
+    /// with a font supplies the font when `font` is empty.
+    std::string style{};
 };
 
 /// A dimension defined by `a`/`b` (def points) placed through `line_pt`, drawn
@@ -922,7 +935,7 @@ using Command =
                  ArrayPathCommand, AddPointCommand, AddXlineCommand, AddEllipseCommand,
                  AddSplineCommand, SaveNamedViewCommand, DeleteNamedViewCommand,
                  CreateGroupCommand, UngroupCommand, SetPickStyleCommand, SetUnitsCommand,
-                 AuditCommand,
+                 AuditCommand, SetTextStyleCommand, SetCurrentTextStyleCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

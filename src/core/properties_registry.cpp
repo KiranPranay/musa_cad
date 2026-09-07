@@ -351,6 +351,21 @@ void set_font(Command& c, const std::string& name) {
         c);
 }
 
+/// TEXT only: the style NAME ("" = Standard). Setting a style clears the explicit font
+/// so the style's font applies (the style is the source of truth, as in AutoCAD).
+std::string text_style_of(const Command& c) {
+    if (const auto* t = std::get_if<AddTextCommand>(&c)) {
+        return t->style;
+    }
+    return {};
+}
+void set_text_style(Command& c, const std::string& name) {
+    if (auto* t = std::get_if<AddTextCommand>(&c)) {
+        t->style = name;
+        t->font.clear();
+    }
+}
+
 std::string fmt(double v) {
     char buf[48];
     std::snprintf(buf, sizeof(buf), "%.4g", v);
@@ -623,6 +638,13 @@ const Desc kDescs[] = {
          return v;
      },
      [](Command& c, const PropertyValue& v) { set_font(c, v.text); }},
+    {PropertyId::TextStyleName, "Text", "Style", PropEditor::StyleCombo, is_text_only,
+     [](const Command& c) {
+         PropertyValue v;
+         v.text = text_style_of(c); // "" = Standard
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) { set_text_style(c, v.text); }},
     {PropertyId::MtWidthFactor, "Text", "Width factor", PropEditor::Number, is_paragraph,
      [](const Command& c) {
          PropertyValue v;
@@ -1155,6 +1177,7 @@ MatchSlot match_slot_for(PropertyId id) noexcept {
     case PropertyId::TextHeight:
     case PropertyId::TextJustify:
     case PropertyId::TextFont:
+    case PropertyId::TextStyleName:
     case PropertyId::MtWidthFactor:
     case PropertyId::MtLineSpacing:
     case PropertyId::MtAttach:

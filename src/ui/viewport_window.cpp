@@ -151,6 +151,16 @@ core::DrawingUnits ViewportWindow::units() {
     return units_;
 }
 
+std::vector<core::TextStyle> ViewportWindow::text_styles() {
+    std::scoped_lock lock(layers_mutex_);
+    return text_styles_;
+}
+
+std::uint16_t ViewportWindow::current_text_style() {
+    std::scoped_lock lock(layers_mutex_);
+    return current_text_style_;
+}
+
 void ViewportWindow::zoom_scale(double factor) {
     std::scoped_lock lock(camera_mutex_);
     const double cx = static_cast<double>(camera_.viewport_width()) * 0.5;
@@ -442,6 +452,8 @@ void ViewportWindow::render_loop(std::stop_token token) {
             layers_ = snap.layers;
             named_views_ = snap.named_views;
             units_ = snap.units;
+            text_styles_ = snap.text_styles;
+            current_text_style_ = snap.current_text_style;
         }
 
         // Surface the engine's command-result message (honest feedback) once.

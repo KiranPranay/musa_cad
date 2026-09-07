@@ -91,6 +91,12 @@ public:
     void set_hovered_kind(std::optional<core::EntityKind> kind);
     void set_named_views(std::vector<core::NamedView> v) { named_views_ = std::move(v); }
     void set_units(const core::DrawingUnits& u) { units_ = u; }
+    void set_text_styles(std::vector<core::TextStyle> v, std::uint16_t current) {
+        text_styles_ = std::move(v);
+        current_text_style_ = current;
+    }
+    [[nodiscard]] std::vector<core::TextStyle> text_styles() const override { return text_styles_; }
+    [[nodiscard]] std::uint16_t current_text_style() const override { return current_text_style_; }
     [[nodiscard]] core::DrawingUnits units() const override { return units_; }
     [[nodiscard]] std::vector<core::NamedView> named_views() const override { return named_views_; }
 
@@ -144,6 +150,8 @@ private:
     ViewControl* view_;
     std::vector<core::NamedView> named_views_;
     core::DrawingUnits units_{};
+    std::vector<core::TextStyle> text_styles_;
+    std::uint16_t current_text_style_ = 0;
     CommandOutput& output_;
     CommandRegistry registry_;
 

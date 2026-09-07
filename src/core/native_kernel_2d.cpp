@@ -283,9 +283,12 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         const TextData* t = store.text(entity);
         const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
                                             store.string_of(*t), t->height);
+        const TextStyle& ts = store.text_style_of(*t);
         const double cs = std::cos(t->rotation);
         const double sn = std::sin(t->rotation);
-        const Vec2 local[5] = {{0, 0}, {w, 0}, {w, t->height}, {0, t->height}, {0, 0}};
+        Vec2 corners[4];
+        text::text_box_corners(w, t->height, ts.width_factor, ts.oblique, corners);
+        const Vec2 local[5] = {corners[0], corners[1], corners[2], corners[3], corners[0]};
         for (const Vec2& c : local) {
             out.push_back({t->pos.x + c.x * cs - c.y * sn, t->pos.y + c.x * sn + c.y * cs});
         }
@@ -453,7 +456,8 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         // Closest point on the text bbox; the query inside the box reads distance 0.
         const TextData* t = store.text(entity);
         const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
-                                            store.string_of(*t), t->height);
+                                            store.string_of(*t), t->height) *
+                         store.text_style_of(*t).width_factor;
         const double cs = std::cos(t->rotation);
         const double sn = std::sin(t->rotation);
         // Transform the query into text-local space (un-rotate about pos).

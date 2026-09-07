@@ -276,6 +276,30 @@ void emit_layer_table(std::string& s, const Document& doc) {
         code_i(s, 370, l.lineweight);
     }
     code(s, 0, "ENDTAB");
+    // STYLE table (v26): Standard first, then the drawing's text styles -- name, font
+    // file (txt for the stroke font), fixed height, width factor, obliquing angle.
+    code(s, 0, "TABLE");
+    code(s, 2, "STYLE");
+    code_i(s, 70, static_cast<long>(std::max<std::size_t>(doc.text_styles.size(), 1)));
+    if (doc.text_styles.empty()) {
+        code(s, 0, "STYLE");
+        code(s, 2, "Standard");
+        code_i(s, 70, 0);
+        code_d(s, 40, 0.0);
+        code_d(s, 41, 1.0);
+        code_d(s, 50, 0.0);
+        code(s, 3, "txt");
+    }
+    for (const TextStyle& ts : doc.text_styles) {
+        code(s, 0, "STYLE");
+        code(s, 2, ts.name);
+        code_i(s, 70, 0);
+        code_d(s, 40, ts.height);
+        code_d(s, 41, ts.width_factor);
+        code_d(s, 50, to_degrees(ts.oblique));
+        code(s, 3, ts.font.empty() ? "txt" : ts.font);
+    }
+    code(s, 0, "ENDTAB");
     // DIMSTYLE table (minimal: name + the formatting Musa models).
     code(s, 0, "TABLE");
     code(s, 2, "DIMSTYLE");
@@ -442,7 +466,9 @@ std::string serialize_dxf(const Document& doc) {
         code(s, 1, t.content);
         code_d(s, 50, to_degrees(t.rotation));
         code_i(s, 72, t.justify); // 0 left, 1 centre, 2 right
-        if (!t.font.empty()) {
+        if (t.style != 0 && t.style < doc.text_styles.size()) {
+            code(s, 7, doc.text_styles[t.style].name); // the STYLE table entry
+        } else if (!t.font.empty()) {
             code(s, 7, t.font); // style name = font (re-imported via the code-7 fallback)
         }
     }
@@ -956,11 +982,30 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     // "txt.shx"). TEXT/MTEXT reference a style via code 7; we resolve it to the font name
     // and the font engine substitutes SHX names to TTF lookalikes at render time.
     std::map<std::string, std::string> styles;
+    std::map<std::string, std::uint16_t> text_style_index; // name -> doc.text_styles index
     const auto add_style_record = [&](const std::vector<Pair>& body) {
         const std::string* name = find(body, 2);
         const std::string* font = find(body, 3);
         if (name != nullptr && font != nullptr && !font->empty()) {
             styles[*name] = *font;
+        }
+        // The STYLE table itself (v26): name, font, fixed height, width factor, oblique.
+        if (name != nullptr && !name->empty() && *name != "Standard" && *name != "STANDARD" &&
+            text_style_index.find(*name) == text_style_index.end()) {
+            if (doc.text_styles.empty()) {
+                doc.text_styles.push_back(TextStyle{}); // [0] Standard
+            }
+            TextStyle ts;
+            ts.name = *name;
+            ts.font = font != nullptr ? *font : std::string{};
+            if (ts.font == "txt" || ts.font == "txt.shx") {
+                ts.font.clear(); // the stroke font stands in for AutoCAD's txt.shx
+            }
+            ts.height = getd(body, 40, 0.0);
+            ts.width_factor = getd(body, 41, 1.0);
+            ts.oblique = to_radians(getd(body, 50, 0.0));
+            text_style_index[*name] = static_cast<std::uint16_t>(doc.text_styles.size());
+            doc.text_styles.push_back(std::move(ts));
         }
     };
     // The font name a text entity references (via its STYLE, code 7). Falls back to the
@@ -1149,6 +1194,11 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 t.justify = static_cast<std::uint8_t>(to_l(*j));
             }
             t.font = font_of_entity(body);
+            if (const std::string* st = find(body, 7)) {
+                if (const auto it = text_style_index.find(*st); it != text_style_index.end()) {
+                    t.style = it->second; // model-space text references the STYLE entry
+                }
+            }
             sink.texts->push_back(std::move(t));
             return;
         }

@@ -19,6 +19,7 @@
 #include "musacad/core/entity_group.hpp"
 #include "musacad/core/named_view.hpp"
 #include "musacad/core/page_setup.hpp"
+#include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/properties.hpp"
 
@@ -87,6 +88,7 @@ struct TextData {
     double rotation = 0.0;     ///< radians, CCW
     std::uint8_t justify = 0;  ///< 0 = left, 1 = center, 2 = right
     std::uint16_t font = 0;    ///< index into the store's font table (0 = Standard/stroke)
+    std::uint16_t style = 0;   ///< index into the text-style table (0 = Standard)
     std::uint32_t str_offset = 0;
     std::uint32_t str_len = 0;
     EntityProps props{};
@@ -408,7 +410,8 @@ public:
     EntityHandle add_spline(std::span<const Vec2> control_points, std::uint32_t degree,
                             EntityProps props = {});
     EntityHandle add_text(Vec2 pos, double height, double rotation, std::uint8_t justify,
-                          std::string_view content, EntityProps props = {}, std::uint16_t font = 0);
+                          std::string_view content, EntityProps props = {}, std::uint16_t font = 0,
+                          std::uint16_t style = 0);
     /// `prefix`/`suffix` are copied into the shared char pool; they and `tol` decorate
     /// the MEASURED value, never replace it.
     /// Sets the extra datum of a dimension (see DimData::aux); false if `h` is not one.
@@ -681,6 +684,49 @@ public:
     [[nodiscard]] const std::vector<PageSetup>& page_setups() const noexcept { return page_setups_; }
     void set_page_setups(std::vector<PageSetup> setups) { page_setups_ = std::move(setups); }
     /// Adds a setup, replacing any existing one with the same name (names are unique).
+    // --- text styles (STYLE) ---------------------------------------------------
+    [[nodiscard]] const std::vector<TextStyle>& text_styles() const noexcept { return text_styles_; }
+    void set_text_styles(std::vector<TextStyle> v) {
+        text_styles_ = std::move(v);
+        if (text_styles_.empty()) {
+            text_styles_.push_back(TextStyle{});
+        }
+        if (current_text_style_ >= text_styles_.size()) {
+            current_text_style_ = 0;
+        }
+    }
+    /// Adds, or replaces the style of the same name; returns its index.
+    std::uint16_t add_text_style(const TextStyle& ts) {
+        for (std::size_t i = 0; i < text_styles_.size(); ++i) {
+            if (text_styles_[i].name == ts.name) {
+                text_styles_[i] = ts;
+                return static_cast<std::uint16_t>(i);
+            }
+        }
+        text_styles_.push_back(ts);
+        return static_cast<std::uint16_t>(text_styles_.size() - 1);
+    }
+    [[nodiscard]] std::uint16_t text_style_index(std::string_view name) const noexcept {
+        for (std::size_t i = 0; i < text_styles_.size(); ++i) {
+            if (text_styles_[i].name == name) {
+                return static_cast<std::uint16_t>(i);
+            }
+        }
+        return 0xFFFF;
+    }
+    [[nodiscard]] std::uint16_t current_text_style() const noexcept { return current_text_style_; }
+    void set_current_text_style(std::uint16_t i) noexcept {
+        if (i < text_styles_.size()) {
+            current_text_style_ = i;
+        }
+    }
+    /// The style a text entity draws with (Standard when its index is stale).
+    [[nodiscard]] const TextStyle& text_style_of(const TextData& t) const noexcept {
+        return t.style < text_styles_.size() ? text_styles_[t.style] : text_styles_[0];
+    }
+    [[nodiscard]] bool text_style_in_use(std::uint16_t index) const noexcept;
+    bool remove_text_style(std::uint16_t index);
+
     // --- drawing units (UNITS): how lengths/angles are displayed ----------------
     [[nodiscard]] const DrawingUnits& units() const noexcept { return units_; }
     void set_units(const DrawingUnits& u) noexcept { units_ = u; }
@@ -834,6 +880,8 @@ private:
     std::vector<PageSetup> page_setups_;
     std::vector<NamedView> named_views_;
     DrawingUnits units_;
+    std::vector<TextStyle> text_styles_{TextStyle{}}; // [0] = Standard
+    std::uint16_t current_text_style_ = 0;
     std::vector<EntityGroup> groups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"

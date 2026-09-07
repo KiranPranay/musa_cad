@@ -10,6 +10,7 @@
 
 #include "musacad/core/command.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
@@ -177,7 +178,10 @@ public:
     /// The drawing's saved views (VIEW Restore / ?), as last published by the engine.
     [[nodiscard]] virtual std::vector<core::NamedView> named_views() const { return {}; }
     /// The drawing's display units (UNITS), as last published by the engine.
-    [[nodiscard]] virtual core::DrawingUnits units() const { return {}; }       ///< may be null in tests
+    [[nodiscard]] virtual core::DrawingUnits units() const { return {}; }
+    /// The drawing's text styles (STYLE table) and the current one, as last published.
+    [[nodiscard]] virtual std::vector<core::TextStyle> text_styles() const { return {}; }
+    [[nodiscard]] virtual std::uint16_t current_text_style() const { return 0; }       ///< may be null in tests
 };
 
 } // namespace musacad::command

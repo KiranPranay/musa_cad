@@ -482,6 +482,8 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_uint(s, t.justify);
         append_props(s, t.props);
+        s += ' ';
+        append_uint(s, t.style); // v26: text style index (14th token)
         s += '\n';
         s += t.content;
         s += '\n';
@@ -760,6 +762,24 @@ std::string serialize_native(const Document& doc) {
     for (std::size_t i = 0; i < doc.polylines.size(); ++i) {
         emit_celt(3, i, doc.polylines[i].celtscale);
     }
+    // v26: TEXTSTYLE height width_factor oblique name font  (strings space-escaped), and
+    // CURTEXTSTYLE index. Written before entities so TEXT can reference them.
+    for (const TextStyle& ts : doc.text_styles) {
+        s += "TEXTSTYLE ";
+        append_double(s, ts.height);
+        s += ' ';
+        append_double(s, ts.width_factor);
+        s += ' ';
+        append_double(s, ts.oblique);
+        s += ' ';
+        s += enc(ts.name);
+        s += ' ';
+        s += enc(ts.font);
+        s += '\n';
+    }
+    s += "CURTEXTSTYLE ";
+    append_uint(s, doc.current_text_style);
+    s += '\n';
     // v25: UNITSFMT linear precision angular aprecision clockwise base_angle
     s += "UNITSFMT ";
     append_uint(s, static_cast<std::uint64_t>(doc.display_units.linear));
@@ -1086,6 +1106,33 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed LTSCALE");
             }
             doc.ltscale = ls;
+        } else if (key == "TEXTSTYLE") {
+            if (tok.size() != 6) {
+                return fail("malformed TEXTSTYLE");
+            }
+            const auto dec = [](std::string_view t) -> std::string {
+                std::string r(t);
+                for (char& c : r) {
+                    if (c == '\x1f') {
+                        c = ' ';
+                    }
+                }
+                return r == "-" ? std::string{} : r;
+            };
+            TextStyle ts;
+            if (!to_double(tok[1], ts.height) || !to_double(tok[2], ts.width_factor) ||
+                !to_double(tok[3], ts.oblique)) {
+                return fail("malformed TEXTSTYLE");
+            }
+            ts.name = dec(tok[4]);
+            ts.font = dec(tok[5]);
+            doc.text_styles.push_back(std::move(ts));
+        } else if (key == "CURTEXTSTYLE") {
+            std::uint64_t i = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], i)) {
+                return fail("malformed CURTEXTSTYLE");
+            }
+            doc.current_text_style = static_cast<std::uint16_t>(i);
         } else if (key == "UNITSFMT") {
             std::uint64_t v[5] = {2, 4, 0, 0, 0};
             if (tok.size() != 7 || !to_uint(tok[1], v[0]) || !to_uint(tok[2], v[1]) ||
@@ -1295,6 +1342,10 @@ IoResult parse_native(std::string_view text, Document& out) {
             if (tok.size() < 13 || !to_uint(tok[5], justify) || !parse_props(tok, 6, props)) {
                 return fail("TEXT params malformed");
             }
+            std::uint64_t tstyle = 0;
+            if (tok.size() >= 14 && !to_uint(tok[13], tstyle)) {
+                return fail("TEXT style malformed");
+            }
             std::string content;
             if (!std::getline(in, content)) {
                 return fail("TEXT missing content line");
@@ -1313,7 +1364,8 @@ IoResult parse_native(std::string_view text, Document& out) {
                                         static_cast<std::uint8_t>(justify),
                                         std::move(content),
                                         props,
-                                        std::move(tfont)});
+                                        std::move(tfont),
+                                        static_cast<std::uint16_t>(tstyle)});
         } else if (key == "DIM") {
             // DIM type ax ay bx by lx ly style <props7> [override] [tolmode up lo]
             // Token count is the version discriminator, as everywhere else in this
