@@ -475,16 +475,34 @@ std::string serialize_dxf(const Document& doc) {
         case DimType::Angular:
             dimtype = 5;
             break;
+        case DimType::Ordinate:
+            dimtype = 6 + (d.aux < 0.5 ? 64 : 0); // bit 64 = X-type ordinate
+            break;
+        case DimType::Jogged:
+            dimtype = 4; // written as a radius dimension: same value, the jog is lost
+            break;
+        case DimType::ArcLength:
+            dimtype = 1; // written as an aligned dimension between the arc's ends,
+                         // with the arc length as the text override (code 1 below)
+            break;
         case DimType::Linear:
             dimtype = 0;
             break;
         }
         code_i(s, 70, dimtype);
-        code_d(s, 13, d.a.x);
-        code_d(s, 23, d.a.y);
+        Vec2 pa = d.a;
+        Vec2 pb = d.b;
+        if (static_cast<DimType>(d.type) == DimType::ArcLength) {
+            // Aligned between the arc's two ends (a = centre, b = start, aux = end angle).
+            const double r = std::hypot(d.b.x - d.a.x, d.b.y - d.a.y);
+            pa = d.b;
+            pb = {d.a.x + r * std::cos(d.aux), d.a.y + r * std::sin(d.aux)};
+        }
+        code_d(s, 13, pa.x);
+        code_d(s, 23, pa.y);
         code_d(s, 33, 0.0);
-        code_d(s, 14, d.b.x);
-        code_d(s, 24, d.b.y);
+        code_d(s, 14, pb.x);
+        code_d(s, 24, pb.y);
         code_d(s, 34, 0.0);
         code_d(s, 15, d.line_pt.x); // radius/diameter "edge" def point reuse
         code_d(s, 25, d.line_pt.y);
@@ -1140,7 +1158,8 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 return;
             }
             const std::string* flag_v = find(body, 70);
-            const long flag = flag_v != nullptr ? (to_l(*flag_v) & 7) : 0;
+            const long flag_raw = flag_v != nullptr ? to_l(*flag_v) : 0;
+            const long flag = flag_raw & 7;
             DocDim d;
             d.props = props_of(body);
             d.a = {getd(body, 13), getd(body, 23)};
@@ -1159,6 +1178,10 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 break;
             case 5:
                 dt = DimType::Angular;
+                break;
+            case 6:
+                dt = DimType::Ordinate;
+                d.aux = (flag_raw & 64) != 0 ? 0.0 : 1.0; // bit 64 = X-type
                 break;
             default:
                 dt = DimType::Linear;

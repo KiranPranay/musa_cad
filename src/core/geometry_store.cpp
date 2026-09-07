@@ -14,6 +14,17 @@ EntityHandle GeometryStore::add_ellipse(Vec2 center, Vec2 major, double ratio, d
     return EntityHandle{slot.index, slot.generation, EntityKind::Ellipse};
 }
 
+bool GeometryStore::set_dim_aux(EntityHandle h, double aux) noexcept {
+    if (h.kind != EntityKind::Dimension) {
+        return false;
+    }
+    if (DimData* d = dims_.get(h.index, h.generation)) {
+        d->aux = aux;
+        return true;
+    }
+    return false;
+}
+
 EntityHandle GeometryStore::add_xline(Vec2 base, Vec2 dir, bool ray, EntityProps props) {
     const double len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
     const Vec2 unit = len > 1e-12 ? Vec2{dir.x / len, dir.y / len} : Vec2{1.0, 0.0};

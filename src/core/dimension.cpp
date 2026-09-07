@@ -83,6 +83,21 @@ double dim_measure(const DimData& d) {
         const double c = std::clamp(dot(u1, u2), -1.0, 1.0);
         return to_degrees(std::acos(c));
     }
+    case DimType::Ordinate:
+        return d.aux < 0.5 ? d.a.x : d.a.y; // the feature's coordinate from the origin
+    case DimType::Jogged:
+        return distance(d.a, d.b); // the TRUE radius (a = true centre), never the override
+    case DimType::ArcLength: {
+        const double r = distance(d.a, d.b);
+        double sweep = std::fmod(d.aux - std::atan2(d.b.y - d.a.y, d.b.x - d.a.x), kTwoPi);
+        if (sweep < 0.0) {
+            sweep += kTwoPi;
+        }
+        if (sweep <= 1e-12) {
+            sweep = kTwoPi;
+        }
+        return r * sweep;
+    }
     case DimType::Linear:
         break;
     }
@@ -106,7 +121,11 @@ std::string measured_text_for(DimType type, const DimStyle& style, double value)
     const std::string v = format_measurement(value, style.precision);
     switch (type) {
     case DimType::Radius:
+    case DimType::Jogged:
         return "R" + v;
+    case DimType::Ordinate:
+    case DimType::ArcLength:
+        return v;
     case DimType::Diameter:
         return "⌀" + v; // U+2300
     case DimType::Angular:
@@ -353,6 +372,123 @@ static DimGeometry compute_dim_geometry_styled(const DimData& d, const DimStyle&
         g.text_pos = edge + u * (style.text_height * 0.4);
         g.text_rotation = 0.0;
         g.text_justify = text::Justify::Left;
+        finish_label();
+        connect_moved_label();
+        return g;
+    }
+
+    if (d.type == DimType::Ordinate) {
+        // AutoCAD DIMORDINATE: a leader from the feature along the datum axis to the
+        // leader endpoint, with a dogleg when the endpoint is off that axis; the label
+        // continues the leader (reading along it for an X datum).
+        const bool xdatum = d.aux < 0.5;
+        const Vec2 f = d.a;
+        const Vec2 e = d.b;
+        if (xdatum) {
+            const double dy = e.y - f.y;
+            const double sy = dy >= 0.0 ? 1.0 : -1.0;
+            const Vec2 p0{f.x, f.y + sy * style.ext_offset};
+            if (std::abs(e.x - f.x) < 1e-9) {
+                seg(g.dim_lines, p0, e);
+            } else {
+                const double ky = f.y + dy * 0.6;
+                seg(g.dim_lines, p0, Vec2{f.x, ky});
+                seg(g.dim_lines, Vec2{f.x, ky}, Vec2{e.x, ky});
+                seg(g.dim_lines, Vec2{e.x, ky}, e);
+            }
+            g.text_pos = e + Vec2{0.0, sy * style.text_height * 0.4};
+            g.text_rotation = sy > 0.0 ? kHalfPi : -kHalfPi;
+        } else {
+            const double dx = e.x - f.x;
+            const double sx = dx >= 0.0 ? 1.0 : -1.0;
+            const Vec2 p0{f.x + sx * style.ext_offset, f.y};
+            if (std::abs(e.y - f.y) < 1e-9) {
+                seg(g.dim_lines, p0, e);
+            } else {
+                const double kx = f.x + dx * 0.6;
+                seg(g.dim_lines, p0, Vec2{kx, f.y});
+                seg(g.dim_lines, Vec2{kx, f.y}, Vec2{kx, e.y});
+                seg(g.dim_lines, Vec2{kx, e.y}, e);
+            }
+            g.text_pos = e + Vec2{sx * style.text_height * 0.4, 0.0};
+            g.text_rotation = 0.0;
+        }
+        g.text_justify = text::Justify::Left;
+        finish_label();
+        connect_moved_label();
+        return g;
+    }
+
+    if (d.type == DimType::Jogged) {
+        // AutoCAD DIMJOGGED: the dimension line runs from the CENTRE OVERRIDE (line_pt)
+        // to the arc with a zigzag jog at `aux` of its length; the value is the true
+        // radius from the true centre (a), which the drawing never shows.
+        const Vec2 oc = d.line_pt;
+        const Vec2 edge = d.b;
+        const double len = distance(oc, edge);
+        const Vec2 u = len > 1e-9 ? (edge - oc) / len : Vec2{1.0, 0.0};
+        const Vec2 n{-u.y, u.x};
+        const double t = std::clamp(d.aux, 0.1, 0.9);
+        const Vec2 P = oc + u * (len * t);
+        const double h = style.text_height * 0.8;
+        const Vec2 A = P - u * h;
+        const Vec2 B = P - u * (h / 3.0) + n * (h * 0.6);
+        const Vec2 C = P + u * (h / 3.0) - n * (h * 0.6);
+        const Vec2 D = P + u * h;
+        seg(g.dim_lines, oc, A);
+        seg(g.dim_lines, A, B);
+        seg(g.dim_lines, B, C);
+        seg(g.dim_lines, C, D);
+        seg(g.dim_lines, D, edge);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, edge, u * -1.0, style.arrow_size, atype);
+        g.text_pos = P + n * (h * 0.6 + style.text_height * 0.5);
+        g.text_rotation = 0.0;
+        g.text_justify = text::Justify::Center;
+        finish_label();
+        connect_moved_label();
+        return g;
+    }
+
+    if (d.type == DimType::ArcLength) {
+        // AutoCAD DIMARC: radial extension lines from the arc's ends, a dimension ARC
+        // concentric with it at the placement radius, arrowheads at both ends, and the
+        // arc length as the value.
+        const Vec2 c = d.a;
+        const double r = distance(c, d.b);
+        const double a0 = std::atan2(d.b.y - c.y, d.b.x - c.x);
+        double sweep = std::fmod(d.aux - a0, kTwoPi);
+        if (sweep < 0.0) {
+            sweep += kTwoPi;
+        }
+        if (sweep <= 1e-12) {
+            sweep = kTwoPi;
+        }
+        const double a1 = a0 + sweep;
+        const double rd = std::max(distance(c, d.line_pt), r + style.ext_offset + style.arrow_size);
+        const auto on = [&](double ang, double rad) {
+            return Vec2{c.x + rad * std::cos(ang), c.y + rad * std::sin(ang)};
+        };
+        seg(g.ext_lines, on(a0, r + style.ext_offset), on(a0, rd + style.ext_extension));
+        seg(g.ext_lines, on(a1, r + style.ext_offset), on(a1, rd + style.ext_extension));
+        const int steps = std::max(24, static_cast<int>(std::ceil(sweep / 0.05)));
+        Vec2 prev{};
+        for (int i = 0; i <= steps; ++i) {
+            const Vec2 p = on(a0 + sweep * (static_cast<double>(i) / steps), rd);
+            if (i > 0) {
+                seg(g.dim_lines, prev, p);
+            }
+            prev = p;
+        }
+        const Vec2 e0 = on(a0, rd);
+        const Vec2 e1 = on(a1, rd);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, e0, Vec2{std::sin(a0), -std::cos(a0)},
+                         style.arrow_size, atype);
+        append_arrowhead(g.arrow_fills, g.arrow_lines, e1, Vec2{-std::sin(a1), std::cos(a1)},
+                         style.arrow_size, atype);
+        const double am = a0 + sweep * 0.5;
+        g.text_pos = on(am, rd + style.text_height * 0.7);
+        g.text_rotation = 0.0;
+        g.text_justify = text::Justify::Center;
         finish_label();
         connect_moved_label();
         return g;

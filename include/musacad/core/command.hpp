@@ -549,6 +549,8 @@ struct AddDimensionCommand {
     /// travel the same capture/recreate path as the decoration above.
     std::string text_override = {};
     Vec2 text_offset = {};
+    /// The extra datum of the newer types (see DimData::aux). Zero otherwise.
+    double aux = 0.0;
 };
 
 /// Object-aware dimensioning: the geometry thread resolves the entity under
@@ -566,6 +568,9 @@ struct AddObjectDimensionCommand {
     double pick_radius = 0.0;
     std::uint16_t style = 0;
     std::uint64_t group = 0;
+    /// DIMJOGGED only: the centre location override and the jog location.
+    Vec2 pick3{};
+    Vec2 pick4{};
 };
 
 /// Non-mutating query: resolve the def points of an object-based dimension under

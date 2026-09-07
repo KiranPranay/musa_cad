@@ -384,6 +384,7 @@ void ViewportWindow::render_loop(std::stop_token token) {
             pdim_b_ = snap.pending_dim_b;
             pdim_line_pt_ = snap.pending_dim_line_pt;
             pdim_type_ = snap.pending_dim_type;
+            pdim_aux_ = snap.pending_dim_aux;
             pdim_style_ = snap.dimstyles.empty() ? core::DimStyle{} : snap.dimstyles[0];
         }
         {
@@ -1092,6 +1093,20 @@ void ViewportWindow::rebuild_overlay() {
                         d.a = pdim_a_;
                         d.b = pdim_a_ + dir * r;
                         d.line_pt = cur;
+                    } else if (t == core::DimType::ArcLength) {
+                        d.a = pdim_a_; // the arc is fixed; the dimension arc's radius
+                        d.b = pdim_b_; // follows the cursor
+                        d.aux = pdim_aux_;
+                        d.line_pt = cur;
+                    } else if (t == core::DimType::Jogged) {
+                        const double r = core::distance(pdim_a_, pdim_b_);
+                        core::Vec2 dir = cur - pdim_a_;
+                        dir = core::length_squared(dir) > 1e-12 ? core::normalized(dir)
+                                                               : core::Vec2{1.0, 0.0};
+                        d.a = pdim_a_;
+                        d.b = pdim_a_ + dir * r;
+                        d.line_pt = pdim_a_ + dir * (r * 0.4); // a stand-in centre override
+                        d.aux = 0.5;
                     } else if (t == core::DimType::Angular) {
                         d.a = pdim_a_; // geometry fixed by the two lines
                         d.b = pdim_b_;

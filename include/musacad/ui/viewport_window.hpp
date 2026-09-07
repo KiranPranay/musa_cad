@@ -440,6 +440,7 @@ private:
     core::Vec2 pdim_b_{};
     core::Vec2 pdim_line_pt_{};
     std::uint8_t pdim_type_ = 0;
+    double pdim_aux_ = 0.0;
     core::DimStyle pdim_style_{};
 
     // Grips of the selected set, cached from the snapshot for GUI-thread hit-testing,

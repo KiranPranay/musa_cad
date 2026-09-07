@@ -47,6 +47,9 @@ enum class DimType : std::uint8_t {
     Radius = 2,
     Diameter = 3,
     Angular = 4,
+    Ordinate = 5,  ///< a = feature, b = leader end; aux 0 = X datum, 1 = Y datum
+    Jogged = 6,    ///< a = true centre, b = point on the arc, line_pt = centre override; aux = jog position 0..1
+    ArcLength = 7, ///< a = centre, b = arc start point, line_pt = placement; aux = end angle (rad)
 };
 
 /// How a dimension qualifies its measured value.

@@ -64,6 +64,9 @@ commands (Ribbon Phase A):
 | DIMRADIUS (DRA) | Create a radius dimension for a circle or arc. |
 | DIMDIAMETER (DDI) | Create a diameter dimension for a circle or arc. |
 | DIMANGULAR (DAN) | Create an angular dimension between two lines. |
+| DIMORDINATE (DOR) | Ordinate (X or Y datum) dimension with a leader; Xdatum/Ydatum or automatic from the leader direction. |
+| DIMJOGGED (DJO) | Jogged radius dimension: arc or circle, centre location override, dimension line location, jog location. |
+| DIMARC (DAR) | Arc length dimension of an arc or a polyline arc segment. |
 | DIM | Create a dimension suited to the selected object. |
 | LEADER | Draw a leader line with an arrowhead and annotation. |
 | MTEXT (MT) | Create a multiline (paragraph) text object. |
@@ -229,6 +232,9 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | DIMRADIUS (**select a circle/arc**, or a filleted polyline arc segment → R) | DRA | Implemented |
 | DIMDIAMETER (**select a circle/arc** → ⌀ from its own geometry) | DDI | Implemented |
 | DIMANGULAR (**select two lines/edges** → angle from their directions) | DAN | Implemented |
+| DIMORDINATE (X/Y datum, leader dogleg) | DOR | Implemented (Mtext/Text/Angle deferred) |
+| DIMJOGGED (centre override + jog) | DJO | Implemented (exports to DXF as a radius dimension) |
+| DIMARC (arc or polyline arc segment) | DAR | Implemented (Partial/Leader deferred; exports to DXF as an aligned dimension carrying the arc-length text) |
 | Arrowheads: filled / open / tick / dot (solid filled geometry) | DIMSTYLE | Implemented |
 | DIMSTYLE: text height / arrow type+size / precision / ext lines | Dim Style btn | Implemented (Standard editable; multi-style manager Planned) |
 | DIMSTYLE per-element colours (dim / ext / text / arrow) + dim lineweight | Dim Style btn | Implemented |

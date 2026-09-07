@@ -112,7 +112,8 @@ Document document_from_store(const GeometryStore& store) {
                                       dd.style, dd.props, dd.overrides,
                                       std::string(store.dim_prefix(dd)),
                                       std::string(store.dim_suffix(dd)), dd.tol,
-                                      std::string(store.dim_override(dd)), dd.text_offset});
+                                      std::string(store.dim_override(dd)), dd.text_offset,
+                                      dd.aux});
         }
     }
     const auto& leaders = store.leaders();
@@ -313,9 +314,11 @@ void populate_store(GeometryStore& store, const Document& doc) {
                        store.add_font(t.font));
     }
     for (const DocDim& d : doc.dims) {
-        store.add_dimension(static_cast<DimType>(d.type), d.a, d.b, d.line_pt, d.style, d.props,
+        const EntityHandle dh = store.add_dimension(static_cast<DimType>(d.type), d.a, d.b, d.line_pt, d.style, d.props,
                             d.overrides, d.prefix, d.suffix, d.tol, d.text_override,
                             d.text_offset);
+
+        store.set_dim_aux(dh, d.aux);
     }
     for (const DocLeader& l : doc.leaders) {
         store.add_leader(l.tip, l.knee, l.text_height, l.style, l.content, l.props,

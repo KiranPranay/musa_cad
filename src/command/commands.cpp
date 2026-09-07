@@ -2832,6 +2832,12 @@ const char* dim_type_word(core::DimType t) {
         return "Aligned";
     case core::DimType::Angular:
         return "Angular";
+    case core::DimType::Ordinate:
+        return "Ordinate";
+    case core::DimType::Jogged:
+        return "Jogged";
+    case core::DimType::ArcLength:
+        return "Arc length";
     case core::DimType::Linear:
         break;
     }
@@ -2958,6 +2964,169 @@ void RadialDimensionCommand::input(CommandContext& ctx, const std::string& text)
 
 void RadialDimensionCommand::cancel(CommandContext& ctx) {
     ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// DIMORDINATE
+// ---------------------------------------------------------------------------
+void OrdinateDimensionCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Feature;
+    forced_ = -1;
+    ctx.set_prompt("Specify feature location: ");
+}
+
+void OrdinateDimensionCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    if (state_ == State::Feature) {
+        if (const auto p = read_point(ctx, text)) {
+            feature_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::End;
+            ctx.set_preview({PreviewKind::Segment, {*p}});
+            ctx.set_prompt("Specify leader endpoint or [Xdatum/Ydatum/Mtext/Text/Angle]: ");
+        }
+        return;
+    }
+    if (u == "X" || u == "XDATUM") {
+        forced_ = 0;
+        ctx.set_prompt("Specify leader endpoint or [Xdatum/Ydatum/Mtext/Text/Angle]: ");
+        return;
+    }
+    if (u == "Y" || u == "YDATUM") {
+        forced_ = 1;
+        ctx.set_prompt("Specify leader endpoint or [Xdatum/Ydatum/Mtext/Text/Angle]: ");
+        return;
+    }
+    if (u == "M" || u == "MTEXT" || u == "T" || u == "TEXT" || u == "A" || u == "ANGLE") {
+        ctx.echo("That option is not supported yet; the measured value is used.");
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        // AutoCAD's automatic choice: a mostly vertical leader measures X.
+        const core::Vec2 d = *p - feature_;
+        const double aux = forced_ >= 0 ? static_cast<double>(forced_)
+                                        : (std::abs(d.y) >= std::abs(d.x) ? 0.0 : 1.0);
+        core::AddDimensionCommand dim;
+        dim.type = static_cast<std::uint8_t>(core::DimType::Ordinate);
+        dim.a = feature_;
+        dim.b = *p;
+        dim.line_pt = *p;
+        dim.group = ctx.group_id();
+        dim.aux = aux;
+        ctx.submit(std::move(dim));
+        ctx.set_preview({});
+        ctx.echo("Dimension placed.");
+        done_ = true;
+    }
+}
+
+void OrdinateDimensionCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.set_preview({});
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// DIMJOGGED
+// ---------------------------------------------------------------------------
+void JoggedDimensionCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Select;
+    ctx.set_prompt("Select arc or circle: ");
+}
+
+void JoggedDimensionCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    if (state_ == State::Place && (u == "M" || u == "MTEXT" || u == "T" || u == "TEXT" ||
+                                   u == "A" || u == "ANGLE")) {
+        ctx.echo("That option is not supported yet; the measured value is used.");
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    switch (state_) {
+    case State::Select:
+        obj_pick_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::Override;
+        ctx.submit(core::ResolveDimObjectCommand{static_cast<std::uint8_t>(core::DimType::Jogged),
+                                                 obj_pick_, obj_pick_, ctx.pick_radius()});
+        ctx.set_prompt("Specify center location override: ");
+        return;
+    case State::Override:
+        override_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::Place;
+        ctx.set_preview({PreviewKind::Segment, {*p}});
+        ctx.set_prompt("Specify dimension line location or [Mtext/Text/Angle]: ");
+        return;
+    case State::Place:
+        place_ = *p;
+        state_ = State::Jog;
+        ctx.set_prompt("Specify jog location: ");
+        return;
+    case State::Jog:
+        ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(core::DimType::Jogged),
+                                                   obj_pick_, place_, ctx.pick_radius(), 0,
+                                                   ctx.group_id(), override_, *p});
+        ctx.set_preview({});
+        ctx.echo("Dimension placed.");
+        done_ = true;
+        return;
+    }
+}
+
+void JoggedDimensionCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.set_preview({});
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// DIMARC
+// ---------------------------------------------------------------------------
+void ArcLengthDimensionCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Select;
+    ctx.set_prompt("Select arc or polyline arc segment: ");
+}
+
+void ArcLengthDimensionCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    if (state_ == State::Place && (u == "M" || u == "MTEXT" || u == "T" || u == "TEXT" ||
+                                   u == "A" || u == "ANGLE" || u == "P" || u == "PARTIAL" ||
+                                   u == "L" || u == "LEADER")) {
+        ctx.echo("That option is not supported yet; the whole arc's length is dimensioned.");
+        return;
+    }
+    const auto p = read_point(ctx, text);
+    if (!p) {
+        return;
+    }
+    if (state_ == State::Select) {
+        obj_pick_ = *p;
+        ctx.set_last_point(*p);
+        state_ = State::Place;
+        ctx.submit(core::ResolveDimObjectCommand{static_cast<std::uint8_t>(core::DimType::ArcLength),
+                                                 obj_pick_, obj_pick_, ctx.pick_radius()});
+        preview_object_dim(ctx, core::DimType::ArcLength);
+        ctx.set_prompt("Specify arc length dimension location, or [Mtext/Text/Angle/Partial/Leader]: ");
+        return;
+    }
+    ctx.submit(core::AddObjectDimensionCommand{static_cast<std::uint8_t>(core::DimType::ArcLength),
+                                               obj_pick_, *p, ctx.pick_radius(), 0, ctx.group_id()});
+    ctx.set_preview({});
+    ctx.echo("Dimension placed.");
+    done_ = true;
+}
+
+void ArcLengthDimensionCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.set_preview({});
     done_ = true;
 }
 

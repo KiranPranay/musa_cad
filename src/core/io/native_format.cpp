@@ -512,6 +512,9 @@ std::string serialize_native(const Document& doc) {
         // contain spaces, so it cannot be a token -- the same reason prefix/suffix are lines).
         s += ' ';
         append_vec(s, d.text_offset);
+        // v23: the extra datum (ordinate axis / jog position / arc end angle).
+        s += ' ';
+        append_double(s, d.aux);
         s += '\n';
         s += d.prefix;
         s += '\n';
@@ -1217,7 +1220,9 @@ IoResult parse_native(std::string_view text, Document& out) {
             std::uint64_t dtype = 0;
             vals.clear();
             // 37 = v19 (the override block's 16 fields + decoration + the 2-token offset)
-            const bool has_move = tok.size() == 37;
+            // 38 = v23 (+ the aux datum)
+            const bool has_aux = tok.size() == 38;
+            const bool has_move = tok.size() == 37 || has_aux;
             const bool has_fit = tok.size() == 35 || has_move;
             const bool has_decor = tok.size() == 34 || has_fit;
             const bool has_ov = tok.size() == 31 || has_decor;
@@ -1239,6 +1244,7 @@ IoResult parse_native(std::string_view text, Document& out) {
             std::string dsuffix;
             std::string doverride;
             Vec2 dtext_offset{};
+            double daux = 0.0;
             if (has_decor) {
                 // The decoration follows the override block, which is one field wider
                 // from v16 -- so its offset is keyed to the same discriminator.
@@ -1262,6 +1268,9 @@ IoResult parse_native(std::string_view text, Document& out) {
                     if (!read_line(doverride)) {
                         return fail("DIM missing text-override line");
                     }
+                    if (has_aux && !to_double(tok[db + 5], daux)) {
+                        return fail("DIM aux datum malformed");
+                    }
                 }
             }
             doc.dims.push_back(DocDim{static_cast<std::uint8_t>(dtype),
@@ -1275,7 +1284,8 @@ IoResult parse_native(std::string_view text, Document& out) {
                                       dsuffix,
                                       tol,
                                       doverride,
-                                      dtext_offset});
+                                      dtext_offset,
+                                      daux});
         } else if (key == "TABLESTYLE") {
             if (tok.size() < 15) {
                 return fail("malformed TABLESTYLE");
