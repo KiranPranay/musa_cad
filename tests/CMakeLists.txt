@@ -139,6 +139,7 @@ add_executable(musacad_tests
     test_table.cpp
     test_image.cpp
     test_blocks.cpp
+    test_block_authoring.cpp
     test_fonts.cpp
     test_properties.cpp
     test_linetype.cpp
