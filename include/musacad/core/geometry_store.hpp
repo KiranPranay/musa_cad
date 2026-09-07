@@ -122,6 +122,10 @@ struct DimData {
     /// what every existing drawing loads as. Stored rather than baked, so the automatic
     /// ISO 129-1 fit (#12) still runs and the value stays measured.
     Vec2 text_offset{};
+    /// One extra datum the newer types need (v23): the ordinate axis (0 = X, 1 = Y), a
+    /// jogged dimension's jog position along its line (0..1), or an arc-length
+    /// dimension's end angle in radians. Zero for the classic types.
+    double aux = 0.0;
 
     /// Grip index of the label. Deliberately outside the contiguous def-point/foot range
     /// so adding grips to any dimension type can never collide with it.
@@ -403,6 +407,8 @@ public:
                           std::string_view content, EntityProps props = {}, std::uint16_t font = 0);
     /// `prefix`/`suffix` are copied into the shared char pool; they and `tol` decorate
     /// the MEASURED value, never replace it.
+    /// Sets the extra datum of a dimension (see DimData::aux); false if `h` is not one.
+    bool set_dim_aux(EntityHandle h, double aux) noexcept;
     EntityHandle add_dimension(DimType type, Vec2 a, Vec2 b, Vec2 line_pt, std::uint16_t style,
                                EntityProps props = {}, DimOverrides overrides = {},
                                std::string_view prefix = {}, std::string_view suffix = {},

@@ -58,7 +58,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 22;
+inline constexpr std::uint32_t kFormatVersion = 23;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -150,6 +150,7 @@ struct DocDim {
     /// author's displacement of the label from its derived position.
     std::string text_override;
     Vec2 text_offset{};
+    double aux = 0.0; ///< v23: the extra datum of ordinate / jogged / arc-length dims
     friend bool operator==(const DocDim&, const DocDim&) = default;
 };
 struct DocLeader {

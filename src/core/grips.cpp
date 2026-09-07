@@ -70,7 +70,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                                    std::string(store.dim_suffix(*d)),
                                    d->tol,
                                    std::string(store.dim_override(*d)),
-                                   d->text_offset};
+                                   d->text_offset,
+                                   d->aux};
     }
     case EntityKind::Leader: {
         const LeaderData* l = store.leader(h);
@@ -227,6 +228,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 handle = store.add_dimension(static_cast<DimType>(c.type), c.a, c.b, c.line_pt,
                                              c.style, props_of(c.props), c.overrides, c.prefix,
                                              c.suffix, c.tol, c.text_override, c.text_offset);
+                store.set_dim_aux(handle, c.aux);
             } else if constexpr (std::is_same_v<T, AddLeaderCommand>) {
                 handle = store.add_leader(c.tip, c.knee, c.text_height, c.style, c.content,
                                           props_of(c.props), store.add_font(c.font), c.overrides);
@@ -370,10 +372,14 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
         const DimGeometry g =
             compute_dim_geometry(*d, s != nullptr ? *s : DimStyle{}, Rgb{}, store.dim_text_parts(*d));
         const auto t = d->type;
-        if (t == DimType::Radius || t == DimType::Diameter) {
+        if (t == DimType::Radius || t == DimType::Diameter || t == DimType::Jogged ||
+            t == DimType::ArcLength) {
             push(out, d->a, GripKind::Move, 0);    // centre -> moves the dim
-            push(out, d->b, GripKind::DimDef, 1);  // edge -> re-measures R/diameter
-            push(out, d->line_pt, GripKind::DimLine, 2); // leader/text placement
+            push(out, d->b, GripKind::DimDef, 1);  // edge / arc start -> re-measures
+            push(out, d->line_pt, GripKind::DimLine, 2); // placement / centre override
+        } else if (t == DimType::Ordinate) {
+            push(out, d->a, GripKind::DimDef, 0);  // the feature (re-measures)
+            push(out, d->b, GripKind::DimLine, 1); // the leader endpoint
         } else if (t == DimType::Angular) {
             push(out, d->a, GripKind::DimDef, 0);  // vertex
             push(out, d->b, GripKind::DimDef, 1);  // ray 1
@@ -618,7 +624,9 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                     x.text_offset = {delta.x * cs + delta.y * sn, -delta.x * sn + delta.y * cs};
                     return;
                 }
-                if ((t == DimType::Radius || t == DimType::Diameter) && grip_index == 0) {
+                if ((t == DimType::Radius || t == DimType::Diameter || t == DimType::Jogged ||
+                     t == DimType::ArcLength) &&
+                    grip_index == 0) {
                     const Vec2 d = newpos - x.a; // centre grip -> move the whole dim
                     x.a = x.a + d;
                     x.b = x.b + d;

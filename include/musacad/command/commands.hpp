@@ -956,6 +956,59 @@ private:
     bool done_ = false;
 };
 
+/// DIMORDINATE (DOR): a feature point, then the leader endpoint; the datum axis is
+/// chosen from the leader's direction (a mostly vertical leader measures X), or forced
+/// with [Xdatum/Ydatum]. Mtext/Text/Angle are reported as not supported.
+class OrdinateDimensionCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMORDINATE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Feature, End } state_ = State::Feature;
+    core::Vec2 feature_{};
+    int forced_ = -1; ///< -1 auto, 0 X datum, 1 Y datum
+    bool done_ = false;
+};
+
+/// DIMJOGGED (DJO): select an arc or circle, give the centre location override, the
+/// dimension line location, then the jog location -- AutoCAD's four steps.
+class JoggedDimensionCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMJOGGED"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Select, Override, Place, Jog } state_ = State::Select;
+    core::Vec2 obj_pick_{};
+    core::Vec2 override_{};
+    core::Vec2 place_{};
+    bool done_ = false;
+};
+
+/// DIMARC (DAR): select an arc or a polyline arc segment, then place the dimension
+/// arc; the value is the true arc length. Partial/Leader/Mtext/Text/Angle are
+/// reported as not supported.
+class ArcLengthDimensionCommand final : public ICommand {
+public:
+    std::string name() const override { return "DIMARC"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Select, Place } state_ = State::Select;
+    core::Vec2 obj_pick_{};
+    bool done_ = false;
+};
+
 /// DIMANGULAR: select two lines (or polyline edges); the angle is read from the
 /// entities' directions (object-aware).
 class AngularDimensionCommand final : public ICommand {

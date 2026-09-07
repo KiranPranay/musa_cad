@@ -2234,7 +2234,7 @@ bool segment_endpoints(const GeometryStore& store, EntityHandle h, Vec2 pick, Ve
 } // namespace
 
 bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2, double radius,
-                                      DimData& out) const {
+                                      DimData& out, Vec2 pick3, Vec2 pick4) const {
     const auto dt = static_cast<DimType>(type);
     const EntityHandle h1 = pick_nearest(pick1, radius);
     if (h1.is_null()) {
@@ -2242,7 +2242,61 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
     }
     out.type = dt;
     out.style = 0;
-    if (dt == DimType::Radius || dt == DimType::Diameter) {
+    out.aux = 0.0;
+    if (dt == DimType::ArcLength) {
+        // An arc entity, or the bulged polyline segment nearest the pick: centre, start
+        // point and end angle (counter-clockwise); placement at the second pick.
+        Vec2 c{};
+        double r = 0.0;
+        double s0 = 0.0;
+        double s1 = 0.0;
+        if (h1.kind == EntityKind::Arc) {
+            const ArcData* arc = store_.arc(h1);
+            c = arc->center;
+            r = arc->radius;
+            s0 = arc->start_angle;
+            s1 = arc->end_angle;
+        } else if (h1.kind == EntityKind::Polyline) {
+            const PolylineData* pl = store_.polyline(h1);
+            const auto v = store_.vertices_of(*pl);
+            const auto b = store_.bulges_of(*pl);
+            if (b.empty() || v.empty()) {
+                return false;
+            }
+            const std::size_t n = v.size();
+            const std::size_t segs = (pl->closed && n >= 2) ? n : n - 1;
+            double best = std::numeric_limits<double>::infinity();
+            bool found = false;
+            for (std::size_t i = 0; i < segs; ++i) {
+                if (b[i] == 0.0) {
+                    continue;
+                }
+                const BulgeArc a = arc_from_bulge(v[i], v[(i + 1) % n], b[i]);
+                const double dd = std::abs(distance(pick1, a.center) - a.radius);
+                if (dd < best) {
+                    best = dd;
+                    c = a.center;
+                    r = a.radius;
+                    const double a0 = std::atan2(v[i].y - c.y, v[i].x - c.x);
+                    const double theta = 4.0 * std::atan(b[i]);
+                    s0 = theta > 0.0 ? a0 : a0 + theta;
+                    s1 = theta > 0.0 ? a0 + theta : a0;
+                    found = true;
+                }
+            }
+            if (!found) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+        out.a = c;
+        out.b = {c.x + r * std::cos(s0), c.y + r * std::sin(s0)};
+        out.aux = s1;
+        out.line_pt = pick2;
+        return true;
+    }
+    if (dt == DimType::Radius || dt == DimType::Diameter || dt == DimType::Jogged) {
         Vec2 center{};
         double r = 0.0;
         if (h1.kind == EntityKind::Circle) {
@@ -2290,6 +2344,36 @@ bool GeometryEngine::resolve_dim_defs(std::uint8_t type, Vec2 pick1, Vec2 pick2,
         out.a = center;
         out.b = center + dir * r;
         out.line_pt = pick2;
+        if (dt == DimType::Jogged) {
+            // The dimension line runs from the CENTRE OVERRIDE (pick3) through the
+            // dimension-line location (pick2) to the arc; the jog sits at pick4's
+            // projection along it (half-way when no jog location was given).
+            const bool has_override = pick3.x != 0.0 || pick3.y != 0.0;
+            const Vec2 oc = has_override ? pick3 : center;
+            Vec2 u = pick2 - oc;
+            u = length_squared(u) > 1e-12 ? normalized(u) : dir;
+            Vec2 p0{};
+            Vec2 p1{};
+            const int n = NativeKernel2D::line_circle_intersection(oc, oc + u, center, r, p0, p1);
+            Vec2 edge = center + u * r;
+            double best_t = std::numeric_limits<double>::infinity();
+            for (int i = 0; i < n; ++i) {
+                const Vec2 p = i == 0 ? p0 : p1;
+                const double t = dot(p - oc, u);
+                if (t > 1e-9 && t < best_t) {
+                    best_t = t;
+                    edge = p;
+                }
+            }
+            out.b = edge;
+            out.line_pt = oc;
+            const double len = distance(oc, edge);
+            double frac = 0.5;
+            if (len > 1e-9 && (pick4.x != 0.0 || pick4.y != 0.0)) {
+                frac = std::clamp(dot(pick4 - oc, u) / len, 0.1, 0.9);
+            }
+            out.aux = frac;
+        }
         return true;
     }
     if (dt == DimType::Angular) {
@@ -3117,11 +3201,11 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
                     : "Broke 1 object into " + std::to_string(pieces.size()) + ".");
 }
 
-void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 pick2,
-                                            double radius, std::uint16_t style,
+void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 pick2, Vec2 pick3,
+                                            Vec2 pick4, double radius, std::uint16_t style,
                                             std::uint64_t group) {
     DimData d;
-    if (!resolve_dim_defs(type, pick1, pick2, radius, d)) {
+    if (!resolve_dim_defs(type, pick1, pick2, radius, d, pick3, pick4)) {
         report("Could not dimension that object -- select a line, circle, or arc.");
         return;
     }
@@ -3130,6 +3214,7 @@ void GeometryEngine::apply_object_dimension(std::uint8_t type, Vec2 pick1, Vec2 
     dim.a = d.a;
     dim.b = d.b;
     dim.line_pt = d.line_pt;
+    dim.aux = d.aux;
     dim.style = style;
     dim.group = group;
     const Command add = dim;
@@ -4820,7 +4905,8 @@ void GeometryEngine::apply(const Command& command) {
             } else if constexpr (std::is_same_v<T, ChamferPickCommand>) {
                 apply_chamfer(c.pick1, c.pick2, c.dist1, c.dist2, c.pick_radius, c.group);
             } else if constexpr (std::is_same_v<T, AddObjectDimensionCommand>) {
-                apply_object_dimension(c.type, c.pick1, c.pick2, c.pick_radius, c.style, c.group);
+                apply_object_dimension(c.type, c.pick1, c.pick2, c.pick3, c.pick4, c.pick_radius,
+                                       c.style, c.group);
             } else if constexpr (std::is_same_v<T, ResolveDimObjectCommand>) {
                 // Non-mutating: resolve def points for the UI placement preview.
                 DimData d;
@@ -5249,6 +5335,7 @@ void GeometryEngine::rebuild_and_publish() {
     buf.pending_dim_a = pending_dim_.a;
     buf.pending_dim_b = pending_dim_.b;
     buf.pending_dim_line_pt = pending_dim_.line_pt;
+    buf.pending_dim_aux = pending_dim_.aux;
     buf.pending_dim_type = static_cast<std::uint8_t>(pending_dim_.type);
     buf.pending_dim_version = pending_dim_version_;
 

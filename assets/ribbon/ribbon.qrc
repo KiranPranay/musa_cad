@@ -65,6 +65,9 @@
     <file>xline.svg</file>
     <file>ellipse.svg</file>
     <file>spline.svg</file>
+    <file>dim-ordinate.svg</file>
+    <file>dim-jogged.svg</file>
+    <file>dim-arc.svg</file>
     <file>ray.svg</file>
     <file>explode.svg</file>
     <file>lengthen.svg</file>

@@ -2276,7 +2276,7 @@ lets the offset survive the whole dimension being rotated later.
   there is no useful way to *type* a displacement — it is a grip drag — but the state must
   be visible and the reset must be undoable.
 
-`DimData` grows 152 → **176 B** (cold arena; `LineData` 40 / `CircleData` 32 /
+`DimData` grows 152 → **184 B** (cold arena; `LineData` 40 / `CircleData` 32 /
 `EntityProps` 8 re-asserted unchanged). Native **v19**: two trailing fields on the `DIM`
 record for the offset plus a third content line for the raw override (it may contain
 spaces, so it cannot be a token — the same reason prefix/suffix are lines). Detected by

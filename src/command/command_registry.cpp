@@ -211,6 +211,12 @@ CommandRegistry CommandRegistry::make_default() {
             return std::make_unique<RadialDimensionCommand>(core::DimType::Diameter, "DIMDIAMETER");
         },
         "assets/ribbon/dim-diameter.svg", "Create a diameter dimension for a circle or arc.");
+    reg({"DOR", "DIMORDINATE"}, [] { return std::make_unique<OrdinateDimensionCommand>(); },
+        "assets/ribbon/dim-ordinate.svg", "Create an ordinate (X or Y datum) dimension.");
+    reg({"DJO", "DIMJOGGED"}, [] { return std::make_unique<JoggedDimensionCommand>(); },
+        "assets/ribbon/dim-jogged.svg", "Create a jogged radius dimension for a large arc.");
+    reg({"DAR", "DIMARC"}, [] { return std::make_unique<ArcLengthDimensionCommand>(); },
+        "assets/ribbon/dim-arc.svg", "Create an arc length dimension.");
     reg({"DAN", "DIMANGULAR"}, [] { return std::make_unique<AngularDimensionCommand>(); },
         "assets/ribbon/dim-angular.svg", "Create an angular dimension between two lines.");
     reg({"DIM"}, [] { return std::make_unique<DimCommand>(); }, "assets/ribbon/dim.svg",

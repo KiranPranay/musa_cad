@@ -187,6 +187,7 @@ struct RenderSnapshot {
     Vec2 pending_dim_b{};
     Vec2 pending_dim_line_pt{};
     std::uint8_t pending_dim_type = 0;
+    double pending_dim_aux = 0.0;
     std::uint64_t pending_dim_version = 0;
 
     // Grips of the selected set (display + hit-test), the hot grip (grabbed or
