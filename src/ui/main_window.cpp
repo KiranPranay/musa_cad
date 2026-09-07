@@ -16,6 +16,7 @@
 #include <thread>
 
 #include <QAbstractButton>
+#include <QGridLayout>
 #include <QAction>
 #include <QApplication>
 #include <QMouseEvent>
@@ -689,6 +690,18 @@ void MainWindow::build_ribbon() {
         array_btn->setToolTip(cmd_tooltip(*array_info));
     }
     connect(array_btn, &QToolButton::clicked, this, [this] { open_array_dialog(); });
+    // Rotate / Scale: the button runs the command; its dropdown offers the value dialog
+    // with a live ghost (issue #32).
+    {
+        auto* rotate_menu = new QMenu(this);
+        rotate_menu->addAction(QStringLiteral("Rotate by value\u2026"), this, [this] { open_rotate_dialog(); });
+        rotate_btn->setMenu(rotate_menu);
+        rotate_btn->setPopupMode(QToolButton::MenuButtonPopup);
+        auto* scale_menu = new QMenu(this);
+        scale_menu->addAction(QStringLiteral("Scale by value\u2026"), this, [this] { open_scale_dialog(); });
+        scale_btn->setMenu(scale_menu);
+        scale_btn->setPopupMode(QToolButton::MenuButtonPopup);
+    }
     // Move/Copy/Mirror/Rotate/Scale/Array operate on an existing selection.
     selection_required_buttons_ = {move_btn, copy_btn, mirror_btn, rotate_btn, scale_btn, array_btn};
     for (QToolButton* b : selection_required_buttons_) {
@@ -1061,7 +1074,9 @@ void MainWindow::build_status_bar() {
         {"Center", core::SnapType::Center},         {"Node", core::SnapType::Node},
         {"Quadrant", core::SnapType::Quadrant},     {"Intersection", core::SnapType::Intersection},
         {"Perpendicular", core::SnapType::Perpendicular}, {"Tangent", core::SnapType::Tangent},
-        {"Centroid (Musa)", core::SnapType::Centroid},    {"Nearest", core::SnapType::Nearest}};
+        {"Centroid (Musa)", core::SnapType::Centroid},    {"Insertion", core::SnapType::Insertion},
+        {"Apparent intersection", core::SnapType::ApparentIntersection},
+        {"Parallel", core::SnapType::Parallel},           {"Nearest", core::SnapType::Nearest}};
     for (const auto& [label, type] : kSnapTypes) {
         QAction* a = osnap_menu->addAction(QString::fromUtf8(label));
         a->setCheckable(true);
@@ -1072,7 +1087,11 @@ void MainWindow::build_status_bar() {
             m = on ? (m | bit) : (m & ~bit);
             modes_.snap_mask.store(m);
         });
+        osnap_actions_.push_back({bit, a});
     }
+    osnap_menu->addSeparator();
+    osnap_menu->addAction(QStringLiteral("Settings\u2026"), this, [this] { open_osnap_settings_dialog(); });
+    viewport_->set_osnap_settings_callback([this] { open_osnap_settings_dialog(); });
     osnap_btn->setMenu(osnap_menu);
     osnap_btn->setPopupMode(QToolButton::MenuButtonPopup);
 
@@ -4985,6 +5004,146 @@ void MainWindow::open_text_editor(double wx, double wy, double pick_radius,
     // One undo group; the engine changes only the content (layer/props/pos kept).
     engine_->submit(core::EditTextContentCommand{
         {wx, wy}, pick_radius, updated, processor_->begin_group()});
+}
+
+void MainWindow::open_osnap_settings_dialog() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Object Snap Settings"));
+    auto* layout = new QVBoxLayout(&dlg);
+    auto* grid = new QGridLayout();
+    std::vector<std::pair<std::uint32_t, QCheckBox*>> boxes;
+    int row = 0;
+    for (const auto& [bit, action] : osnap_actions_) {
+        auto* cb = new QCheckBox(action->text(), &dlg);
+        cb->setChecked((modes_.snap_mask.load() & bit) != 0);
+        grid->addWidget(cb, row / 2, row % 2);
+        boxes.emplace_back(bit, cb);
+        ++row;
+    }
+    layout->addLayout(grid);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    auto* all = buttons->addButton(QStringLiteral("Select All"), QDialogButtonBox::ActionRole);
+    auto* none = buttons->addButton(QStringLiteral("Clear All"), QDialogButtonBox::ActionRole);
+    connect(all, &QPushButton::clicked, &dlg, [&boxes] {
+        for (auto& [bit, cb] : boxes) {
+            cb->setChecked(true);
+        }
+    });
+    connect(none, &QPushButton::clicked, &dlg, [&boxes] {
+        for (auto& [bit, cb] : boxes) {
+            cb->setChecked(false);
+        }
+    });
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dlg.exec() != QDialog::Accepted) {
+        return;
+    }
+    std::uint32_t mask = 0;
+    for (const auto& [bit, cb] : boxes) {
+        mask |= cb->isChecked() ? bit : 0u;
+    }
+    modes_.snap_mask.store(mask);
+    for (const auto& [bit, action] : osnap_actions_) {
+        const QSignalBlocker block(action);
+        action->setChecked((mask & bit) != 0);
+    }
+}
+
+namespace {
+DialogSpec rotate_dialog_spec(core::Vec2 base) {
+    DialogSpec spec;
+    spec.title = "Rotate";
+    spec.fields = {
+        {"bx", "Base X", FieldType::Number, base.x, {}, 0, false, ""},
+        {"by", "Base Y", FieldType::Number, base.y, {}, 0, false, ""},
+        {"angle", "Angle (deg)", FieldType::Number, 0, {}, 0, false, ""},
+        {"copy", "Copy", FieldType::Bool, 0, {}, 0, false, ""},
+    };
+    return spec;
+}
+DialogSpec scale_dialog_spec(core::Vec2 base) {
+    DialogSpec spec;
+    spec.title = "Scale";
+    spec.fields = {
+        {"bx", "Base X", FieldType::Number, base.x, {}, 0, false, ""},
+        {"by", "Base Y", FieldType::Number, base.y, {}, 0, false, ""},
+        {"factor", "Scale factor", FieldType::Number, 1.0, {}, 0, false, ""},
+        {"copy", "Copy", FieldType::Bool, 0, {}, 0, false, ""},
+    };
+    return spec;
+}
+} // namespace
+
+void MainWindow::open_rotate_dialog() {
+    if (viewport_ == nullptr || viewport_->selection_count() == 0) {
+        if (command_widget_ != nullptr) {
+            command_widget_->append_line("Select objects first, then Rotate.");
+        }
+        return;
+    }
+    core::Vec2 mn;
+    core::Vec2 mx;
+    core::Vec2 base{0.0, 0.0};
+    if (viewport_->selection_bounds(mn, mx)) {
+        base = (mn + mx) * 0.5;
+    }
+    auto* dlg = new ParameterDialog(rotate_dialog_spec(base), this);
+    const auto preview = [this, dlg] {
+        viewport_->set_dialog_ghost(3, {dlg->number("bx"), dlg->number("by")},
+                                    core::to_radians(dlg->number("angle")));
+    };
+    connect(dlg, &ParameterDialog::valuesChanged, this, preview);
+    preview();
+    connect(dlg, &QDialog::accepted, this, [this, dlg] {
+        processor_->set_selection_count(viewport_->selection_count());
+        const std::uint64_t group = processor_->begin_group();
+        processor_->submit(core::RotateSelectionCommand{{dlg->number("bx"), dlg->number("by")},
+                                                        core::to_radians(dlg->number("angle")), group,
+                                                        dlg->boolean("copy")});
+    });
+    connect(dlg, &QDialog::finished, this, [this] { viewport_->set_dialog_ghost(0, {}, 0.0); });
+    connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
+    dlg->show();
+}
+
+void MainWindow::open_scale_dialog() {
+    if (viewport_ == nullptr || viewport_->selection_count() == 0) {
+        if (command_widget_ != nullptr) {
+            command_widget_->append_line("Select objects first, then Scale.");
+        }
+        return;
+    }
+    core::Vec2 mn;
+    core::Vec2 mx;
+    core::Vec2 base{0.0, 0.0};
+    if (viewport_->selection_bounds(mn, mx)) {
+        base = (mn + mx) * 0.5;
+    }
+    auto* dlg = new ParameterDialog(scale_dialog_spec(base), this);
+    const auto preview = [this, dlg] {
+        const double f = dlg->number("factor");
+        viewport_->set_dialog_ghost(4, {dlg->number("bx"), dlg->number("by")}, f > 0.0 ? f : 1.0);
+    };
+    connect(dlg, &ParameterDialog::valuesChanged, this, preview);
+    preview();
+    connect(dlg, &QDialog::accepted, this, [this, dlg] {
+        const double f = dlg->number("factor");
+        if (!(f > 0.0)) {
+            if (command_widget_ != nullptr) {
+                command_widget_->append_line("Scale factor must be positive.");
+            }
+            return;
+        }
+        processor_->set_selection_count(viewport_->selection_count());
+        const std::uint64_t group = processor_->begin_group();
+        processor_->submit(core::ScaleSelectionCommand{{dlg->number("bx"), dlg->number("by")}, f, group,
+                                                       dlg->boolean("copy")});
+    });
+    connect(dlg, &QDialog::finished, this, [this] { viewport_->set_dialog_ghost(0, {}, 0.0); });
+    connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
+    dlg->show();
 }
 
 void MainWindow::open_array_dialog() {

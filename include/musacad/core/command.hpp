@@ -460,6 +460,7 @@ struct RotateSelectionCommand {
     Vec2 base;
     double angle = 0.0;
     std::uint64_t group = 0;
+    bool copy = false; ///< ROTATE [Copy]: leave the originals, rotate copies
 };
 
 /// Scale the selection by `factor` about `base`.
@@ -467,6 +468,7 @@ struct ScaleSelectionCommand {
     Vec2 base;
     double factor = 1.0;
     std::uint64_t group = 0;
+    bool copy = false; ///< SCALE [Copy]
 };
 
 /// Rectangular array of the selection: rows x cols, spaced by (dx, dy).

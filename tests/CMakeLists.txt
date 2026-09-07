@@ -142,6 +142,7 @@ add_executable(musacad_tests
     test_block_authoring.cpp
     test_dxf_tolerance.cpp
     test_pedit.cpp
+    test_snaps_input.cpp
     test_fonts.cpp
     test_properties.cpp
     test_linetype.cpp

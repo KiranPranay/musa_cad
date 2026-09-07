@@ -42,6 +42,8 @@ enum class PropertyId : std::uint16_t {
     GeomCenterY,
     GeomPosX,
     GeomPosY,
+    FcfCells,    ///< feature control frame cells, joined by " | " (editable)
+    DatumLetter, ///< datum feature symbol letter (editable)
     // Text / MTEXT.
     TextContent,
     TextHeight,

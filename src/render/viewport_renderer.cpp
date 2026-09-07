@@ -225,6 +225,30 @@ void append_marker(std::vector<core::Vec2>& seg, core::SnapType type, double cx,
         edge(seg, {cx - s, cy}, {cx + s, cy});
         break;
     }
+    case core::SnapType::Insertion: { // two overlapping squares
+        const double q = s * 0.55;
+        edge(seg, {cx - s, cy - q}, {cx + q, cy - q});
+        edge(seg, {cx + q, cy - q}, {cx + q, cy + s});
+        edge(seg, {cx + q, cy + s}, {cx - s, cy + s});
+        edge(seg, {cx - s, cy + s}, {cx - s, cy - q});
+        edge(seg, {cx - q, cy - s}, {cx + s, cy - s});
+        edge(seg, {cx + s, cy - s}, {cx + s, cy + q});
+        edge(seg, {cx + s, cy + q}, {cx - q, cy + q});
+        edge(seg, {cx - q, cy + q}, {cx - q, cy - s});
+        break;
+    }
+    case core::SnapType::ApparentIntersection: // X inside a square
+        edge(seg, {cx - s, cy - s}, {cx + s, cy - s});
+        edge(seg, {cx + s, cy - s}, {cx + s, cy + s});
+        edge(seg, {cx + s, cy + s}, {cx - s, cy + s});
+        edge(seg, {cx - s, cy + s}, {cx - s, cy - s});
+        edge(seg, {cx - s * 0.6, cy - s * 0.6}, {cx + s * 0.6, cy + s * 0.6});
+        edge(seg, {cx - s * 0.6, cy + s * 0.6}, {cx + s * 0.6, cy - s * 0.6});
+        break;
+    case core::SnapType::Parallel: // two parallel diagonals
+        edge(seg, {cx - s, cy + s * 0.4}, {cx + s * 0.4, cy - s});
+        edge(seg, {cx - s * 0.4, cy + s}, {cx + s, cy - s * 0.4});
+        break;
     case core::SnapType::None:
         break;
     }

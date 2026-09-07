@@ -156,6 +156,10 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/xline.svg", "Draw an infinite construction line.");
     reg({"RAY"}, [] { return std::make_unique<XlineCommand>(true); },
         "assets/ribbon/ray.svg", "Draw a semi-infinite construction line.");
+    reg({"OS", "OSNAP", "DDOSNAP"}, [] { return std::make_unique<OsnapCommand>(); }, "",
+        "Open the running object snap settings.");
+    reg({"-OSNAP"}, [] { return std::make_unique<OsnapModesCommand>(); }, "",
+        "Set the running object snaps from a list of modes.");
     reg({"PE", "PEDIT"}, [] { return std::make_unique<PeditCommand>(); }, "",
         "Edit a polyline: close/open, join, vertices, spline, decurve, reverse.");
     reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },

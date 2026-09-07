@@ -450,6 +450,10 @@ public:
 
 private:
     std::optional<core::Vec2> base_;
+    bool copy_ = false;      ///< [Copy]: rotate copies, keep the originals
+    bool reference_ = false; ///< [Reference]: angle = new - reference
+    double ref_angle_ = 0.0;
+    bool have_ref_ = false;
     bool done_ = false;
 };
 
@@ -463,6 +467,37 @@ public:
 
 private:
     std::optional<core::Vec2> base_;
+    bool copy_ = false;      ///< [Copy]
+    bool reference_ = false; ///< [Reference]: factor = new length / reference length
+    double ref_len_ = 1.0;
+    bool have_ref_ = false;
+    bool done_ = false;
+};
+
+/// OSNAP (OS, DDOSNAP): the running object-snap settings dialog.
+class OsnapCommand final : public ICommand {
+public:
+    std::string name() const override { return "OSNAP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// -OSNAP: "Enter list of object snap modes:" (END,MID,CEN,NOD,QUA,INT,PER,TAN,NEA,INS,
+/// APP,PAR,NONE,ALL) -- sets the running snaps from the command line.
+class OsnapModesCommand final : public ICommand {
+public:
+    std::string name() const override { return "-OSNAP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
     bool done_ = false;
 };
 

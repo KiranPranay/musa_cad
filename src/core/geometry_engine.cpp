@@ -1521,7 +1521,7 @@ void GeometryEngine::apply_mirror(Vec2 a, Vec2 b, bool erase_source, std::uint64
     geom_dirty_ = true;
 }
 
-void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group) {
+void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group, bool copy) {
     const std::vector<EntityHandle> sel = selection_;
     std::vector<EntityHandle> out;
     for (const EntityHandle h : sel) {
@@ -1531,8 +1531,10 @@ void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group) 
         const Command original = capture_entity(h);
         Command result = original;
         rotate_cmd(result, base, angle);
-        remove_indexed(h);
-        push_erase_item(group, h, original);
+        if (!copy) {
+            remove_indexed(h);
+            push_erase_item(group, h, original);
+        }
         const EntityHandle nh = create_indexed(result);
         push_create_item(group, nh, result);
         out.push_back(nh);
@@ -1544,7 +1546,7 @@ void GeometryEngine::apply_rotate(Vec2 base, double angle, std::uint64_t group) 
     geom_dirty_ = true;
 }
 
-void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group) {
+void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group, bool copy) {
     if (!(factor > 0.0)) {
         return;
     }
@@ -1557,8 +1559,10 @@ void GeometryEngine::apply_scale(Vec2 base, double factor, std::uint64_t group) 
         const Command original = capture_entity(h);
         Command result = original;
         scale_cmd(result, base, factor);
-        remove_indexed(h);
-        push_erase_item(group, h, original);
+        if (!copy) {
+            remove_indexed(h);
+            push_erase_item(group, h, original);
+        }
         const EntityHandle nh = create_indexed(result);
         push_create_item(group, nh, result);
         out.push_back(nh);
@@ -5473,9 +5477,9 @@ void GeometryEngine::apply(const Command& command) {
                 apply_hatch_pick_point(c.point, c.pattern_name, c.pattern_scale, c.pattern_angle,
                                        c.group);
             } else if constexpr (std::is_same_v<T, RotateSelectionCommand>) {
-                apply_rotate(c.base, c.angle, c.group);
+                apply_rotate(c.base, c.angle, c.group, c.copy);
             } else if constexpr (std::is_same_v<T, ScaleSelectionCommand>) {
-                apply_scale(c.base, c.factor, c.group);
+                apply_scale(c.base, c.factor, c.group, c.copy);
             } else if constexpr (std::is_same_v<T, ArrayRectCommand>) {
                 apply_array_rect(c.rows, c.cols, c.dx, c.dy, c.angle, c.group);
             } else if constexpr (std::is_same_v<T, ArrayPathCommand>) {

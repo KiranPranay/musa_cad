@@ -221,6 +221,9 @@ private:
     // are interactive (ribbon starts the command, pick on screen); the cursor value
     // surface is Dynamic Input (Ph25), which mirrors the command line.
     void open_array_dialog();
+    void open_rotate_dialog();
+    void open_scale_dialog();
+    void open_osnap_settings_dialog();
     void submit_array_from_dialog(const ParameterDialog& dlg);
 
     // Double-click text editor: a dark-themed modal editor pre-filled with the
@@ -331,6 +334,7 @@ private:
     QLabel* coord_label_ = nullptr;
     QTimer* title_timer_ = nullptr;
     std::vector<QToolButton*> selection_required_buttons_;
+    std::vector<std::pair<std::uint32_t, QAction*>> osnap_actions_; ///< OSNAP dropdown toggles
     std::uint64_t last_status_version_ = 0; // last engine status echoed to the command line
     // Last selection signature seen by the contextual-tab poll (count/kind+1/family+1); used
     // to skip work when the selection hasn't changed.
