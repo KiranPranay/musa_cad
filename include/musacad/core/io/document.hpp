@@ -9,6 +9,7 @@
 
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
+#include "musacad/core/named_view.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 #include "musacad/core/table_types.hpp"
@@ -58,7 +59,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 23;
+inline constexpr std::uint32_t kFormatVersion = 24;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -66,6 +67,15 @@ struct DocPoint {
     Vec2 p;
     EntityProps props{};
     friend bool operator==(const DocPoint&, const DocPoint&) = default;
+};
+/// A group (v24). Members are (entity kind, index among that kind in this document's
+/// order), which is the order document_from_store writes and populate_store re-adds.
+struct DocGroup {
+    std::string name;
+    std::string description;
+    bool selectable = true;
+    std::vector<std::pair<std::uint8_t, std::uint32_t>> members;
+    friend bool operator==(const DocGroup&, const DocGroup&) = default;
 };
 /// An ellipse / elliptical arc (v22): centre, major half-axis, ratio, parameter range.
 struct DocEllipse {
@@ -306,6 +316,8 @@ struct Document {
     std::vector<DimStyle> dimstyles{DimStyle{"Standard"}}; // index 0 always present
     double ltscale = 1.0;                                  // global linetype scale (LTSCALE)
     std::vector<PageSetup> page_setups;                    // saved PLOT configurations (v11)
+    std::vector<NamedView> views;         ///< named views (v24; not in entity_count)
+    std::vector<DocGroup> groups;         ///< groups (v24; members by kind + order; not in entity_count)
 
     std::vector<DocPoint> points;
     std::vector<DocXline> xlines;        ///< construction lines (v21)

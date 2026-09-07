@@ -759,6 +759,34 @@ std::string serialize_native(const Document& doc) {
     for (std::size_t i = 0; i < doc.polylines.size(); ++i) {
         emit_celt(3, i, doc.polylines[i].celtscale);
     }
+    // v24: VIEW cx cy scale name  and  GROUP selectable n k1 i1 ... kn in name description
+    // (names/descriptions space-escaped like PAGESETUP's strings; "-" = empty).
+    for (const NamedView& v : doc.views) {
+        s += "VIEW ";
+        append_vec(s, v.center);
+        s += ' ';
+        append_double(s, v.scale);
+        s += ' ';
+        s += enc(v.name);
+        s += '\n';
+    }
+    for (const DocGroup& g : doc.groups) {
+        s += "GROUP ";
+        append_uint(s, g.selectable ? 1 : 0);
+        s += ' ';
+        append_uint(s, g.members.size());
+        for (const auto& [k, i] : g.members) {
+            s += ' ';
+            append_uint(s, k);
+            s += ' ';
+            append_uint(s, i);
+        }
+        s += ' ';
+        s += enc(g.name);
+        s += ' ';
+        s += enc(g.description);
+        s += '\n';
+    }
     // v20: TABLESTYLE + TABLE. The style table first, so a TABLE can reference it.
     // TABLESTYLE <title_h> <header_h> <data_h> <margin> <lw> <line ec4> <text ec4> name...
     for (const TableStyle& ts : doc.table_styles) {
@@ -1043,6 +1071,55 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("malformed LTSCALE");
             }
             doc.ltscale = ls;
+        } else if (key == "VIEW") {
+            if (tok.size() != 5) {
+                return fail("malformed VIEW");
+            }
+            const auto dec = [](std::string_view t) -> std::string {
+                std::string r(t);
+                for (char& c : r) {
+                    if (c == '\x1f') {
+                        c = ' ';
+                    }
+                }
+                return r == "-" ? std::string{} : r;
+            };
+            NamedView v;
+            if (!to_double(tok[1], v.center.x) || !to_double(tok[2], v.center.y) ||
+                !to_double(tok[3], v.scale)) {
+                return fail("malformed VIEW");
+            }
+            v.name = dec(tok[4]);
+            doc.views.push_back(std::move(v));
+        } else if (key == "GROUP") {
+            std::uint64_t sel = 0;
+            std::uint64_t n = 0;
+            if (tok.size() < 5 || !to_uint(tok[1], sel) || !to_uint(tok[2], n) ||
+                tok.size() != 5 + 2 * n) {
+                return fail("malformed GROUP");
+            }
+            const auto dec = [](std::string_view t) -> std::string {
+                std::string r(t);
+                for (char& c : r) {
+                    if (c == '\x1f') {
+                        c = ' ';
+                    }
+                }
+                return r == "-" ? std::string{} : r;
+            };
+            DocGroup g;
+            g.selectable = sel != 0;
+            for (std::uint64_t i = 0; i < n; ++i) {
+                std::uint64_t k = 0;
+                std::uint64_t idx = 0;
+                if (!to_uint(tok[3 + 2 * i], k) || !to_uint(tok[4 + 2 * i], idx)) {
+                    return fail("malformed GROUP member");
+                }
+                g.members.emplace_back(static_cast<std::uint8_t>(k), static_cast<std::uint32_t>(idx));
+            }
+            g.name = dec(tok[3 + 2 * n]);
+            g.description = dec(tok[4 + 2 * n]);
+            doc.groups.push_back(std::move(g));
         } else if (key == "PAGESETUP") {
             // PAGESETUP name paper target pw ph land area wminx wminy wmaxx wmaxy fit
             //           snum sden center offx offy plw style  (3 strings space-escaped)

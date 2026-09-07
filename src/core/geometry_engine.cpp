@@ -4822,7 +4822,19 @@ void GeometryEngine::apply(const Command& command) {
                     forget_stretch_windows();
                 }
                 const std::size_t before = selection_.size();
-                sel_add(pick_nearest(c.world, c.radius));
+                const EntityHandle picked = pick_nearest(c.world, c.radius);
+                sel_add(picked);
+                // GROUP: picking a member selects the whole group (PICKSTYLE on).
+                if (pickstyle_group_ && !picked.is_null()) {
+                    const std::size_t gi = store_.group_of(picked);
+                    if (gi != static_cast<std::size_t>(-1) && store_.groups()[gi].selectable) {
+                        for (const EntityHandle m : store_.groups()[gi].members) {
+                            if (selectable(m)) {
+                                sel_add(m);
+                            }
+                        }
+                    }
+                }
                 note_selection_for_windows(); // a picked object moves whole; windows stay
                 if (c.announce) {
                     const std::size_t found = selection_.size() - before;
@@ -5034,6 +5046,61 @@ void GeometryEngine::apply(const Command& command) {
                 dirty_ = true;      // an unsaved document change
                 geom_dirty_ = true; // republish so the snapshot carries the new setup
                 report("Page setup \"" + c.setup.name + "\" saved.");
+            } else if constexpr (std::is_same_v<T, SaveNamedViewCommand>) {
+                store_.add_named_view(c.view);
+                dirty_ = true;
+                geom_dirty_ = true; // republish the VIEW table
+                report("View \"" + c.view.name + "\" saved.");
+            } else if constexpr (std::is_same_v<T, DeleteNamedViewCommand>) {
+                if (store_.remove_named_view(c.name)) {
+                    dirty_ = true;
+                    geom_dirty_ = true;
+                    report("View \"" + c.name + "\" deleted.");
+                } else {
+                    report("View \"" + c.name + "\" not found.");
+                }
+            } else if constexpr (std::is_same_v<T, CreateGroupCommand>) {
+                prune_selection();
+                if (selection_.empty()) {
+                    report("Group: nothing selected.");
+                } else {
+                    EntityGroup g;
+                    g.name = c.name.empty() ? store_.next_group_name() : c.name;
+                    g.description = c.description;
+                    g.members = selection_;
+                    if (!c.name.empty() && store_.group_index(c.name) != static_cast<std::size_t>(-1)) {
+                        report("Group \"" + c.name + "\" already exists.");
+                    } else {
+                        store_.add_group(std::move(g));
+                        dirty_ = true;
+                        geom_dirty_ = true;
+                        report("Group \"" + (c.name.empty() ? store_.groups().back().name : c.name) +
+                               "\" has been created.");
+                    }
+                }
+            } else if constexpr (std::is_same_v<T, UngroupCommand>) {
+                std::size_t gi = static_cast<std::size_t>(-1);
+                if (c.by_name) {
+                    gi = store_.group_index(c.name);
+                } else {
+                    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+                    if (!h.is_null()) {
+                        gi = store_.group_of(h);
+                    }
+                }
+                if (gi == static_cast<std::size_t>(-1)) {
+                    report(c.by_name ? "Ungroup: no group named \"" + c.name + "\"."
+                                     : "Ungroup: that object is not in a group.");
+                } else {
+                    const std::string name = store_.groups()[gi].name;
+                    store_.remove_group(gi);
+                    dirty_ = true;
+                    geom_dirty_ = true;
+                    report("Group \"" + name + "\" exploded.");
+                }
+            } else if constexpr (std::is_same_v<T, SetPickStyleCommand>) {
+                pickstyle_group_ = c.group_select;
+                report(std::string("PICKSTYLE = ") + (c.group_select ? "1" : "0") + ".");
             }
         },
         command);
@@ -5329,6 +5396,11 @@ void GeometryEngine::rebuild_and_publish() {
     buf.current_layer = store_.current_layer();
     // Dimension styles for the UI placement preview (cheap; few entries).
     buf.dimstyles.assign(store_.dimstyles().begin(), store_.dimstyles().end());
+    buf.named_views = store_.named_views(); // VIEW table (Restore / ?)
+    buf.group_names.clear();
+    for (const EntityGroup& g : store_.groups()) {
+        buf.group_names.push_back(g.name); // GROUP names (feedback / ?)
+    }
 
     // Pending object-dimension def points for the placement preview (Part C).
     buf.has_pending_dim = has_pending_dim_;

@@ -304,6 +304,7 @@ private:
 
     RenderSnapshot geom_cache_; // payload rebuilt only when geometry changes
     bool geom_dirty_ = true;
+    bool pickstyle_group_ = true; ///< PICKSTYLE: pick a member -> select its group
     RenderSnapshot plot_snapshot_;          // fine-tolerance buffer for PLOT (geom-thread written)
     std::atomic<std::uint64_t> plot_version_{0};
     std::uint64_t geom_version_ = 0; // bumps only when geometry changes

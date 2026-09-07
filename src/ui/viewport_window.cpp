@@ -119,6 +119,33 @@ void ViewportWindow::zoom_extents() {
     zoom_extents_requested_.store(true, std::memory_order_relaxed);
 }
 
+bool ViewportWindow::current_view(core::Vec2& center, double& scale) {
+    std::scoped_lock lock(camera_mutex_);
+    center = camera_.center();
+    scale = camera_.scale();
+    return scale > 0.0;
+}
+
+void ViewportWindow::set_view(core::Vec2 center, double scale) {
+    {
+        std::scoped_lock lock(camera_mutex_);
+        pending_view_center_ = center;
+        pending_view_scale_ = scale;
+    }
+    view_requested_.store(true, std::memory_order_relaxed); // applied on the render thread
+}
+
+bool ViewportWindow::viewport_size(int& w, int& h) const {
+    w = width();
+    h = height();
+    return w > 0 && h > 0;
+}
+
+std::vector<core::NamedView> ViewportWindow::named_views() {
+    std::scoped_lock lock(layers_mutex_);
+    return named_views_;
+}
+
 void ViewportWindow::zoom_scale(double factor) {
     std::scoped_lock lock(camera_mutex_);
     const double cx = static_cast<double>(camera_.viewport_width()) * 0.5;
@@ -344,6 +371,14 @@ void ViewportWindow::render_loop(std::stop_token token) {
             camera_.frame_bounds(snap.bounds_min, snap.bounds_max, 0.1);
             cam = camera_;
         }
+        if (view_requested_.exchange(false, std::memory_order_relaxed)) {
+            std::scoped_lock lock(camera_mutex_);
+            camera_.set_center(pending_view_center_);
+            if (pending_view_scale_ > 0.0) {
+                camera_.set_scale(pending_view_scale_);
+            }
+            cam = camera_;
+        }
         // Zoom-adaptive tessellation (Part A): tell the geometry thread the view
         // scale ONLY when it actually changes (zoom/resize, never pan), so curves
         // re-tessellate to the current zoom. The engine buckets it, so tiny changes
@@ -400,6 +435,7 @@ void ViewportWindow::render_loop(std::stop_token token) {
         {
             std::scoped_lock lock(layers_mutex_);
             layers_ = snap.layers;
+            named_views_ = snap.named_views;
         }
 
         // Surface the engine's command-result message (honest feedback) once.

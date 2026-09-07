@@ -306,6 +306,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         // Drive selection-dependent UI from the published selection count.
         const int sel = viewport_->selection_count();
         processor_->set_selection_count(sel);
+        processor_->set_named_views(viewport_->named_views());
         processor_->set_hovered_kind(viewport_->hovered_kind()); // smart DIM preview
         for (QToolButton* b : selection_required_buttons_) {
             b->setEnabled(sel > 0);
