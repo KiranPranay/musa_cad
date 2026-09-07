@@ -1880,6 +1880,88 @@ void GeometryEngine::apply_array_polar(Vec2 center, int count, double total_angl
     report("Polar array created: " + std::to_string(made) + " copies.");
 }
 
+// The nearest boundary hit strictly forward of the moving end `mov` along fix->mov.
+// Boundaries can be anywhere, so scan live entities (EXTEND is interactive/infrequent).
+bool GeometryEngine::nearest_boundary_ahead(EntityHandle self, Vec2 fix, Vec2 mov,
+                                            Vec2& target) const {
+    const Vec2 dir = normalized(mov - fix);
+    double best = std::numeric_limits<double>::infinity();
+    bool found = false;
+    const auto consider = [&](Vec2 p) {
+        const double fwd = dot(p - mov, dir);
+        if (fwd > 1e-6 && fwd < best) {
+            best = fwd;
+            target = p;
+            found = true;
+        }
+    };
+    for (const EntityHandle c : all_live()) {
+        if (c == self) {
+            continue;
+        }
+        if (c.kind == EntityKind::Line) {
+            const LineData* m = store_.line(c);
+            Vec2 p{};
+            if (NativeKernel2D::line_line_intersection(fix, mov, m->a, m->b, p)) {
+                const Vec2 md = m->b - m->a;
+                const double u = dot(p - m->a, md) / std::max(length_squared(md), 1e-18);
+                if (u >= -1e-9 && u <= 1.0 + 1e-9) {
+                    consider(p);
+                }
+            }
+        } else if (c.kind == EntityKind::Circle) {
+            const CircleData* cc = store_.circle(c);
+            Vec2 p0{};
+            Vec2 p1{};
+            const int n = NativeKernel2D::line_circle_intersection(fix, mov, cc->center, cc->radius,
+                                                                   p0, p1);
+            if (n >= 1) {
+                consider(p0);
+            }
+            if (n == 2) {
+                consider(p1);
+            }
+        } else if (c.kind == EntityKind::Arc) {
+            const ArcData* arc = store_.arc(c);
+            Vec2 p0{};
+            Vec2 p1{};
+            const int n =
+                NativeKernel2D::line_circle_intersection(fix, mov, arc->center, arc->radius, p0, p1);
+            if (n >= 1 && angle_on_arc(*arc, p0)) {
+                consider(p0);
+            }
+            if (n == 2 && angle_on_arc(*arc, p1)) {
+                consider(p1);
+            }
+        } else if (c.kind == EntityKind::Polyline) {
+            // Each segment of a polyline boundary (straight ones exactly; arc segments
+            // through their chord tessellation from the kernel would be approximate, so
+            // only straight segments count here).
+            const PolylineData* pl = store_.polyline(c);
+            const std::span<const Vec2> pv = store_.vertices_of(*pl);
+            const std::span<const double> pb = store_.bulges_of(*pl);
+            const std::size_t pn = pv.size();
+            const std::size_t pm = pl->closed ? pn : (pn > 0 ? pn - 1 : 0);
+            for (std::size_t i = 0; i < pm; ++i) {
+                if (!pb.empty() && std::abs(pb[i]) > 1e-12) {
+                    continue;
+                }
+                const Vec2 q0 = pv[i];
+                const Vec2 q1 = pv[(i + 1) % pn];
+                Vec2 p{};
+                if (NativeKernel2D::line_line_intersection(fix, mov, q0, q1, p)) {
+                    const Vec2 md = q1 - q0;
+                    const double u = dot(p - q0, md) / std::max(length_squared(md), 1e-18);
+                    if (u >= -1e-9 && u <= 1.0 + 1e-9) {
+                        consider(p);
+                    }
+                }
+            }
+        }
+    }
+    return found;
+}
+
 void GeometryEngine::apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t group) {
     const ArcData* arc = store_.arc(h);
     const Vec2 centre = arc->center;
@@ -1992,8 +2074,51 @@ void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group)
         apply_extend_arc(h, pick, group);
         return;
     }
+    if (h.kind == EntityKind::Polyline) {
+        const PolylineData* pl = store_.polyline(h);
+        if (pl->closed) {
+            report("Extend: a closed polyline has no open end.");
+            return;
+        }
+        const std::span<const Vec2> vs = store_.vertices_of(*pl);
+        const std::span<const double> bs = store_.bulges_of(*pl);
+        std::vector<Vec2> v(vs.begin(), vs.end());
+        std::vector<double> b(v.size(), 0.0);
+        if (!bs.empty()) {
+            b.assign(bs.begin(), bs.end());
+        }
+        if (v.size() < 2) {
+            return;
+        }
+        // The end nearer the pick grows, straight along its last segment.
+        const bool at_end = length_squared(pick - v.back()) <= length_squared(pick - v.front());
+        const std::size_t mov_i = at_end ? v.size() - 1 : 0;
+        const std::size_t fix_i = at_end ? v.size() - 2 : 1;
+        const std::size_t seg_i = at_end ? v.size() - 2 : 0;
+        if (std::abs(b[seg_i]) > 1e-12) {
+            report("Extend: extending an arc segment of a polyline is not supported yet.");
+            return;
+        }
+        Vec2 target{};
+        if (!nearest_boundary_ahead(h, v[fix_i], v[mov_i], target)) {
+            report("Extend: no boundary ahead of that end.");
+            return;
+        }
+        const EntityProps props = pl->props;
+        const double cts = store_.celtscale(h);
+        v[mov_i] = target;
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(group, h, original);
+        const Command extended = AddPolylineCommand{v, false, 0, props, b, cts};
+        push_create_item(group, create_indexed(extended), extended);
+        redo_.clear();
+        geom_dirty_ = true;
+        report("Extended.");
+        return;
+    }
     if (h.kind != EntityKind::Line) {
-        report("Extend: only lines and arcs can be extended (closed shapes have no open end).");
+        report("Extend: only lines, arcs and open polylines can be extended.");
         return;
     }
     const LineData* l = store_.line(h);
@@ -2006,62 +2131,8 @@ void GeometryEngine::apply_extend(Vec2 pick, double radius, std::uint64_t group)
         mov = b;
         fix = a;
     }
-    const Vec2 dir = normalized(mov - fix);
-
-    // Find the nearest boundary hit strictly forward of the moving end. Boundaries
-    // can be anywhere, so scan live entities (EXTEND is interactive/infrequent).
-    double best = std::numeric_limits<double>::infinity();
     Vec2 target{};
-    bool found = false;
-    const auto consider = [&](Vec2 p) {
-        const double fwd = dot(p - mov, dir);
-        if (fwd > 1e-6 && fwd < best) {
-            best = fwd;
-            target = p;
-            found = true;
-        }
-    };
-    for (const EntityHandle c : all_live()) {
-        if (c == h) {
-            continue;
-        }
-        if (c.kind == EntityKind::Line) {
-            const LineData* m = store_.line(c);
-            Vec2 p{};
-            if (NativeKernel2D::line_line_intersection(fix, mov, m->a, m->b, p)) {
-                const Vec2 md = m->b - m->a;
-                const double u = dot(p - m->a, md) / std::max(length_squared(md), 1e-18);
-                if (u >= -1e-9 && u <= 1.0 + 1e-9) {
-                    consider(p);
-                }
-            }
-        } else if (c.kind == EntityKind::Circle) {
-            const CircleData* cc = store_.circle(c);
-            Vec2 p0{};
-            Vec2 p1{};
-            const int n = NativeKernel2D::line_circle_intersection(fix, mov, cc->center, cc->radius,
-                                                                   p0, p1);
-            if (n >= 1) {
-                consider(p0);
-            }
-            if (n == 2) {
-                consider(p1);
-            }
-        } else if (c.kind == EntityKind::Arc) {
-            const ArcData* arc = store_.arc(c);
-            Vec2 p0{};
-            Vec2 p1{};
-            const int n =
-                NativeKernel2D::line_circle_intersection(fix, mov, arc->center, arc->radius, p0, p1);
-            if (n >= 1 && angle_on_arc(*arc, p0)) {
-                consider(p0);
-            }
-            if (n == 2 && angle_on_arc(*arc, p1)) {
-                consider(p1);
-            }
-        }
-    }
-    if (!found) {
+    if (!nearest_boundary_ahead(h, fix, mov, target)) {
         report("Extend: no boundary ahead of that end.");
         return;
     }
@@ -3182,6 +3253,147 @@ void GeometryEngine::apply_text_edit(Vec2 at, double pick_radius, const std::str
     report(target.kind == EntityKind::Table ? "Table cell edited." : "Text edited.");
 }
 
+namespace {
+
+/// A bulged polyline segment as an arc: centre, radius, the angle of its first vertex,
+/// and the SIGNED sweep (positive = counter-clockwise), from the AutoCAD bulge
+/// convention (bulge = tan(sweep/4)).
+struct SegArc {
+    Vec2 center;
+    double radius = 0.0;
+    double a0 = 0.0;
+    double theta = 0.0;
+};
+
+bool seg_arc(Vec2 p0, Vec2 p1, double bulge, SegArc& out) {
+    const double theta = 4.0 * std::atan(bulge);
+    const Vec2 d = p1 - p0;
+    const double c = length(d);
+    if (std::abs(theta) < 1e-12 || c < 1e-12) {
+        return false;
+    }
+    const double r = c / (2.0 * std::sin(std::abs(theta) / 2.0));
+    const double h = r * std::cos(theta / 2.0); // signed with theta via cos(|theta|/2)
+    const Vec2 left{-d.y / c, d.x / c};
+    // A positive (CCW) bulge sweeps to the RIGHT of the chord, so its centre lies to the
+    // LEFT; a negative one mirrors that.
+    out.center = (p0 + p1) * 0.5 + left * (bulge > 0.0 ? h : -h);
+    out.radius = r;
+    out.a0 = std::atan2(p0.y - out.center.y, p0.x - out.center.x);
+    out.theta = theta;
+    return true;
+}
+
+/// Point at polyline parameter q = segment index + fraction (bulged segments by sweep).
+Vec2 poly_point_at(const std::vector<Vec2>& v, const std::vector<double>& b, double q) {
+    const std::size_t n = v.size();
+    const auto sidx = static_cast<std::size_t>(std::floor(q + 1e-12));
+    const double f = std::clamp(q - static_cast<double>(sidx), 0.0, 1.0);
+    const Vec2 p0 = v[sidx % n];
+    const Vec2 p1 = v[(sidx + 1) % n];
+    SegArc a;
+    if (seg_arc(p0, p1, b[sidx % n], a)) {
+        const double ang = a.a0 + a.theta * f;
+        return {a.center.x + a.radius * std::cos(ang), a.center.y + a.radius * std::sin(ang)};
+    }
+    return p0 + (p1 - p0) * f;
+}
+
+/// The parameter of the point on the polyline nearest `p`, and that distance.
+void polyline_param(const std::vector<Vec2>& v, const std::vector<double>& b, bool closed,
+                    Vec2 p, double& q_out, double& dist_out) {
+    const std::size_t n = v.size();
+    const std::size_t m = closed ? n : n - 1;
+    q_out = 0.0;
+    dist_out = std::numeric_limits<double>::infinity();
+    for (std::size_t s = 0; s < m; ++s) {
+        const Vec2 p0 = v[s];
+        const Vec2 p1 = v[(s + 1) % n];
+        SegArc a;
+        double f = 0.0;
+        double dist = 0.0;
+        if (seg_arc(p0, p1, b[s], a)) {
+            double rel = std::atan2(p.y - a.center.y, p.x - a.center.x) - a.a0;
+            if (a.theta < 0.0) {
+                rel = -rel;
+            }
+            while (rel < 0.0) {
+                rel += kTwoPi;
+            }
+            const double span = std::abs(a.theta);
+            if (rel <= span) {
+                f = rel / span;
+                dist = std::abs(length(p - a.center) - a.radius);
+            } else {
+                const double d0 = length(p - p0);
+                const double d1 = length(p - p1);
+                f = d0 <= d1 ? 0.0 : 1.0;
+                dist = std::min(d0, d1);
+            }
+        } else {
+            const Vec2 d = p1 - p0;
+            const double len2 = length_squared(d);
+            f = len2 > 0.0 ? std::clamp(dot(p - p0, d) / len2, 0.0, 1.0) : 0.0;
+            dist = length(p - (p0 + d * f));
+        }
+        if (dist < dist_out) {
+            dist_out = dist;
+            q_out = static_cast<double>(s) + f;
+        }
+    }
+}
+
+/// The piece of the polyline from parameter qa to qb (qb may exceed the segment count
+/// on a closed polyline: it wraps), with each partial bulged segment re-bulged for its
+/// sub-sweep so arcs stay exact.
+void polyline_sub(const std::vector<Vec2>& v, const std::vector<double>& b, double qa, double qb,
+                  std::vector<Vec2>& pts, std::vector<double>& bulges) {
+    const std::size_t n = v.size();
+    pts.clear();
+    bulges.clear();
+    pts.push_back(poly_point_at(v, b, qa));
+    double q = qa;
+    while (q < qb - 1e-9) {
+        const auto sidx = static_cast<std::size_t>(std::floor(q + 1e-12));
+        const double f0 = q - static_cast<double>(sidx);
+        const double qn = std::min(qb, static_cast<double>(sidx + 1));
+        const double f1 = qn - static_cast<double>(sidx);
+        const double bulge = b[sidx % n];
+        double sub = 0.0;
+        if (std::abs(bulge) > 1e-12) {
+            sub = std::tan(4.0 * std::atan(bulge) * (f1 - f0) / 4.0);
+        }
+        bulges.push_back(sub);
+        pts.push_back(poly_point_at(v, b, qn));
+        q = qn;
+    }
+    bulges.push_back(0.0);
+}
+
+/// The two intersections of two circles (0, 1 or 2).
+int circle_circle_hits(Vec2 c0, double r0, Vec2 c1, double r1, Vec2& p0, Vec2& p1) {
+    const Vec2 d = c1 - c0;
+    const double dist = length(d);
+    if (dist < 1e-12 || dist > r0 + r1 + 1e-9 || dist < std::abs(r0 - r1) - 1e-9) {
+        return 0;
+    }
+    const double a = (r0 * r0 - r1 * r1 + dist * dist) / (2.0 * dist);
+    const double h2 = r0 * r0 - a * a;
+    const Vec2 u = d * (1.0 / dist);
+    const Vec2 mid = c0 + u * a;
+    if (h2 <= 1e-12) {
+        p0 = mid;
+        return 1;
+    }
+    const double h = std::sqrt(h2);
+    const Vec2 perp{-u.y, u.x};
+    p0 = mid + perp * h;
+    p1 = mid - perp * h;
+    return 2;
+}
+
+} // namespace
+
 void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double pick_radius,
                                   std::uint64_t group) {
     const EntityHandle h1 = pick_nearest(pick1, pick_radius);
@@ -3221,9 +3433,17 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
         return;
     }
 
-    // Case 2: two distinct lines.
+    // Case 2: a line with an arc/circle, or two arcs/circles.
+    const auto curvy = [](EntityKind k) { return k == EntityKind::Arc || k == EntityKind::Circle; };
+    const auto lineish = [&](EntityKind k) { return k == EntityKind::Line || curvy(k); };
+    if (h1 != h2 && lineish(h1.kind) && lineish(h2.kind) && (curvy(h1.kind) || curvy(h2.kind))) {
+        apply_fillet_curves(h1, h2, pick1, pick2, radius, group);
+        return;
+    }
+
+    // Case 3: two distinct lines.
     if (h1 == h2 || h1.kind != EntityKind::Line || h2.kind != EntityKind::Line) {
-        report("Fillet: pick two lines, or two adjacent edges of one polyline.");
+        report("Fillet: pick two lines, arcs or circles, or two adjacent edges of one polyline.");
         return;
     }
     const LineData l1 = *store_.line(h1);
@@ -3282,6 +3502,227 @@ void GeometryEngine::apply_fillet(Vec2 pick1, Vec2 pick2, double radius, double 
     if (arc) {
         push_create_item(group, create_indexed(*arc), *arc);
     }
+    redo_.clear();
+    geom_dirty_ = true;
+    report("Filleted.");
+}
+
+// FILLET between a line and an arc/circle, or two arcs/circles. The fillet circle is
+// tangent to both, so its centre lies on an OFFSET of each curve at the fillet radius:
+// a parallel line (either side) or a concentric circle (radius R +/- r). Intersecting
+// the offsets gives every candidate centre; AutoCAD's rule picks the one whose tangent
+// points are nearest the two pick points. Each curve is then trimmed (or extended) to
+// its tangent point on the side the pick chose -- a circle stays whole -- and the
+// rounding arc is the minor arc between the tangent points.
+void GeometryEngine::apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2,
+                                         double radius, std::uint64_t group) {
+    if (radius <= 0.0) {
+        report("Fillet: a radius greater than 0 is needed to fillet a curve.");
+        return;
+    }
+    struct Curve {
+        EntityKind kind;
+        Vec2 a{};   // line ends
+        Vec2 b{};
+        Vec2 c{};   // circle/arc centre
+        double r = 0.0;
+    };
+    const auto curve_of = [&](EntityHandle h) {
+        Curve cv{h.kind};
+        if (h.kind == EntityKind::Line) {
+            cv.a = store_.line(h)->a;
+            cv.b = store_.line(h)->b;
+        } else if (h.kind == EntityKind::Circle) {
+            cv.c = store_.circle(h)->center;
+            cv.r = store_.circle(h)->radius;
+        } else {
+            cv.c = store_.arc(h)->center;
+            cv.r = store_.arc(h)->radius;
+        }
+        return cv;
+    };
+    const Curve c1 = curve_of(h1);
+    const Curve c2 = curve_of(h2);
+
+    // Offsets of a curve at distance `radius`: lines as (point, point) pairs on the
+    // parallel; circles as radii.
+    struct OffLine {
+        Vec2 a;
+        Vec2 b;
+    };
+    const auto line_offsets = [&](const Curve& cv, std::vector<OffLine>& out) {
+        const Vec2 d = normalized(cv.b - cv.a);
+        const Vec2 nrm{-d.y, d.x};
+        out.push_back({cv.a + nrm * radius, cv.b + nrm * radius});
+        out.push_back({cv.a - nrm * radius, cv.b - nrm * radius});
+    };
+    const auto circle_offsets = [&](const Curve& cv, std::vector<double>& out) {
+        out.push_back(cv.r + radius);
+        if (cv.r - radius > 1e-9) {
+            out.push_back(cv.r - radius);
+        }
+    };
+    std::vector<Vec2> centers;
+    const auto add = [&](Vec2 p) { centers.push_back(p); };
+    if (c1.kind == EntityKind::Line) {
+        std::vector<OffLine> l1;
+        line_offsets(c1, l1);
+        std::vector<double> r2;
+        circle_offsets(c2, r2);
+        for (const OffLine& ol : l1) {
+            for (const double rr : r2) {
+                Vec2 p0{};
+                Vec2 p1{};
+                const int n = NativeKernel2D::line_circle_intersection(ol.a, ol.b, c2.c, rr, p0, p1);
+                if (n >= 1) {
+                    add(p0);
+                }
+                if (n == 2) {
+                    add(p1);
+                }
+            }
+        }
+    } else if (c2.kind == EntityKind::Line) {
+        std::vector<OffLine> l2;
+        line_offsets(c2, l2);
+        std::vector<double> r1;
+        circle_offsets(c1, r1);
+        for (const OffLine& ol : l2) {
+            for (const double rr : r1) {
+                Vec2 p0{};
+                Vec2 p1{};
+                const int n = NativeKernel2D::line_circle_intersection(ol.a, ol.b, c1.c, rr, p0, p1);
+                if (n >= 1) {
+                    add(p0);
+                }
+                if (n == 2) {
+                    add(p1);
+                }
+            }
+        }
+    } else {
+        std::vector<double> r1;
+        std::vector<double> r2;
+        circle_offsets(c1, r1);
+        circle_offsets(c2, r2);
+        for (const double ra : r1) {
+            for (const double rb : r2) {
+                Vec2 p0{};
+                Vec2 p1{};
+                const int n = circle_circle_hits(c1.c, ra, c2.c, rb, p0, p1);
+                if (n >= 1) {
+                    add(p0);
+                }
+                if (n == 2) {
+                    add(p1);
+                }
+            }
+        }
+    }
+    if (centers.empty()) {
+        report("Fillet: no arc of that radius is tangent to both objects.");
+        return;
+    }
+    // Tangent point of a candidate centre on a curve.
+    const auto tangent_on = [&](const Curve& cv, Vec2 center) {
+        if (cv.kind == EntityKind::Line) {
+            const Vec2 d = normalized(cv.b - cv.a);
+            return cv.a + d * dot(center - cv.a, d);
+        }
+        const Vec2 dir = center - cv.c;
+        const double len = length(dir);
+        return len > 1e-12 ? cv.c + dir * (cv.r / len) : cv.c + Vec2{cv.r, 0.0};
+    };
+    Vec2 best_c{};
+    Vec2 t1{};
+    Vec2 t2{};
+    double best_score = std::numeric_limits<double>::infinity();
+    for (const Vec2& cc : centers) {
+        const Vec2 ta = tangent_on(c1, cc);
+        const Vec2 tb = tangent_on(c2, cc);
+        const double score = length(ta - pick1) + length(tb - pick2);
+        if (score < best_score) {
+            best_score = score;
+            best_c = cc;
+            t1 = ta;
+            t2 = tb;
+        }
+    }
+
+    // The rounding arc: the minor arc between the tangent points about the centre.
+    double a1 = std::atan2(t1.y - best_c.y, t1.x - best_c.x);
+    double a2 = std::atan2(t2.y - best_c.y, t2.x - best_c.x);
+    double ccw = a2 - a1;
+    while (ccw < 0.0) {
+        ccw += kTwoPi;
+    }
+    if (ccw > kPi) {
+        std::swap(a1, a2);
+    }
+    const Command arc = AddArcCommand{best_c, radius, a1, a2, 0};
+
+    // Each curve trimmed/extended to its tangent point on the pick's side.
+    const auto trimmed = [&](EntityHandle h, const Curve& cv, Vec2 t, Vec2 pick) -> std::optional<Command> {
+        if (cv.kind == EntityKind::Line) {
+            const LineData l = *store_.line(h);
+            Vec2 u{};
+            const Vec2 k = kept_endpoint(l, t, pick, u);
+            return AddLineCommand{k, t, 0, l.props, store_.celtscale(h)};
+        }
+        if (cv.kind == EntityKind::Circle) {
+            return std::nullopt; // a circle is left whole
+        }
+        const ArcData a = *store_.arc(h);
+        double total = a.end_angle - a.start_angle;
+        while (total <= 0.0) {
+            total += kTwoPi;
+        }
+        const auto sweep_from_start = [&](Vec2 p) {
+            double sw = std::atan2(p.y - a.center.y, p.x - a.center.x) - a.start_angle;
+            while (sw < 0.0) {
+                sw += kTwoPi;
+            }
+            return sw;
+        };
+        const double st = sweep_from_start(t);
+        const double sp = sweep_from_start(pick);
+        double ns = a.start_angle;
+        double ne = a.end_angle;
+        if (st <= total + 1e-9) {
+            // The tangent point is on the arc: keep the side the pick is on.
+            if (sp >= st) {
+                ns = a.start_angle + st;
+            } else {
+                ne = a.start_angle + st;
+            }
+        } else {
+            // Beyond the arc: extend whichever end is angularly nearer to it.
+            const double past_end = st - total;
+            const double before_start = kTwoPi - st;
+            if (past_end <= before_start) {
+                ne = a.start_angle + st;
+            } else {
+                ns = a.start_angle + st - kTwoPi;
+            }
+        }
+        return AddArcCommand{a.center, a.radius, ns, ne, 0, a.props, store_.celtscale(h)};
+    };
+    const std::optional<Command> e1 = trimmed(h1, c1, t1, pick1);
+    const std::optional<Command> e2 = trimmed(h2, c2, t2, pick2);
+
+    if (e1) {
+        const Command o1 = capture_entity(h1);
+        remove_indexed(h1);
+        push_erase_item(group, h1, o1);
+        push_create_item(group, create_indexed(*e1), *e1);
+    }
+    if (e2) {
+        const Command o2 = capture_entity(h2);
+        remove_indexed(h2);
+        push_erase_item(group, h2, o2);
+        push_create_item(group, create_indexed(*e2), *e2);
+    }
+    push_create_item(group, create_indexed(arc), arc);
     redo_.clear();
     geom_dirty_ = true;
     report("Filleted.");
@@ -3572,8 +4013,9 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
         report("Trim: nothing under the pick.");
         return;
     }
-    if (h.kind != EntityKind::Line && h.kind != EntityKind::Arc && h.kind != EntityKind::Circle) {
-        report("Trim: only lines, arcs and circles can be trimmed yet (explode polylines first).");
+    if (h.kind != EntityKind::Line && h.kind != EntityKind::Arc && h.kind != EntityKind::Circle &&
+        h.kind != EntityKind::Polyline) {
+        report("Trim: only lines, arcs, circles and polylines can be trimmed.");
         return;
     }
 
@@ -3696,6 +4138,97 @@ void GeometryEngine::apply_trim(Vec2 pick, double radius, std::uint64_t group) {
         }
         if (hi_s < total - 1e-6) {
             pieces.push_back(AddArcCommand{centre, r, start + hi_s, start + total, 0, props, cts});
+        }
+    } else if (h.kind == EntityKind::Polyline) {
+        // The polyline in its own parameter space: segment index + fraction along it
+        // (by sweep on a bulged segment). Crossings and the pick become numbers on one
+        // axis, and the surviving pieces are sub-ranges -- the same shape as the line
+        // case -- re-bulged exactly where a cut lands inside an arc segment.
+        const PolylineData* pl = store_.polyline(h);
+        const std::span<const Vec2> vs = store_.vertices_of(*pl);
+        const std::span<const double> bs = store_.bulges_of(*pl);
+        const std::vector<Vec2> v(vs.begin(), vs.end());
+        std::vector<double> b(v.size(), 0.0);
+        if (!bs.empty()) {
+            b.assign(bs.begin(), bs.end());
+        }
+        const bool closed = pl->closed;
+        const EntityProps props = pl->props;
+        const double cts = store_.celtscale(h);
+        const std::size_t n = v.size();
+        if (n < 2) {
+            return;
+        }
+        const double m = static_cast<double>(closed ? n : n - 1);
+        std::vector<double> qs;
+        for (const Vec2& p : crossings) {
+            double q = 0.0;
+            double dist = 0.0;
+            polyline_param(v, b, closed, p, q, dist);
+            if (dist > 0.05) {
+                continue; // a crossing reported off the curve (tessellation slack)
+            }
+            if (!closed && (q < 1e-6 || q > m - 1e-6)) {
+                continue; // an open polyline's own ends are not cuts
+            }
+            qs.push_back(q);
+        }
+        std::sort(qs.begin(), qs.end());
+        qs.erase(std::unique(qs.begin(), qs.end(),
+                             [](double x, double y) { return std::abs(x - y) < 1e-9; }),
+                 qs.end());
+        if (qs.empty()) {
+            report("Trim: no crossing edge found.");
+            return;
+        }
+        double qp = 0.0;
+        double dp = 0.0;
+        polyline_param(v, b, closed, pick, qp, dp);
+        std::vector<Vec2> pts;
+        std::vector<double> bulges;
+        if (!closed) {
+            double lo = 0.0;
+            double hi = m;
+            for (const double q : qs) {
+                if (q <= qp) {
+                    lo = q;
+                }
+                if (q >= qp) {
+                    hi = q;
+                    break;
+                }
+            }
+            if (lo > 1e-6) {
+                polyline_sub(v, b, 0.0, lo, pts, bulges);
+                pieces.push_back(AddPolylineCommand{pts, false, 0, props, bulges, cts});
+            }
+            if (hi < m - 1e-6) {
+                polyline_sub(v, b, hi, m, pts, bulges);
+                pieces.push_back(AddPolylineCommand{pts, false, 0, props, bulges, cts});
+            }
+        } else {
+            // Closed: the crossings bracket the removed span going round, and what is
+            // kept is the rest -- one OPEN polyline (the circle rule, on a polyline).
+            if (qs.size() < 2) {
+                report("Trim: a closed polyline needs two crossing edges to trim between.");
+                return;
+            }
+            double from = qs.back();
+            double to = qs.front() + m;
+            for (std::size_t i = 0; i < qs.size(); ++i) {
+                const double lo_q = qs[i];
+                const double hi_q = (i + 1 < qs.size()) ? qs[i + 1] : qs.front() + m;
+                const double p_adj = (qp >= lo_q) ? qp : qp + m;
+                if (p_adj >= lo_q && p_adj <= hi_q) {
+                    from = lo_q;
+                    to = hi_q;
+                    break;
+                }
+            }
+            polyline_sub(v, b, to, from + m, pts, bulges);
+            if (pts.size() >= 2) {
+                pieces.push_back(AddPolylineCommand{pts, false, 0, props, bulges, cts});
+            }
         }
     } else { // Circle
         const CircleData* ci = store_.circle(h);

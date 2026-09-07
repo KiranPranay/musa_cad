@@ -95,6 +95,7 @@ add_executable(musacad_tests
     test_xline.cpp
     test_ellipse.cpp
     test_spline.cpp
+    test_modify_curves.cpp
     test_undo_remap.cpp
     test_break.cpp
     test_align_lengthen.cpp

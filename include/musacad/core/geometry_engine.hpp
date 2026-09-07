@@ -254,6 +254,9 @@ private:
     void apply_break(const BreakCommand& c);
     void apply_align(const AlignSelectionCommand& c);
     void apply_lengthen(const LengthenCommand& c);
+    bool nearest_boundary_ahead(EntityHandle self, Vec2 fix, Vec2 mov, Vec2& target) const;
+    void apply_fillet_curves(EntityHandle h1, EntityHandle h2, Vec2 pick1, Vec2 pick2,
+                             double radius, std::uint64_t group);
     void apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t group);
     void apply_purge();
     void apply_revcloud_object(const RevcloudObjectCommand& c);

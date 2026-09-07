@@ -134,14 +134,14 @@ commands (Ribbon Phase A):
 | MEASURE (fixed interval) | ME | Implemented |
 | TRIM a line (cut by line/circle/arc edges) | TR | Implemented |
 | TRIM an arc/circle *entity* | TR | Implemented (a trimmed circle becomes an arc) |
-| TRIM a polyline *entity* | TR | Planned (explode first) |
+| TRIM a polyline *entity* (open or closed, arc segments cut exactly) | TR | Implemented |
 | EXTEND a line (to line/circle/arc boundary) | EX | Implemented |
 | EXTEND an arc *entity* | EX | Implemented |
-| EXTEND a polyline *entity* | EX | Planned (explode first) |
+| EXTEND an open polyline *entity* (straight end segment; polylines also act as boundaries) | EX | Implemented (an arc end segment is refused) |
 | FILLET (line/line; radius 0 or tangent arc) | F | Implemented |
 | FILLET (polyline corner → a true arc segment / bulge, dimensionable) | F | Implemented (incl. RECTANGLE corners — a rectangle IS a closed polyline; verified end-to-end through the full F-command path, including the closing-edge wrap corner) |
 | Polyline arc segments (per-vertex bulge, AutoCAD LWPOLYLINE) | — | Implemented |
-| FILLET (arc/curve cases) | F | Partial (line + polyline-corner only) |
+| FILLET line/arc, line/circle, arc/arc, arc/circle, circle/circle (radius > 0; nearest to the picks) | F | Implemented |
 | CHAMFER (line/line; Distance or Angle method, 45° default) | CHA | Implemented |
 | CHAMFER (polyline corner) | CHA | Implemented |
 | JOIN — **select** lines/arcs/open polylines (any way), then JOIN merges every connected chain among them into ONE polyline each (arcs become bulged segments), inheriting the source's layer/properties; a chain whose ends meet becomes a **closed** polyline (which then OFFSETs uniformly). The merged polyline is a single entity — moving it or a grip keeps it connected. With nothing pre-selected, JOIN falls back to picking a source + targets. One undo group | J | Implemented |
