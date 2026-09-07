@@ -559,6 +559,8 @@ public:
     [[nodiscard]] const BlockDef* block(std::uint16_t index) const noexcept;
     /// Adds a block definition, or returns the existing index if the name is taken.
     std::uint16_t add_block(const BlockDef& def);
+    /// Replaces an existing definition in place (every insert of it updates).
+    bool redefine_block(std::uint16_t index, const BlockDef& def);
     /// Replaces the block table (Open/Import).
     void set_block_table(std::vector<BlockDef> blocks);
 

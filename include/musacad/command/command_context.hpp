@@ -181,7 +181,9 @@ public:
     [[nodiscard]] virtual core::DrawingUnits units() const { return {}; }
     /// The drawing's text styles (STYLE table) and the current one, as last published.
     [[nodiscard]] virtual std::vector<core::TextStyle> text_styles() const { return {}; }
-    [[nodiscard]] virtual std::uint16_t current_text_style() const { return 0; }       ///< may be null in tests
+    [[nodiscard]] virtual std::uint16_t current_text_style() const { return 0; }
+    /// The drawing's block-definition names (INSERT ? and the prompt default).
+    [[nodiscard]] virtual std::vector<std::string> block_names() const { return {}; }       ///< may be null in tests
 };
 
 } // namespace musacad::command

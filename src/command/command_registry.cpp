@@ -156,6 +156,14 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/xline.svg", "Draw an infinite construction line.");
     reg({"RAY"}, [] { return std::make_unique<XlineCommand>(true); },
         "assets/ribbon/ray.svg", "Draw a semi-infinite construction line.");
+    reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },
+        "assets/ribbon/block.svg", "Make the selection a block definition (replaced by an insert).");
+    reg({"I", "INSERT", "-INSERT"}, [] { return std::make_unique<InsertCommand>(); },
+        "assets/ribbon/insert.svg", "Insert a block by name with scale and rotation.");
+    reg({"W", "WBLOCK"}, [] { return std::make_unique<WblockCommand>(); }, "",
+        "Write a block, or the whole drawing, to a .musa file.");
+    reg({"RE", "REGEN"}, [] { return std::make_unique<RegenCommand>(); }, "",
+        "Rebuild and redraw the scene.");
     reg({"ST", "STYLE", "-STYLE"}, [] { return std::make_unique<StyleCommand>(); }, "",
         "Create or change a named text style and make it current.");
     reg({"UN", "UNITS", "-UNITS"}, [] { return std::make_unique<UnitsCommand>(); }, "",

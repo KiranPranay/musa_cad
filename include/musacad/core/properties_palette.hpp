@@ -34,6 +34,14 @@ enum class PropertyId : std::uint16_t {
     GeomCenter,
     GeomRadius,
     GeomPos,
+    GeomStartX, ///< editable coordinates (issue #32)
+    GeomStartY,
+    GeomEndX,
+    GeomEndY,
+    GeomCenterX,
+    GeomCenterY,
+    GeomPosX,
+    GeomPosY,
     // Text / MTEXT.
     TextContent,
     TextHeight,

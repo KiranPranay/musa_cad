@@ -260,6 +260,8 @@ private:
     void apply_extend_arc(EntityHandle h, Vec2 pick, std::uint64_t group);
     void apply_purge(std::uint8_t what);
     void apply_audit(bool fix);
+    void apply_define_block(const DefineBlockCommand& c);
+    void apply_write_block(const WriteBlockCommand& c);
     [[nodiscard]] std::string fmt_len(double v) const;
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);

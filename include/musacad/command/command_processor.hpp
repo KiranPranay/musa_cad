@@ -97,6 +97,8 @@ public:
     }
     [[nodiscard]] std::vector<core::TextStyle> text_styles() const override { return text_styles_; }
     [[nodiscard]] std::uint16_t current_text_style() const override { return current_text_style_; }
+    void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
+    [[nodiscard]] std::vector<std::string> block_names() const override { return block_names_; }
     [[nodiscard]] core::DrawingUnits units() const override { return units_; }
     [[nodiscard]] std::vector<core::NamedView> named_views() const override { return named_views_; }
 
@@ -152,6 +154,7 @@ private:
     core::DrawingUnits units_{};
     std::vector<core::TextStyle> text_styles_;
     std::uint16_t current_text_style_ = 0;
+    std::vector<std::string> block_names_;
     CommandOutput& output_;
     CommandRegistry registry_;
 

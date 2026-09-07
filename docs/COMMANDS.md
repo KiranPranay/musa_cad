@@ -42,6 +42,10 @@ commands (Ribbon Phase A):
 | REVCLOUD | Draw a revision cloud, or turn an object into one. |
 | EXPLODE (X) | Break compound objects into their components. |
 | PURGE (PU) | Remove unused layers, dimension styles, table styles, blocks, image definitions or empty groups (type prompt, All by default). |
+| BLOCK (B, -BLOCK) | Make the selection a block definition (name, base point, select objects); the originals are replaced by one insert in place. |
+| INSERT (I, -INSERT) | Insert a block by name: insertion point, X/Y scale, rotation (? lists blocks). |
+| WBLOCK (W) | Write a block (base point at the origin) or the whole drawing to a .musa file. |
+| REGEN (RE) | Rebuild and redraw the scene. |
 | STYLE (ST, -STYLE) | Named text styles: font, fixed height, width factor, obliquing angle; TEXT uses the current style and the palette's Style dropdown changes it. |
 | UNITS (UN, -UNITS) | Length/angle display format and precision, base angle, clockwise; used by the readout and inquiry commands. |
 | AUDIT | Validate layer/style/font/block/image references and entity shape; Yes fixes them. |
@@ -144,6 +148,8 @@ commands (Ribbon Phase A):
 | GROUP / UNGROUP / PICKSTYLE | G | Implemented (group membership persists in .musa; not on the undo stack) |
 | UNITS (Scientific/Decimal/Engineering/Architectural/Fractional; degrees/DMS/grads/radians/surveyor) | UN | Implemented (dimension text keeps the dimstyle precision, as DIMLUNIT does) |
 | STYLE (text-style table; width factor and oblique applied to TEXT; DXF STYLE table both ways) | ST | Implemented (backwards/upside-down/vertical deferred; MTEXT keeps fonts directly) |
+| BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented (ATTDEF/ATTRIB and REFEDIT deferred) |
+| Properties palette: editable Start/End/Center X-Y, Radius, Position X-Y | PR | Implemented |
 | AUDIT | AUDIT | Implemented |
 | PURGE by type (blocks, dimstyles, table styles, image defs, groups, layers) | PU | Implemented (text styles: not a table yet, see #29) |
 | RAY (start + through points) | RAY | Implemented |

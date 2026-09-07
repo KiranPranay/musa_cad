@@ -75,6 +75,32 @@ struct SetUnitsCommand {
 struct AuditCommand {
     bool fix = false;
 };
+/// BLOCK: make the CURRENT SELECTION a block definition named `name` with base point
+/// `base`, and replace the originals by one INSERT of it (in place). Kinds the block
+/// content cannot hold are left in place and counted.
+struct DefineBlockCommand {
+    std::string name;
+    Vec2 base{};
+    std::uint64_t group = 0;
+};
+/// INSERT by block NAME (the command line's form).
+struct InsertBlockCommand {
+    std::string name;
+    Vec2 pos{};
+    double scale_x = 1.0;
+    double scale_y = 1.0;
+    double rotation = 0.0;
+    std::uint64_t group = 0;
+};
+/// WBLOCK: write a block definition (or the whole drawing when `name` is empty) to a
+/// .musa file; a block's geometry is written with its base point at the origin.
+struct WriteBlockCommand {
+    std::string name;
+    std::string path;
+};
+/// REGEN: rebuild and republish the scene.
+struct RegenCommand {};
+
 /// STYLE: add or replace a text style; optionally make it current.
 struct SetTextStyleCommand {
     TextStyle style;
@@ -935,7 +961,8 @@ using Command =
                  ArrayPathCommand, AddPointCommand, AddXlineCommand, AddEllipseCommand,
                  AddSplineCommand, SaveNamedViewCommand, DeleteNamedViewCommand,
                  CreateGroupCommand, UngroupCommand, SetPickStyleCommand, SetUnitsCommand,
-                 AuditCommand, SetTextStyleCommand, SetCurrentTextStyleCommand,
+                 AuditCommand, SetTextStyleCommand, SetCurrentTextStyleCommand, DefineBlockCommand,
+                 InsertBlockCommand, WriteBlockCommand, RegenCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

@@ -857,6 +857,13 @@ std::uint16_t GeometryStore::add_block(const BlockDef& def) {
     return static_cast<std::uint16_t>(blocks_.size() - 1);
 }
 void GeometryStore::set_block_table(std::vector<BlockDef> blocks) { blocks_ = std::move(blocks); }
+bool GeometryStore::redefine_block(std::uint16_t index, const BlockDef& def) {
+    if (index >= blocks_.size()) {
+        return false;
+    }
+    blocks_[index] = def;
+    return true;
+}
 
 // --- font table ------------------------------------------------------------
 
