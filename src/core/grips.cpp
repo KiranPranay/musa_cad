@@ -45,6 +45,7 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     }
     case EntityKind::Text: {
         const TextData* t = store.text(h);
+        const TextStyle& ts = store.text_style_of(*t);
         return AddTextCommand{t->pos,
                               t->height,
                               t->rotation,
@@ -52,7 +53,8 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                               std::string(store.string_of(*t)),
                               0,
                               t->props,
-                              std::string(store.font_name(t->font))};
+                              std::string(store.font_name(t->font)),
+                              t->style == 0 ? std::string{} : ts.name};
     }
     case EntityKind::Dimension: {
         const DimData* d = store.dimension(h);
@@ -222,8 +224,37 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                     store.add_arc(c.center, c.radius, c.start_angle, c.end_angle, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
-                handle = store.add_text(c.pos, c.height, c.rotation, c.justify, c.content,
-                                        props_of(c.props), store.add_font(c.font));
+                {
+
+                    // STYLE: resolve the style name; its font applies when the command has none.
+
+                    std::uint16_t style = 0;
+
+                    std::string font = c.font;
+
+                    if (!c.style.empty()) {
+
+                        const std::uint16_t si = store.text_style_index(c.style);
+
+                        if (si != 0xFFFF) {
+
+                            style = si;
+
+                            if (font.empty()) {
+
+                                font = store.text_styles()[si].font;
+
+                            }
+
+                        }
+
+                    }
+
+                    handle = store.add_text(c.pos, c.height, c.rotation, c.justify, c.content,
+
+                                            props_of(c.props), store.add_font(font), style);
+
+                }
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 handle = store.add_dimension(static_cast<DimType>(c.type), c.a, c.b, c.line_pt,
                                              c.style, props_of(c.props), c.overrides, c.prefix,

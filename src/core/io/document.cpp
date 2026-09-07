@@ -158,6 +158,8 @@ Document document_from_store(const GeometryStore& store) {
     doc.page_setups = store.page_setups();
     doc.views = store.named_views();
     doc.display_units = store.units();
+    doc.text_styles = store.text_styles();
+    doc.current_text_style = store.current_text_style();
     for (const EntityGroup& g : store.groups()) {
         DocGroup dg;
         dg.name = g.name;
@@ -248,7 +250,7 @@ Document document_from_store(const GeometryStore& store) {
             const TextData& t = texts.data()[i];
             doc.texts.push_back(DocText{t.pos, t.height, t.rotation, t.justify,
                                         std::string(store.string_of(t)), t.props,
-                                        std::string(store.font_name(t.font))});
+                                        std::string(store.font_name(t.font)), t.style});
         }
     }
     const auto& dims = store.dimensions();
@@ -399,6 +401,10 @@ Document document_from_store(const GeometryStore& store) {
 }
 
 void populate_store(GeometryStore& store, const Document& doc) {
+    if (!doc.text_styles.empty()) {
+        store.set_text_styles(doc.text_styles);
+    }
+    store.set_current_text_style(doc.current_text_style);
     store.set_layer_table(doc.layers, doc.current_layer);
     store.set_dimstyle_table(doc.dimstyles);
     store.set_ltscale(doc.ltscale);
@@ -458,7 +464,8 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     for (const DocText& t : doc.texts) {
         store.add_text(t.pos, t.height, t.rotation, t.justify, t.content, t.props,
-                       store.add_font(t.font));
+
+                       store.add_font(t.font), t.style);
     }
     for (const DocDim& d : doc.dims) {
         const EntityHandle dh = store.add_dimension(static_cast<DimType>(d.type), d.a, d.b, d.line_pt, d.style, d.props,

@@ -2893,6 +2893,12 @@ void GeometryEngine::apply_purge(std::uint8_t what) {
             images += store_.remove_image_def(static_cast<std::uint16_t>(i)) ? 1 : 0;
         }
     }
+    int tstyles_text = 0;
+    if (all || what == 7) {
+        for (std::size_t i = store_.text_styles().size(); i-- > 1;) {
+            tstyles_text += store_.remove_text_style(static_cast<std::uint16_t>(i)) ? 1 : 0;
+        }
+    }
     if (all || what == 3) {
         std::vector<EntityGroup> kept;
         for (const EntityGroup& g : store_.groups()) {
@@ -2910,7 +2916,7 @@ void GeometryEngine::apply_purge(std::uint8_t what) {
             store_.set_groups(std::move(kept));
         }
     }
-    const int total = layers + dimstyles + tstyles + blocks + images + groups;
+    const int total = layers + dimstyles + tstyles + blocks + images + groups + tstyles_text;
     if (total == 0) {
         report("Purge: nothing to purge.");
         return;
@@ -2931,6 +2937,7 @@ void GeometryEngine::apply_purge(std::uint8_t what) {
     part(blocks, "block", "blocks");
     part(images, "image definition", "image definitions");
     part(groups, "empty group", "empty groups");
+    part(tstyles_text, "text style", "text styles");
     msg.back() = '.';
     report(msg);
 }
@@ -2975,7 +2982,8 @@ void GeometryEngine::apply_audit(bool fix) {
             bad_ref = store_.datum(h)->style >= nstyles;
             break;
         case EntityKind::Text:
-            bad_ref = store_.text(h)->font >= nfonts;
+            bad_ref = store_.text(h)->font >= nfonts ||
+                      store_.text(h)->style >= store_.text_styles().size();
             break;
         case EntityKind::Table:
             bad_ref = store_.table(h)->style >= ntstyles;
@@ -3045,6 +3053,9 @@ void GeometryEngine::apply_audit(bool fix) {
                         if constexpr (std::is_same_v<std::decay_t<decltype(x.font)>, std::string>) {
                             x.font.clear();
                         }
+                    }
+                    if constexpr (std::is_same_v<std::decay_t<decltype(x)>, AddTextCommand>) {
+                        x.style.clear(); // back to Standard
                     }
                     if constexpr (requires { x.props; }) {
                         if (bad_layer && x.props.has_value()) {
@@ -5343,6 +5354,24 @@ void GeometryEngine::apply(const Command& command) {
                        std::to_string(c.units.angular_precision) + ".");
             } else if constexpr (std::is_same_v<T, AuditCommand>) {
                 apply_audit(c.fix);
+            } else if constexpr (std::is_same_v<T, SetTextStyleCommand>) {
+                const std::uint16_t i = store_.add_text_style(c.style);
+                if (c.make_current) {
+                    store_.set_current_text_style(i);
+                }
+                dirty_ = true;
+                geom_dirty_ = true; // texts using the style re-lay-out; the table republishes
+                report("\"" + c.style.name + "\" is now the current text style.");
+            } else if constexpr (std::is_same_v<T, SetCurrentTextStyleCommand>) {
+                const std::uint16_t i = store_.text_style_index(c.name);
+                if (i == 0xFFFF) {
+                    report("Text style \"" + c.name + "\" not found.");
+                } else {
+                    store_.set_current_text_style(i);
+                    dirty_ = true;
+                    geom_dirty_ = true;
+                    report("\"" + c.name + "\" is now the current text style.");
+                }
             }
         },
         command);
@@ -5640,6 +5669,8 @@ void GeometryEngine::rebuild_and_publish() {
     buf.dimstyles.assign(store_.dimstyles().begin(), store_.dimstyles().end());
     buf.named_views = store_.named_views(); // VIEW table (Restore / ?)
     buf.units = store_.units();
+    buf.text_styles = store_.text_styles();
+    buf.current_text_style = store_.current_text_style();
     buf.group_names.clear();
     for (const EntityGroup& g : store_.groups()) {
         buf.group_names.push_back(g.name); // GROUP names (feedback / ?)

@@ -39,7 +39,8 @@ enum class PropertyId : std::uint16_t {
     TextHeight,
     TextRotation, ///< shown/edited in degrees
     TextJustify,  ///< 0=L,1=C,2=R
-    TextFont,     ///< read-only for now (single stroke font)
+    TextFont,     ///< the font (derived from the style when one is set)
+    TextStyleName, ///< TEXT: the named text style (STYLE table); value.text, "" = Standard
     MtWidthFactor,
     MtLineSpacing,
     MtAttach, ///< 0..8 = TL,TC,TR,ML,MC,MR,BL,BC,BR
@@ -89,7 +90,8 @@ enum class PropEditor : std::uint8_t {
     LineweightCombo, ///< value.flag = ByLayer; value.num = hundredths-mm
     JustifyCombo,    ///< value.choice 0..2
     AttachCombo,     ///< value.choice 0..8
-    FontCombo,       ///< read-only (single font), value.choice
+    FontCombo,       ///< font dropdown, value.text
+    StyleCombo,      ///< text-style dropdown (the STYLE table), value.text = name, "" = Standard
     PatternCombo,    ///< value.text = hatch pattern name (SOLID + built-in line patterns)
     // Dimension overrides: value.flag = ByStyle (no override). The combos put
     // "ByStyle" at index 0 (like LinetypeCombo's ByLayer); editing index>0 / a

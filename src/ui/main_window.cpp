@@ -309,6 +309,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         processor_->set_selection_count(sel);
         processor_->set_named_views(viewport_->named_views());
         processor_->set_units(viewport_->units());
+        {
+            std::vector<core::TextStyle> tstyles = viewport_->text_styles();
+            const std::uint16_t cur = viewport_->current_text_style();
+            std::vector<std::string> names;
+            for (const core::TextStyle& ts : tstyles) {
+                names.push_back(ts.name);
+            }
+            if (properties_panel_ != nullptr) {
+                properties_panel_->set_style_names(std::move(names));
+            }
+            processor_->set_text_styles(std::move(tstyles), cur);
+        }
         processor_->set_hovered_kind(viewport_->hovered_kind()); // smart DIM preview
         for (QToolButton* b : selection_required_buttons_) {
             b->setEnabled(sel > 0);

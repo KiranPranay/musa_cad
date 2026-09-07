@@ -10,6 +10,7 @@
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
@@ -60,7 +61,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 25;
+inline constexpr std::uint32_t kFormatVersion = 26;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -141,6 +142,7 @@ struct DocText {
     std::string content;
     EntityProps props{};
     std::string font{}; ///< font name ("" = stroke "Standard")
+    std::uint16_t style = 0; ///< text style index (v26)
     friend bool operator==(const DocText&, const DocText&) = default;
 };
 struct DocDim {
@@ -312,6 +314,8 @@ struct Document {
     std::uint32_t format_version = kFormatVersion;
     std::string units = "unitless";
     DrawingUnits display_units{}; ///< UNITS: display formats (v25)
+    std::vector<TextStyle> text_styles; ///< STYLE table (v26; [0] Standard; not in entity_count)
+    std::uint16_t current_text_style = 0;
 
     std::vector<Layer> layers{Layer{"0"}}; // layer 0 always present
     std::uint16_t current_layer = 0;

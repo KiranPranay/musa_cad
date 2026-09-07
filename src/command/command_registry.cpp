@@ -156,6 +156,8 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/xline.svg", "Draw an infinite construction line.");
     reg({"RAY"}, [] { return std::make_unique<XlineCommand>(true); },
         "assets/ribbon/ray.svg", "Draw a semi-infinite construction line.");
+    reg({"ST", "STYLE", "-STYLE"}, [] { return std::make_unique<StyleCommand>(); }, "",
+        "Create or change a named text style and make it current.");
     reg({"UN", "UNITS", "-UNITS"}, [] { return std::make_unique<UnitsCommand>(); }, "",
         "Set the display format and precision of lengths and angles.");
     reg({"AUDIT"}, [] { return std::make_unique<AuditDrawingCommand>(); }, "",

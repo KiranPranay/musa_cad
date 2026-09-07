@@ -626,6 +626,24 @@ private:
     bool done_ = false;
 };
 
+/// STYLE (ST, -STYLE): the command-line flow -- name (existing or new), font, fixed
+/// height (0 = ask at TEXT), width factor, obliquing angle; backwards / upside-down /
+/// vertical are reported as not supported. The style becomes current.
+class StyleCommand final : public ICommand {
+public:
+    std::string name() const override { return "STYLE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Name, Font, Height, Width, Oblique, Backwards, Upside, Vertical };
+    State state_ = State::Name;
+    core::TextStyle ts_{};
+    bool done_ = false;
+};
+
 /// UNITS (UN, -UNITS): the command-line flow -- linear format and precision, angle
 /// format and precision, direction of angle 0, clockwise -- stored with the drawing.
 class UnitsCommand final : public ICommand {
@@ -1024,6 +1042,8 @@ private:
     core::Vec2 pos_{};
     double height_ = 2.5;
     double rotation_ = 0.0;
+    std::string style_;         ///< the current text style's name ("" = Standard)
+    bool fixed_height_ = false; ///< the style fixes the height: no height prompt
     bool done_ = false;
 };
 

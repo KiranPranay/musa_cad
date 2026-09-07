@@ -1161,7 +1161,7 @@ int parse_int(const std::string& t, int fallback) {
 // ---------------------------------------------------------------------------
 void PurgeCommand::start(CommandContext& ctx) {
     ctx.set_prompt(
-        "Enter type of unused objects to purge [Blocks/Dimstyles/Groups/LAyers/Tablestyles/Images/All] <All>: ");
+        "Enter type of unused objects to purge [Blocks/Dimstyles/Groups/LAyers/Tablestyles/Images/textSTyles/All] <All>: ");
 }
 
 void PurgeCommand::input(CommandContext& ctx, const std::string& text) {
@@ -1181,8 +1181,10 @@ void PurgeCommand::input(CommandContext& ctx, const std::string& text) {
         what = 5;
     } else if (u == "I" || u == "IMAGES") {
         what = 6;
+    } else if (u == "ST" || u == "TEXTSTYLES") {
+        what = 7;
     } else {
-        ctx.echo("Enter Blocks, Dimstyles, Groups, LAyers, Tablestyles, Images or All.");
+        ctx.echo("Enter Blocks, Dimstyles, Groups, LAyers, Tablestyles, Images, textSTyles or All.");
         return;
     }
     ctx.submit(core::PurgeCommand{ctx.group_id(), what}); // the engine reports what went
@@ -2223,6 +2225,122 @@ void PickStyleCommand::input(CommandContext& ctx, const std::string& text) {
     }
     ctx.submit(core::SetPickStyleCommand{v != 0.0});
     done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// STYLE (-STYLE): the command-line flow, prompt by prompt
+// ---------------------------------------------------------------------------
+void StyleCommand::start(CommandContext& ctx) {
+    state_ = State::Name;
+    const std::vector<core::TextStyle> styles = ctx.text_styles();
+    const std::uint16_t cur = ctx.current_text_style();
+    const std::string cur_name = cur < styles.size() ? styles[cur].name : "Standard";
+    ctx.echo("Current text style: \"" + cur_name + "\"");
+    ctx.set_prompt("Enter name of text style or [?] <" + cur_name + ">: ");
+}
+
+void StyleCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void StyleCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    double v = 0.0;
+    switch (state_) {
+    case State::Name: {
+        const std::vector<core::TextStyle> styles = ctx.text_styles();
+        if (u == "?") {
+            std::string line = "Text styles:";
+            for (const core::TextStyle& s : styles) {
+                line += " \"" + s.name + "\"";
+            }
+            ctx.echo(styles.empty() ? "Text styles: \"Standard\"" : line);
+            return;
+        }
+        const std::uint16_t cur = ctx.current_text_style();
+        std::string name = t.empty() ? (cur < styles.size() ? styles[cur].name : "Standard") : t;
+        bool found = false;
+        for (const core::TextStyle& s : styles) {
+            if (s.name == name) {
+                ts_ = s;
+                found = true;
+            }
+        }
+        if (!found) {
+            ts_ = core::TextStyle{};
+            ts_.name = name;
+            ctx.echo("New style.");
+        }
+        state_ = State::Font;
+        ctx.set_prompt("Specify full font name or font filename (TTF or SHX) <" +
+                       (ts_.font.empty() ? std::string("txt") : ts_.font) + ">: ");
+        return;
+    }
+    case State::Font:
+        if (!t.empty()) {
+            ts_.font = (u == "TXT" || u == "TXT.SHX") ? std::string{} : t;
+        }
+        state_ = State::Height;
+        ctx.set_prompt("Specify height of text <" + fmt4(ts_.height) + ">: ");
+        return;
+    case State::Height:
+        if (!t.empty()) {
+            if (!parse_number(t, v) || v < 0.0) {
+                ctx.echo("Enter a height of 0 (not fixed) or more.");
+                return;
+            }
+            ts_.height = v;
+        }
+        state_ = State::Width;
+        ctx.set_prompt("Specify width factor <" + fmt4(ts_.width_factor) + ">: ");
+        return;
+    case State::Width:
+        if (!t.empty()) {
+            if (!parse_number(t, v) || v <= 0.0) {
+                ctx.echo("Enter a width factor greater than 0.");
+                return;
+            }
+            ts_.width_factor = v;
+        }
+        state_ = State::Oblique;
+        ctx.set_prompt("Specify obliquing angle <" + fmt4(core::to_degrees(ts_.oblique)) + ">: ");
+        return;
+    case State::Oblique:
+        if (!t.empty()) {
+            if (!parse_number(t, v) || v <= -85.0 || v >= 85.0) {
+                ctx.echo("Enter an angle between -85 and 85 degrees.");
+                return;
+            }
+            ts_.oblique = core::to_radians(v);
+        }
+        state_ = State::Backwards;
+        ctx.set_prompt("Display text backwards? [Yes/No] <N>: ");
+        return;
+    case State::Backwards:
+    case State::Upside:
+    case State::Vertical:
+        if (u == "Y" || u == "YES") {
+            ctx.echo("That option is not supported yet; the style keeps normal orientation.");
+        } else if (!t.empty() && u != "N" && u != "NO") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        if (state_ == State::Backwards) {
+            state_ = State::Upside;
+            ctx.set_prompt("Display text upside-down? [Yes/No] <N>: ");
+            return;
+        }
+        if (state_ == State::Upside) {
+            state_ = State::Vertical;
+            ctx.set_prompt("Vertical? [Yes/No] <N>: ");
+            return;
+        }
+        ctx.submit(core::SetTextStyleCommand{ts_, true});
+        done_ = true;
+        return;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3293,8 +3411,25 @@ void TextCommand::input(CommandContext& ctx, const std::string& text) {
         if (const auto p = read_point(ctx, text)) {
             pos_ = *p;
             ctx.set_last_point(*p);
-            state_ = State::Height;
-            ctx.set_prompt("Specify text height <2.5>: ");
+            // The current text STYLE: a fixed height skips the height prompt (AutoCAD).
+            const std::vector<core::TextStyle> styles = ctx.text_styles();
+            const std::uint16_t cur = ctx.current_text_style();
+            style_.clear();
+            fixed_height_ = false;
+            if (cur > 0 && cur < styles.size()) {
+                style_ = styles[cur].name;
+                if (styles[cur].height > 0.0) {
+                    height_ = styles[cur].height;
+                    fixed_height_ = true;
+                }
+            }
+            if (fixed_height_) {
+                state_ = State::Rotation;
+                ctx.set_prompt("Specify rotation angle <0>: ");
+            } else {
+                state_ = State::Height;
+                ctx.set_prompt("Specify text height <2.5>: ");
+            }
         }
         return;
     case State::Height:
@@ -3316,11 +3451,14 @@ void TextCommand::input(CommandContext& ctx, const std::string& text) {
         ctx.set_prompt("Enter text: ");
         return;
     }
-    case State::Content:
-        ctx.submit(core::AddTextCommand{pos_, height_, rotation_, 0, text, ctx.group_id()});
+    case State::Content: {
+        core::AddTextCommand cmd{pos_, height_, rotation_, 0, text, ctx.group_id()};
+        cmd.style = style_; // the current text style (its font applies)
+        ctx.submit(std::move(cmd));
         ctx.echo("Text placed.");
         done_ = true;
         return;
+    }
     }
 }
 

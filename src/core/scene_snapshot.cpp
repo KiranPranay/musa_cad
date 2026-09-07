@@ -129,7 +129,10 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     // (Ph31), so the on-screen polish and the paper result stay independent.
     const auto emit_text_run = [&](std::string_view raw, Vec2 origin, double height,
                                    double rotation, text::Justify justify, std::uint16_t font_id,
-                                   Rgb color, std::uint8_t lineweight) {
+                                   Rgb color, std::uint8_t lineweight,
+                                   const TextStyle* ts = nullptr) {
+        const double wf = ts != nullptr ? ts->width_factor : 1.0;
+        const double ob = ts != nullptr ? ts->oblique : 0.0;
         // Expand control codes at render time (storage stays raw). `vis` drives every metric
         // and glyph; the over/under-line toggles become decoration bars below.
         const text::SubstitutedText sub = text::substitute_text_codes(raw);
@@ -150,10 +153,12 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         if (outline) {
             trun.clear();
             fonts->glyph_fills(fname, str, o, height, rotation, trun);
+            text::apply_text_style(trun, origin, rotation, wf, ob); // STYLE width/oblique
             add_fills(color, trun);
         } else {
             trun.clear();
             text::append_text_segments(str, o, height, rotation, text::Justify::Left, trun);
+            text::apply_text_style(trun, origin, rotation, wf, ob);
             add_lines(color, lineweight, trun, /*is_text=*/true, height);
         }
         // Overline (%%o) / underline (%%u): a horizontal stroke spanning each toggled run,
@@ -163,9 +168,10 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
                 for (const text::DecorSpan& s : spans) {
                     const double x0 = measure(str.substr(0, s.begin));
                     const double x1 = measure(str.substr(0, s.end));
-                    const Vec2 a{o.x + x0 * cs - ly * sn, o.y + x0 * sn + ly * cs};
-                    const Vec2 b{o.x + x1 * cs - ly * sn, o.y + x1 * sn + ly * cs};
-                    add_line(color, lineweight, a, b, /*is_text=*/true, height);
+                    std::vector<Vec2> bar_pts{{o.x + x0 * cs - ly * sn, o.y + x0 * sn + ly * cs},
+                                              {o.x + x1 * cs - ly * sn, o.y + x1 * sn + ly * cs}};
+                    text::apply_text_style(bar_pts, origin, rotation, wf, ob);
+                    add_line(color, lineweight, bar_pts[0], bar_pts[1], /*is_text=*/true, height);
                 }
             };
             bar(sub.overline, height * 1.15);
@@ -231,15 +237,18 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             return;
         }
         const ResolvedProps r = entity_resolved(store, t->props);
+        const TextStyle& tstyle = store.text_style_of(*t);
         emit_text_run(store.string_of(*t), t->pos, t->height, t->rotation,
-                      static_cast<text::Justify>(t->justify), t->font, r.color, r.lineweight);
+                      static_cast<text::Justify>(t->justify), t->font, r.color, r.lineweight,
+                      &tstyle);
         if (editable(store, t->props)) {
             // The selection box uses the VISIBLE width (codes expanded); the edit target
             // keeps the RAW string so double-click editing shows %%c50, not the symbol.
             const std::string vis = text::substitute_text(store.string_of(*t));
-            const double w = font_is_outline(t->font)
+            const double w = (font_is_outline(t->font)
                                  ? fonts->advance(store.font_name(t->font), vis, t->height)
-                                 : text::text_width(vis, t->height);
+                                 : text::text_width(vis, t->height)) *
+                             tstyle.width_factor; // the style's width factor
             out.text_edit_targets.push_back(TextEditTarget{
                 h, t->pos, {t->pos.x, t->pos.y}, {t->pos.x + w, t->pos.y + t->height}, t->height,
                 t->rotation, false, std::string(store.string_of(*t))});

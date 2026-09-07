@@ -42,6 +42,7 @@ commands (Ribbon Phase A):
 | REVCLOUD | Draw a revision cloud, or turn an object into one. |
 | EXPLODE (X) | Break compound objects into their components. |
 | PURGE (PU) | Remove unused layers, dimension styles, table styles, blocks, image definitions or empty groups (type prompt, All by default). |
+| STYLE (ST, -STYLE) | Named text styles: font, fixed height, width factor, obliquing angle; TEXT uses the current style and the palette's Style dropdown changes it. |
 | UNITS (UN, -UNITS) | Length/angle display format and precision, base angle, clockwise; used by the readout and inquiry commands. |
 | AUDIT | Validate layer/style/font/block/image references and entity shape; Yes fixes them. |
 | VIEW (V) | Save, Restore, Delete and list (?) named views; Window saves a framed view. |
@@ -142,6 +143,7 @@ commands (Ribbon Phase A):
 | VIEW Save/Restore/Delete/?/Window | V | Implemented (Orthographic/Ucs are 3D-only) |
 | GROUP / UNGROUP / PICKSTYLE | G | Implemented (group membership persists in .musa; not on the undo stack) |
 | UNITS (Scientific/Decimal/Engineering/Architectural/Fractional; degrees/DMS/grads/radians/surveyor) | UN | Implemented (dimension text keeps the dimstyle precision, as DIMLUNIT does) |
+| STYLE (text-style table; width factor and oblique applied to TEXT; DXF STYLE table both ways) | ST | Implemented (backwards/upside-down/vertical deferred; MTEXT keeps fonts directly) |
 | AUDIT | AUDIT | Implemented |
 | PURGE by type (blocks, dimstyles, table styles, image defs, groups, layers) | PU | Implemented (text styles: not a table yet, see #29) |
 | RAY (start + through points) | RAY | Implemented |

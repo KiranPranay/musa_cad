@@ -130,9 +130,11 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
         const TextData* t = store.text(h);
         const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
                                             store.string_of(*t), t->height);
+        const TextStyle& ts = store.text_style_of(*t);
         const double cs = std::cos(t->rotation);
         const double sn = std::sin(t->rotation);
-        const Vec2 corners[4] = {{0, 0}, {w, 0}, {w, t->height}, {0, t->height}};
+        Vec2 corners[4];
+        text::text_box_corners(w, t->height, ts.width_factor, ts.oblique, corners);
         bool first = true;
         for (const Vec2& c : corners) {
             const Vec2 p{t->pos.x + c.x * cs - c.y * sn, t->pos.y + c.x * sn + c.y * cs};
