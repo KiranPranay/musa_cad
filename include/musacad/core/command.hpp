@@ -13,6 +13,7 @@
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/table_types.hpp"
+#include "musacad/core/named_view.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 #include "musacad/core/properties_palette.hpp"
@@ -141,6 +142,31 @@ struct AddSplineCommand {
     std::uint32_t degree = 3;
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+};
+
+/// VIEW Save: store (or replace) a named view. VIEW Delete: remove one by name.
+struct SaveNamedViewCommand {
+    NamedView view;
+};
+struct DeleteNamedViewCommand {
+    std::string name;
+};
+
+/// GROUP: make the CURRENT SELECTION a group (unnamed groups get "*A<n>").
+struct CreateGroupCommand {
+    std::string name;
+    std::string description;
+};
+/// UNGROUP: dissolve the group containing the entity under `pick`, or the group named.
+struct UngroupCommand {
+    std::string name;
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    bool by_name = false;
+};
+/// PICKSTYLE: whether picking a group member selects the whole group.
+struct SetPickStyleCommand {
+    bool group_select = true;
 };
 
 /// A POINT entity (AutoCAD POINT). Points are already stored, drawn, picked, bounded
@@ -881,7 +907,8 @@ using Command =
                  AddObjectDimensionCommand, ResolveDimObjectCommand, SetViewScaleCommand,
                  GripDragCommand, AddMTextCommand, AddMLeaderCommand, EditTextContentCommand,
                  ArrayPathCommand, AddPointCommand, AddXlineCommand, AddEllipseCommand,
-                 AddSplineCommand,
+                 AddSplineCommand, SaveNamedViewCommand, DeleteNamedViewCommand,
+                 CreateGroupCommand, UngroupCommand, SetPickStyleCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

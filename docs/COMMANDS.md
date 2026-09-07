@@ -42,12 +42,17 @@ commands (Ribbon Phase A):
 | REVCLOUD | Draw a revision cloud, or turn an object into one. |
 | EXPLODE (X) | Break compound objects into their components. |
 | PURGE (PU) | Remove unused layers from the drawing. |
+| VIEW (V) | Save, Restore, Delete and list (?) named views; Window saves a framed view. |
+| GROUP (G) | Make the selection a named group (Name/Description); picking a member selects the group. |
+| UNGROUP | Dissolve a group by pick or by name. |
+| PICKSTYLE | 0/1: whether picking a member selects its whole group. |
 | ALIGN (AL) | Move, rotate and optionally scale a selection onto two destination points. |
 | LENGTHEN (LEN) | Change the length of a line or arc. |
 | BREAK (BR) | Break a curve between two points. |
 | BREAKATPOINT | Split a curve at one point, leaving no gap. |
 | ELLIPSE (EL) | Draw an ellipse or elliptical arc (axis endpoints, Center, Rotation, Arc). |
 | SPLINE (SPL) | Draw a spline through fit points (Method Fit, Knots Chord/Square root/Uniform) or by control vertices (Method CV, Degree). Undo, Close. |
+| DONUT (DO) | Filled ring or disc from inside/outside diameters (drawn as a SOLID hatch with two loops). |
 | XLINE (XL) | Draw an infinite construction line. |
 | RAY | Draw a semi-infinite construction line. |
 | POINT (PO) | Place point objects; Esc ends. |
@@ -131,6 +136,9 @@ commands (Ribbon Phase A):
 | ELLIPSE (axis-end / Center / Rotation / Arc by angle, parameter, included) | EL | Implemented |
 | SPLINE (Fit with Knots; CV with Degree; Undo; Close) | SPL | Implemented (Tangency, fit tolerance, Object deferred) |
 | XLINE (Hor / Ver / Ang / Bisect / two-point) | XL | Implemented (Offset deferred) |
+| DONUT | DO | Implemented (as a SOLID two-loop hatch; no polyline width) |
+| VIEW Save/Restore/Delete/?/Window | V | Implemented (Orthographic/Ucs are 3D-only) |
+| GROUP / UNGROUP / PICKSTYLE | G | Implemented (group membership persists in .musa; not on the undo stack) |
 | RAY (start + through points) | RAY | Implemented |
 | POINT | PO | Implemented |
 | DIVIDE (n equal segments) | DIV | Implemented |

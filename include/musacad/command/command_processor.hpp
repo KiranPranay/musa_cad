@@ -89,6 +89,8 @@ public:
     /// it changes while a command is active, the command's hover() hook fires (the
     /// smart DIM preview). nullopt means the cursor is over empty space.
     void set_hovered_kind(std::optional<core::EntityKind> kind);
+    void set_named_views(std::vector<core::NamedView> v) { named_views_ = std::move(v); }
+    [[nodiscard]] std::vector<core::NamedView> named_views() const override { return named_views_; }
 
     [[nodiscard]] bool has_active_command() const noexcept { return active_ != nullptr; }
 
@@ -138,6 +140,7 @@ private:
 
     CommandSink sink_;
     ViewControl* view_;
+    std::vector<core::NamedView> named_views_;
     CommandOutput& output_;
     CommandRegistry registry_;
 

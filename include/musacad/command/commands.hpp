@@ -626,6 +626,90 @@ private:
     bool done_ = false;
 };
 
+/// DONUT (DO): inside diameter, outside diameter, then centres until Enter. Drawn as a
+/// SOLID hatch with two circular loops (an inside diameter of 0 gives a filled disc):
+/// the polyline-with-width AutoCAD uses has no counterpart here yet.
+class DonutCommand final : public ICommand {
+public:
+    std::string name() const override { return "DONUT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Inner, Outer, Center } state_ = State::Inner;
+    inline static double s_inner_ = 0.5;
+    inline static double s_outer_ = 1.0;
+    double inner_ = 0.5;
+    double outer_ = 1.0;
+    bool done_ = false;
+};
+
+/// VIEW (V): Save / Restore / Delete / ? / Window, on the drawing's named-view table.
+/// Orthographic and Ucs are reported as not applicable (2D).
+class ViewCommand final : public ICommand {
+public:
+    std::string name() const override { return "VIEW"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Option, SaveName, RestoreName, DeleteName, WinFirst, WinSecond, WinName };
+    State state_ = State::Option;
+    core::Vec2 w0_{};
+    core::Vec2 w1_{};
+    bool done_ = false;
+};
+
+/// GROUP (G): "Select objects or [Name/Description]:", Enter makes the selection a group
+/// (unnamed groups are "*A1", "*A2", ... as in AutoCAD). Group creation is not on the
+/// undo stack (it changes no geometry); UNGROUP reverses it.
+class GroupCommand final : public ICommand {
+public:
+    std::string name() const override { return "GROUP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+
+private:
+    enum class State { Select, Name, Description } state_ = State::Select;
+    std::string name_;
+    std::string description_;
+    bool done_ = false;
+};
+
+/// UNGROUP: pick a member (or give a name) to dissolve the group.
+class UngroupCommand final : public ICommand {
+public:
+    std::string name() const override { return "UNGROUP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool by_name_ = false;
+    bool done_ = false;
+};
+
+/// PICKSTYLE: 1 = picking a group member selects its whole group, 0 = members only.
+class PickStyleCommand final : public ICommand {
+public:
+    std::string name() const override { return "PICKSTYLE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// XLINE (AutoCAD XL) and RAY: construction lines. XLINE offers Hor/Ver/Ang/Bisect and
 /// the default two-point form (all repeat until Enter); Offset is deferred (it needs a
 /// picked reference, noted in docs/COMMANDS.md). RAY is start point + through points.

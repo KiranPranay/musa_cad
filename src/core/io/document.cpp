@@ -19,12 +19,158 @@ DocInsert insert_to_doc(const GeometryStore& store, const InsertData& d) {
 }
 } // namespace
 
+
+namespace {
+/// How many live slots of the same arena precede slot `index` -- the entity's position
+/// among its kind in document order (the order the arenas are walked here and re-added
+/// by populate_store).
+template <class Arena>
+std::uint32_t alive_before(const Arena& arena, std::uint32_t index) {
+    std::uint32_t n = 0;
+    for (std::uint32_t i = 0; i < index && i < arena.slot_count(); ++i) {
+        if (arena.alive(i)) {
+            ++n;
+        }
+    }
+    return n;
+}
+std::uint32_t doc_index_of(const GeometryStore& store, EntityHandle h) {
+    switch (h.kind) {
+    case EntityKind::Point:
+        return alive_before(store.points(), h.index);
+    case EntityKind::Xline:
+        return alive_before(store.xlines(), h.index);
+    case EntityKind::Ellipse:
+        return alive_before(store.ellipses(), h.index);
+    case EntityKind::Line:
+        return alive_before(store.lines(), h.index);
+    case EntityKind::Circle:
+        return alive_before(store.circles(), h.index);
+    case EntityKind::Arc:
+        return alive_before(store.arcs(), h.index);
+    case EntityKind::Polyline:
+        return alive_before(store.polylines(), h.index);
+    case EntityKind::Spline:
+        return alive_before(store.splines(), h.index);
+    case EntityKind::Text:
+        return alive_before(store.texts(), h.index);
+    case EntityKind::Dimension:
+        return alive_before(store.dimensions(), h.index);
+    case EntityKind::Leader:
+        return alive_before(store.leaders(), h.index);
+    case EntityKind::MText:
+        return alive_before(store.mtexts(), h.index);
+    case EntityKind::MLeader:
+        return alive_before(store.mleaders(), h.index);
+    case EntityKind::Insert:
+        return alive_before(store.inserts(), h.index);
+    case EntityKind::Hatch:
+        return alive_before(store.hatches(), h.index);
+    case EntityKind::Fcf:
+        return alive_before(store.fcfs(), h.index);
+    case EntityKind::Datum:
+        return alive_before(store.datums(), h.index);
+    case EntityKind::Image:
+        return alive_before(store.images(), h.index);
+    case EntityKind::Table:
+        return alive_before(store.tables(), h.index);
+    }
+    return 0;
+}
+/// The live handles of one kind in document order.
+std::vector<EntityHandle> handles_of_kind(const GeometryStore& store, EntityKind kind) {
+    std::vector<EntityHandle> out;
+    const auto collect = [&](const auto& arena, EntityKind k) {
+        for (std::uint32_t i = 0; i < arena.slot_count(); ++i) {
+            if (arena.alive(i)) {
+                out.push_back(EntityHandle{i, arena.generations()[i], k});
+            }
+        }
+    };
+    switch (kind) {
+    case EntityKind::Point:
+        collect(store.points(), EntityKind::Point);
+        break;
+    case EntityKind::Xline:
+        collect(store.xlines(), EntityKind::Xline);
+        break;
+    case EntityKind::Ellipse:
+        collect(store.ellipses(), EntityKind::Ellipse);
+        break;
+    case EntityKind::Line:
+        collect(store.lines(), EntityKind::Line);
+        break;
+    case EntityKind::Circle:
+        collect(store.circles(), EntityKind::Circle);
+        break;
+    case EntityKind::Arc:
+        collect(store.arcs(), EntityKind::Arc);
+        break;
+    case EntityKind::Polyline:
+        collect(store.polylines(), EntityKind::Polyline);
+        break;
+    case EntityKind::Spline:
+        collect(store.splines(), EntityKind::Spline);
+        break;
+    case EntityKind::Text:
+        collect(store.texts(), EntityKind::Text);
+        break;
+    case EntityKind::Dimension:
+        collect(store.dimensions(), EntityKind::Dimension);
+        break;
+    case EntityKind::Leader:
+        collect(store.leaders(), EntityKind::Leader);
+        break;
+    case EntityKind::MText:
+        collect(store.mtexts(), EntityKind::MText);
+        break;
+    case EntityKind::MLeader:
+        collect(store.mleaders(), EntityKind::MLeader);
+        break;
+    case EntityKind::Insert:
+        collect(store.inserts(), EntityKind::Insert);
+        break;
+    case EntityKind::Hatch:
+        collect(store.hatches(), EntityKind::Hatch);
+        break;
+    case EntityKind::Fcf:
+        collect(store.fcfs(), EntityKind::Fcf);
+        break;
+    case EntityKind::Datum:
+        collect(store.datums(), EntityKind::Datum);
+        break;
+    case EntityKind::Image:
+        collect(store.images(), EntityKind::Image);
+        break;
+    case EntityKind::Table:
+        collect(store.tables(), EntityKind::Table);
+        break;
+    }
+    return out;
+}
+} // namespace
+
 Document document_from_store(const GeometryStore& store) {
     Document doc;
     doc.layers.assign(store.layers().begin(), store.layers().end());
     doc.current_layer = store.current_layer();
     doc.ltscale = store.ltscale();
     doc.page_setups = store.page_setups();
+    doc.views = store.named_views();
+    for (const EntityGroup& g : store.groups()) {
+        DocGroup dg;
+        dg.name = g.name;
+        dg.description = g.description;
+        dg.selectable = g.selectable;
+        for (const EntityHandle m : g.members) {
+            if (store.is_valid(m)) {
+                dg.members.emplace_back(static_cast<std::uint8_t>(m.kind), doc_index_of(store, m));
+            }
+        }
+        if (!dg.members.empty()) {
+            doc.groups.push_back(std::move(dg)); // an emptied group is not worth keeping
+        }
+    }
 
     const auto& pts = store.points();
     for (std::uint32_t i = 0; i < pts.slot_count(); ++i) {
@@ -406,6 +552,25 @@ void populate_store(GeometryStore& store, const Document& doc) {
     for (const DocSpline& s : doc.splines) {
         store.add_spline(s.control_points, s.degree, s.props);
     }
+    store.set_named_views(doc.views);
+    std::vector<EntityGroup> groups;
+    for (const DocGroup& dg : doc.groups) {
+        EntityGroup g;
+        g.name = dg.name;
+        g.description = dg.description;
+        g.selectable = dg.selectable;
+        for (const auto& [kind_raw, idx] : dg.members) {
+            const auto kind = static_cast<EntityKind>(kind_raw);
+            const std::vector<EntityHandle> hs = handles_of_kind(store, kind);
+            if (idx < hs.size()) {
+                g.members.push_back(hs[idx]);
+            }
+        }
+        if (!g.members.empty()) {
+            groups.push_back(std::move(g));
+        }
+    }
+    store.set_groups(std::move(groups));
 }
 
 } // namespace musacad::core::io

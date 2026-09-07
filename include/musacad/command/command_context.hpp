@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "musacad/core/command.hpp"
+#include "musacad/core/named_view.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 
@@ -103,6 +104,22 @@ public:
     virtual ~ViewControl() = default;
     virtual void zoom_extents() = 0;
     virtual void zoom_scale(double factor) = 0;
+    /// VIEW: the current camera (world centre, pixels per drawing unit) and the
+    /// viewport size in pixels. Defaults say "unavailable" for headless hosts.
+    [[nodiscard]] virtual bool current_view(core::Vec2& center, double& scale) {
+        (void)center;
+        (void)scale;
+        return false;
+    }
+    virtual void set_view(core::Vec2 center, double scale) {
+        (void)center;
+        (void)scale;
+    }
+    [[nodiscard]] virtual bool viewport_size(int& w, int& h) const {
+        (void)w;
+        (void)h;
+        return false;
+    }
     /// Toggle the Properties palette (PR). Default no-op (headless/tests).
     virtual void open_properties() {}
     /// DWG import/export via the external converter. Default no-op (headless/tests).
@@ -155,7 +172,9 @@ public:
     /// UI-side), or nullopt over empty space. Used by the smart DIM preview.
     [[nodiscard]] virtual std::optional<core::EntityKind> hovered_kind() const { return std::nullopt; }
 
-    [[nodiscard]] virtual ViewControl* view() = 0;       ///< may be null in tests
+    [[nodiscard]] virtual ViewControl* view() = 0;
+    /// The drawing's saved views (VIEW Restore / ?), as last published by the engine.
+    [[nodiscard]] virtual std::vector<core::NamedView> named_views() const { return {}; }       ///< may be null in tests
 };
 
 } // namespace musacad::command

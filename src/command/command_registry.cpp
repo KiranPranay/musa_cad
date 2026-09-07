@@ -156,6 +156,16 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/xline.svg", "Draw an infinite construction line.");
     reg({"RAY"}, [] { return std::make_unique<XlineCommand>(true); },
         "assets/ribbon/ray.svg", "Draw a semi-infinite construction line.");
+    reg({"DO", "DONUT"}, [] { return std::make_unique<DonutCommand>(); },
+        "assets/ribbon/donut.svg", "Draw a filled ring (or disc) from inside/outside diameters.");
+    reg({"V", "VIEW", "-VIEW"}, [] { return std::make_unique<ViewCommand>(); },
+        "assets/ribbon/view.svg", "Save, restore or delete named views.");
+    reg({"G", "GROUP"}, [] { return std::make_unique<GroupCommand>(); },
+        "assets/ribbon/group.svg", "Make the selected objects a named group.");
+    reg({"UNGROUP"}, [] { return std::make_unique<UngroupCommand>(); },
+        "assets/ribbon/ungroup.svg", "Dissolve a group.");
+    reg({"PICKSTYLE"}, [] { return std::make_unique<PickStyleCommand>(); }, "",
+        "Whether picking a group member selects the whole group.");
     reg({"REVCLOUD"}, [] { return std::make_unique<RevcloudCommand>(); },
         "assets/ribbon/revcloud.svg", "Draw a revision cloud, or turn an object into one.");
     reg({"X", "EXPLODE"}, [] { return std::make_unique<ExplodeCommand>(); },

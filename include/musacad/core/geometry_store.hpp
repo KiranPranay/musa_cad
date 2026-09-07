@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <span>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -15,6 +16,8 @@
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/mtext_block.hpp"
 #include "musacad/core/table_types.hpp"
+#include "musacad/core/entity_group.hpp"
+#include "musacad/core/named_view.hpp"
 #include "musacad/core/page_setup.hpp"
 #include "musacad/core/properties.hpp"
 
@@ -677,6 +680,69 @@ public:
     [[nodiscard]] const std::vector<PageSetup>& page_setups() const noexcept { return page_setups_; }
     void set_page_setups(std::vector<PageSetup> setups) { page_setups_ = std::move(setups); }
     /// Adds a setup, replacing any existing one with the same name (names are unique).
+    // --- named views (VIEW) -------------------------------------------------
+    [[nodiscard]] const std::vector<NamedView>& named_views() const noexcept { return named_views_; }
+    void set_named_views(std::vector<NamedView> views) { named_views_ = std::move(views); }
+    /// Adds or replaces (by name).
+    void add_named_view(const NamedView& v) {
+        for (NamedView& e : named_views_) {
+            if (e.name == v.name) {
+                e = v;
+                return;
+            }
+        }
+        named_views_.push_back(v);
+    }
+    bool remove_named_view(const std::string& name) {
+        const auto n = named_views_.size();
+        std::erase_if(named_views_, [&](const NamedView& v) { return v.name == name; });
+        return named_views_.size() != n;
+    }
+
+    // --- groups (GROUP / UNGROUP) --------------------------------------------
+    [[nodiscard]] const std::vector<EntityGroup>& groups() const noexcept { return groups_; }
+    void set_groups(std::vector<EntityGroup> g) { groups_ = std::move(g); }
+    std::size_t add_group(EntityGroup g) {
+        groups_.push_back(std::move(g));
+        return groups_.size() - 1;
+    }
+    bool remove_group(std::size_t index) {
+        if (index >= groups_.size()) {
+            return false;
+        }
+        groups_.erase(groups_.begin() + static_cast<std::ptrdiff_t>(index));
+        return true;
+    }
+    /// The first group containing `h` (dead members are ignored), or npos.
+    [[nodiscard]] std::size_t group_of(EntityHandle h) const noexcept {
+        for (std::size_t i = 0; i < groups_.size(); ++i) {
+            for (const EntityHandle m : groups_[i].members) {
+                if (m == h) {
+                    return i;
+                }
+            }
+        }
+        return static_cast<std::size_t>(-1);
+    }
+    [[nodiscard]] std::size_t group_index(const std::string& name) const noexcept {
+        for (std::size_t i = 0; i < groups_.size(); ++i) {
+            if (groups_[i].name == name) {
+                return i;
+            }
+        }
+        return static_cast<std::size_t>(-1);
+    }
+    /// The next unnamed-group name, "*A1", "*A2", ... (AutoCAD's convention).
+    [[nodiscard]] std::string next_group_name() const {
+        int best = 0;
+        for (const EntityGroup& g : groups_) {
+            if (g.name.size() > 2 && g.name[0] == '*' && g.name[1] == 'A') {
+                best = std::max(best, std::atoi(g.name.c_str() + 2));
+            }
+        }
+        return "*A" + std::to_string(best + 1);
+    }
+
     void add_page_setup(const PageSetup& setup) {
         for (PageSetup& p : page_setups_) {
             if (p.name == setup.name) {
@@ -750,7 +816,9 @@ private:
     std::vector<DimStyle> dimstyles_{DimStyle{"Standard"}}; // index 0 always present
     double ltscale_ = 1.0;                                  // global linetype scale
     std::unordered_map<std::uint64_t, double> celtscale_;  // sparse per-entity CELTSCALE (def 1.0)
-    std::vector<PageSetup> page_setups_;                    // saved PLOT page setups
+    std::vector<PageSetup> page_setups_;
+    std::vector<NamedView> named_views_;
+    std::vector<EntityGroup> groups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"
     const IFontEngine* font_engine_ = nullptr;             // non-owning; injected service

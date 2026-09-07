@@ -1848,6 +1848,361 @@ void SplineCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 // ---------------------------------------------------------------------------
+// DONUT
+// ---------------------------------------------------------------------------
+namespace {
+std::string fmt4(double v) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.4f", v);
+    return buf;
+}
+} // namespace
+
+void DonutCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    inner_ = s_inner_;
+    outer_ = s_outer_;
+    state_ = State::Inner;
+    ctx.set_prompt("Specify inside diameter of donut <" + fmt4(inner_) + ">: ");
+}
+
+void DonutCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void DonutCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    switch (state_) {
+    case State::Inner: {
+        double v = inner_;
+        if (!t.empty() && (!parse_number(t, v) || v < 0.0)) {
+            ctx.echo("Enter a diameter of 0 or more.");
+            return;
+        }
+        inner_ = v;
+        state_ = State::Outer;
+        ctx.set_prompt("Specify outside diameter of donut <" + fmt4(std::max(outer_, inner_)) + ">: ");
+        return;
+    }
+    case State::Outer: {
+        double v = std::max(outer_, inner_);
+        if (!t.empty() && !parse_number(t, v)) {
+            ctx.echo("Enter a diameter.");
+            return;
+        }
+        if (v <= inner_) {
+            ctx.echo("Value must be greater than the inside diameter.");
+            return;
+        }
+        outer_ = v;
+        s_inner_ = inner_;
+        s_outer_ = outer_;
+        state_ = State::Center;
+        ctx.set_prompt("Specify center of donut or <exit>: ");
+        return;
+    }
+    case State::Center: {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        const auto p = read_point(ctx, text);
+        if (!p) {
+            return;
+        }
+        // A filled annulus: SOLID hatch with an outer loop and (when the hole has a size)
+        // an inner loop -- even-odd, so the hole drops out.
+        const auto ring = [&](double radius) {
+            std::vector<core::Vec2> pts;
+            constexpr int kSegs = 96;
+            pts.reserve(kSegs);
+            for (int i = 0; i < kSegs; ++i) {
+                const double a = core::kTwoPi * static_cast<double>(i) / kSegs;
+                pts.push_back({p->x + radius * std::cos(a), p->y + radius * std::sin(a)});
+            }
+            return pts;
+        };
+        core::AddHatchCommand h;
+        h.loops.push_back(ring(outer_ * 0.5));
+        if (inner_ > 0.0) {
+            h.loops.push_back(ring(inner_ * 0.5));
+        }
+        h.pattern_name = "SOLID";
+        h.group = ctx.group_id();
+        ctx.submit(std::move(h));
+        ctx.set_last_point(*p);
+        ctx.set_prompt("Specify center of donut or <exit>: ");
+        return;
+    }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VIEW
+// ---------------------------------------------------------------------------
+void ViewCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Option;
+    ctx.set_prompt("Enter an option [?/Delete/Orthographic/Restore/Save/Ucs/Window]: ");
+}
+
+void ViewCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void ViewCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Option:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        if (u == "?") {
+            const std::vector<core::NamedView> views = ctx.named_views();
+            if (views.empty()) {
+                ctx.echo("No saved views.");
+            } else {
+                std::string line = "Saved views:";
+                for (const core::NamedView& v : views) {
+                    line += " \"" + v.name + "\"";
+                }
+                ctx.echo(line);
+            }
+            ctx.set_prompt("Enter an option [?/Delete/Orthographic/Restore/Save/Ucs/Window]: ");
+            return;
+        }
+        if (u == "S" || u == "SAVE") {
+            state_ = State::SaveName;
+            ctx.set_prompt("Enter view name to save: ");
+            return;
+        }
+        if (u == "R" || u == "RESTORE") {
+            state_ = State::RestoreName;
+            ctx.set_prompt("Enter view name to restore: ");
+            return;
+        }
+        if (u == "D" || u == "DELETE") {
+            state_ = State::DeleteName;
+            ctx.set_prompt("Enter view name to delete: ");
+            return;
+        }
+        if (u == "W" || u == "WINDOW") {
+            state_ = State::WinFirst;
+            ctx.set_prompt("Specify first corner: ");
+            return;
+        }
+        if (u == "O" || u == "ORTHOGRAPHIC" || u == "U" || u == "UCS") {
+            ctx.echo("Orthographic and UCS views do not apply to a 2D drawing.");
+            return;
+        }
+        ctx.echo("Enter ?, Delete, Restore, Save or Window.");
+        return;
+    case State::SaveName: {
+        if (t.empty()) {
+            ctx.echo("A view name is required.");
+            return;
+        }
+        core::Vec2 center{};
+        double scale = 0.0;
+        if (ctx.view() == nullptr || !ctx.view()->current_view(center, scale)) {
+            ctx.echo("The current view is not available here.");
+            done_ = true;
+            return;
+        }
+        ctx.submit(core::SaveNamedViewCommand{core::NamedView{t, center, scale}});
+        done_ = true;
+        return;
+    }
+    case State::RestoreName: {
+        for (const core::NamedView& v : ctx.named_views()) {
+            if (v.name == t) {
+                if (ctx.view() != nullptr) {
+                    ctx.view()->set_view(v.center, v.scale);
+                }
+                ctx.echo("View \"" + t + "\" restored.");
+                done_ = true;
+                return;
+            }
+        }
+        ctx.echo("View \"" + t + "\" not found.");
+        done_ = true;
+        return;
+    }
+    case State::DeleteName:
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        ctx.submit(core::DeleteNamedViewCommand{t});
+        done_ = true;
+        return;
+    case State::WinFirst:
+        if (const auto p = read_point(ctx, text)) {
+            w0_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::WinSecond;
+            ctx.set_preview({PreviewKind::Rectangle, {*p}});
+            ctx.set_prompt("Specify opposite corner: ");
+        }
+        return;
+    case State::WinSecond:
+        if (const auto p = read_point(ctx, text)) {
+            w1_ = *p;
+            ctx.set_preview({});
+            state_ = State::WinName;
+            ctx.set_prompt("Enter view name to save: ");
+        }
+        return;
+    case State::WinName: {
+        if (t.empty()) {
+            ctx.echo("A view name is required.");
+            return;
+        }
+        const core::Vec2 center = (w0_ + w1_) * 0.5;
+        const double wx = std::abs(w1_.x - w0_.x);
+        const double wy = std::abs(w1_.y - w0_.y);
+        double scale = 1.0;
+        int pw = 0;
+        int ph = 0;
+        core::Vec2 cur_c{};
+        double cur_s = 0.0;
+        if (ctx.view() != nullptr && ctx.view()->viewport_size(pw, ph) && wx > 1e-9 && wy > 1e-9) {
+            scale = std::min(static_cast<double>(pw) / wx, static_cast<double>(ph) / wy);
+        } else if (ctx.view() != nullptr && ctx.view()->current_view(cur_c, cur_s)) {
+            scale = cur_s;
+        }
+        ctx.submit(core::SaveNamedViewCommand{core::NamedView{t, center, scale}});
+        done_ = true;
+        return;
+    }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GROUP / UNGROUP / PICKSTYLE
+// ---------------------------------------------------------------------------
+void GroupCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Select;
+    ctx.set_prompt("Select objects or [Name/Description]: ");
+}
+
+void GroupCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void GroupCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Select:
+        if (t.empty()) {
+            if (ctx.selection_count() == 0) {
+                ctx.echo("Nothing selected.");
+                done_ = true;
+                return;
+            }
+            ctx.submit(core::CreateGroupCommand{name_, description_});
+            done_ = true;
+            return;
+        }
+        if (u == "N" || u == "NAME") {
+            state_ = State::Name;
+            ctx.set_prompt("Enter a group name or [?]: ");
+            return;
+        }
+        if (u == "D" || u == "DESCRIPTION") {
+            state_ = State::Description;
+            ctx.set_prompt("Enter a group description: ");
+            return;
+        }
+        if (u == "ALL") {
+            ctx.submit(core::SelectAllCommand{});
+            ctx.set_prompt("Select objects or [Name/Description]: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
+            ctx.set_prompt("Select objects or [Name/Description]: ");
+        }
+        return;
+    case State::Name:
+        if (u == "?") {
+            ctx.echo("Group names are listed by the engine when created; use UNGROUP by name to remove one.");
+            return;
+        }
+        name_ = t;
+        state_ = State::Select;
+        ctx.set_prompt("Select objects or [Name/Description]: ");
+        return;
+    case State::Description:
+        description_ = t;
+        state_ = State::Select;
+        ctx.set_prompt("Select objects or [Name/Description]: ");
+        return;
+    }
+}
+
+void UngroupCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    by_name_ = false;
+    ctx.set_prompt("Select group or [Name]: ");
+}
+
+void UngroupCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void UngroupCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (by_name_) {
+        if (t.empty()) {
+            done_ = true;
+            return;
+        }
+        ctx.submit(core::UngroupCommand{t, {}, 0.0, true});
+        done_ = true;
+        return;
+    }
+    if (u == "N" || u == "NAME") {
+        by_name_ = true;
+        ctx.set_prompt("Enter group name: ");
+        return;
+    }
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::UngroupCommand{{}, *p, ctx.pick_radius(), false});
+        done_ = true;
+    }
+}
+
+void PickStyleCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter new value for PICKSTYLE <1>: ");
+}
+
+void PickStyleCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void PickStyleCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    double v = 1.0;
+    if (!t.empty() && (!parse_number(t, v) || (v != 0.0 && v != 1.0))) {
+        ctx.echo("Enter 0 or 1.");
+        return;
+    }
+    ctx.submit(core::SetPickStyleCommand{v != 0.0});
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // XLINE / RAY: construction lines
 // ---------------------------------------------------------------------------
 void XlineCommand::emit(CommandContext& ctx, core::Vec2 base, core::Vec2 dir) {
