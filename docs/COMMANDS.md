@@ -150,6 +150,7 @@ commands (Ribbon Phase A):
 | STYLE (text-style table; width factor and oblique applied to TEXT; DXF STYLE table both ways) | ST | Implemented (backwards/upside-down/vertical deferred; MTEXT keeps fonts directly) |
 | BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented (ATTDEF/ATTRIB and REFEDIT deferred) |
 | Properties palette: editable Start/End/Center X-Y, Radius, Position X-Y | PR | Implemented |
+| DXF TOLERANCE: feature control frames both ways (cells joined by %%v, GD&T symbols as {\\Fgdt;x}); datum symbols written as one-cell frames | DXFOUT/DXFIN | Implemented (a datum's leader triangle has no DXF form) |
 | AUDIT | AUDIT | Implemented |
 | PURGE by type (blocks, dimstyles, table styles, image defs, groups, layers) | PU | Implemented (text styles: not a table yet, see #29) |
 | RAY (start + through points) | RAY | Implemented |
