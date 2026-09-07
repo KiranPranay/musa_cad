@@ -10,6 +10,7 @@
 
 #include "musacad/core/command.hpp"
 #include "musacad/core/named_view.hpp"
+#include "musacad/core/snap.hpp"
 #include "musacad/core/text_style.hpp"
 #include "musacad/core/units.hpp"
 #include "musacad/core/entity_handle.hpp"
@@ -122,6 +123,11 @@ public:
         (void)h;
         return false;
     }
+    /// Running object snaps: the mask (bits of SnapType), a setter (-OSNAP), and the
+    /// settings dialog (OSNAP / DDOSNAP).
+    [[nodiscard]] virtual std::uint32_t snap_mask() const { return 0; }
+    virtual void set_snap_mask(std::uint32_t mask) { (void)mask; }
+    virtual void osnap_settings_dialog() {}
     /// Toggle the Properties palette (PR). Default no-op (headless/tests).
     virtual void open_properties() {}
     /// DWG import/export via the external converter. Default no-op (headless/tests).

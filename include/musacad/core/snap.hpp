@@ -23,7 +23,10 @@ enum class SnapType : std::uint8_t {
     Perpendicular = 7,
     Tangent = 8,
     Centroid = 9, // Musa extension
-    Nearest = 10,
+    Insertion = 10,            ///< block / text insertion point
+    ApparentIntersection = 11, ///< where extended lines/arcs would cross
+    Parallel = 12,             ///< a point parallel to a line through the from-point
+    Nearest = 13,              ///< last: it must never out-rank a geometric snap
 };
 
 /// Bit flags for the enabled snap categories (a mask of 1 << SnapType).
@@ -34,7 +37,9 @@ inline constexpr std::uint32_t kAllSnaps =
     snap_bit(SnapType::Endpoint) | snap_bit(SnapType::Midpoint) | snap_bit(SnapType::Center) |
     snap_bit(SnapType::Node) | snap_bit(SnapType::Quadrant) | snap_bit(SnapType::Intersection) |
     snap_bit(SnapType::Perpendicular) | snap_bit(SnapType::Tangent) |
-    snap_bit(SnapType::Centroid) | snap_bit(SnapType::Nearest);
+    snap_bit(SnapType::Centroid) | snap_bit(SnapType::Insertion) | snap_bit(SnapType::Nearest);
+// Apparent intersection and Parallel are opt-in (as in AutoCAD's defaults): the first
+// snaps to points that lie on no object, the second needs a previous point.
 
 struct SnapResult {
     bool found = false;

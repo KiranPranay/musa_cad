@@ -430,6 +430,8 @@ bool any_kind(EntityKind) { return true; }
 bool is_line(EntityKind k) { return k == EntityKind::Line; }
 bool is_circular(EntityKind k) { return k == EntityKind::Circle || k == EntityKind::Arc; }
 bool is_centered(EntityKind k) { return is_circular(k) || k == EntityKind::Ellipse; }
+bool is_fcf(EntityKind k) { return k == EntityKind::Fcf; }
+bool is_datum(EntityKind k) { return k == EntityKind::Datum; }
 bool is_text(EntityKind k) { return k == EntityKind::Text || k == EntityKind::MText; }
 bool is_text_only(EntityKind k) { return k == EntityKind::Text; }
 bool is_mtext_only(EntityKind k) { return k == EntityKind::MText; }
@@ -681,6 +683,59 @@ const Desc kDescs[] = {
          if constexpr (requires { x.pos; }) { return &x.pos.y; } else { return nullptr; } }); }},
 
     // -- Text / MTEXT --
+    // GD&T (issue #32): the frame's cells as one editable line ("sym | 0.1 | A | B"), and
+    // a datum symbol's letter. Cells are RAW (\\U+ codes stay), like TEXT contents.
+    {PropertyId::FcfCells, "Tolerance", "Cells", PropEditor::TextContentEdit, is_fcf,
+     [](const Command& c) {
+         PropertyValue v;
+         if (const auto* f = std::get_if<AddFcfCommand>(&c)) {
+             for (std::size_t i = 0; i < f->cells.size(); ++i) {
+                 v.text += (i > 0 ? " | " : "") + f->cells[i];
+             }
+         }
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         if (auto* f = std::get_if<AddFcfCommand>(&c)) {
+             std::vector<std::string> cells;
+             std::string cur;
+             for (std::size_t i = 0; i <= v.text.size(); ++i) {
+                 if (i == v.text.size() || v.text[i] == '|') {
+                     // trim
+                     std::size_t a = 0;
+                     std::size_t b = cur.size();
+                     while (a < b && cur[a] == ' ') {
+                         ++a;
+                     }
+                     while (b > a && cur[b - 1] == ' ') {
+                         --b;
+                     }
+                     cells.push_back(cur.substr(a, b - a));
+                     cur.clear();
+                 } else {
+                     cur += v.text[i];
+                 }
+             }
+             if (!cells.empty()) {
+                 f->cells = std::move(cells);
+             }
+         }
+     }},
+    {PropertyId::DatumLetter, "Tolerance", "Datum letter", PropEditor::TextContentEdit, is_datum,
+     [](const Command& c) {
+         PropertyValue v;
+         if (const auto* d = std::get_if<AddDatumCommand>(&c)) {
+             v.text = d->letter;
+         }
+         return v;
+     },
+     [](Command& c, const PropertyValue& v) {
+         if (auto* d = std::get_if<AddDatumCommand>(&c)) {
+             if (!v.text.empty()) {
+                 d->letter = v.text;
+             }
+         }
+     }},
     {PropertyId::TextContent, "Text", "Contents", PropEditor::TextContentEdit, is_text_family,
      [](const Command& c) {
          PropertyValue v;

@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <sstream>
 #include <optional>
 #include <string>
 
@@ -1076,22 +1077,48 @@ void RotateCommand::input(CommandContext& ctx, const std::string& text) {
             base_ = *p;
             ctx.set_last_point(*p);
             ctx.set_preview({PreviewKind::Rotate, {*p}});
-            ctx.set_prompt("Specify rotation angle: ");
+            ctx.set_prompt("Specify rotation angle or [Copy/Reference] <0>: ");
         }
         return;
     }
     const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (u == "C" || u == "COPY") {
+        copy_ = true;
+        ctx.echo("Rotating a copy of the selected objects.");
+        ctx.set_prompt("Specify rotation angle or [Copy/Reference] <0>: ");
+        return;
+    }
+    if (u == "R" || u == "REFERENCE") {
+        reference_ = true;
+        have_ref_ = false;
+        ctx.set_prompt("Specify the reference angle <0>: ");
+        return;
+    }
     double deg = 0.0;
     double angle = 0.0;
-    if (parse_number(t, deg)) {
+    if (t.empty() && !reference_) {
+        angle = 0.0;
+    } else if (parse_number(t, deg)) {
         angle = core::to_radians(deg); // typed number = degrees
     } else if (const auto p = read_point(ctx, text)) {
         angle = std::atan2(p->y - base_->y, p->x - base_->x); // picked = angle to point
+    } else if (t.empty() && reference_ && !have_ref_) {
+        angle = 0.0; // the default reference angle
     } else {
         return;
     }
-    ctx.submit(core::RotateSelectionCommand{*base_, angle, ctx.group_id()});
-    ctx.echo("Rotated.");
+    if (reference_ && !have_ref_) {
+        ref_angle_ = angle;
+        have_ref_ = true;
+        ctx.set_prompt("Specify the new angle: ");
+        return;
+    }
+    if (reference_) {
+        angle -= ref_angle_; // rotate so the reference direction lands on the new one
+    }
+    ctx.submit(core::RotateSelectionCommand{*base_, angle, ctx.group_id(), copy_});
+    ctx.echo(copy_ ? "Rotated a copy." : "Rotated.");
     done_ = true;
 }
 
@@ -1124,20 +1151,44 @@ void ScaleCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    if (u == "C" || u == "COPY") {
+        copy_ = true;
+        ctx.echo("Scaling a copy of the selected objects.");
+        ctx.set_prompt("Specify scale factor or [Copy/Reference]: ");
+        return;
+    }
+    if (u == "R" || u == "REFERENCE") {
+        reference_ = true;
+        have_ref_ = false;
+        ctx.set_prompt("Specify reference length <1>: ");
+        return;
+    }
     double factor = 0.0;
     if (parse_number(t, factor)) {
-        // typed factor
+        // typed factor (or a length, in Reference mode)
     } else if (const auto p = read_point(ctx, text)) {
         factor = core::distance(*base_, *p); // picked = distance (reference length 1)
+    } else if (t.empty() && reference_ && !have_ref_) {
+        factor = 1.0; // the default reference length
     } else {
         return;
     }
     if (!(factor > 0.0)) {
-        ctx.echo("Scale factor must be positive.");
+        ctx.echo("Value must be positive.");
         return;
     }
-    ctx.submit(core::ScaleSelectionCommand{*base_, factor, ctx.group_id()});
-    ctx.echo("Scaled.");
+    if (reference_ && !have_ref_) {
+        ref_len_ = factor;
+        have_ref_ = true;
+        ctx.set_prompt("Specify new length: ");
+        return;
+    }
+    if (reference_) {
+        factor = factor / ref_len_; // the reference length becomes the new length
+    }
+    ctx.submit(core::ScaleSelectionCommand{*base_, factor, ctx.group_id(), copy_});
+    ctx.echo(copy_ ? "Scaled a copy." : "Scaled.");
     done_ = true;
 }
 
@@ -2224,6 +2275,115 @@ void PickStyleCommand::input(CommandContext& ctx, const std::string& text) {
         return;
     }
     ctx.submit(core::SetPickStyleCommand{v != 0.0});
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// OSNAP / -OSNAP: running object snaps
+// ---------------------------------------------------------------------------
+namespace {
+struct SnapCode {
+    const char* code;
+    const char* name;
+    core::SnapType type;
+};
+constexpr SnapCode kSnapCodes[] = {
+    {"END", "Endpoint", core::SnapType::Endpoint},
+    {"MID", "Midpoint", core::SnapType::Midpoint},
+    {"CEN", "Center", core::SnapType::Center},
+    {"NOD", "Node", core::SnapType::Node},
+    {"QUA", "Quadrant", core::SnapType::Quadrant},
+    {"INT", "Intersection", core::SnapType::Intersection},
+    {"PER", "Perpendicular", core::SnapType::Perpendicular},
+    {"TAN", "Tangent", core::SnapType::Tangent},
+    {"NEA", "Nearest", core::SnapType::Nearest},
+    {"INS", "Insertion", core::SnapType::Insertion},
+    {"APP", "Apparent intersection", core::SnapType::ApparentIntersection},
+    {"PAR", "Parallel", core::SnapType::Parallel},
+    {"CENTROID", "Centroid", core::SnapType::Centroid},
+};
+std::string snap_list(std::uint32_t mask) {
+    std::string out;
+    for (const SnapCode& c : kSnapCodes) {
+        if ((mask & core::snap_bit(c.type)) != 0) {
+            out += (out.empty() ? "" : ", ") + std::string(c.name);
+        }
+    }
+    return out.empty() ? "none" : out;
+}
+} // namespace
+
+void OsnapCommand::start(CommandContext& ctx) {
+    if (ctx.view() != nullptr) {
+        ctx.view()->osnap_settings_dialog();
+    } else {
+        ctx.echo("Object snap settings are not available here; use -OSNAP.");
+    }
+    done_ = true;
+}
+
+void OsnapCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void OsnapModesCommand::start(CommandContext& ctx) {
+    const std::uint32_t cur = ctx.view() != nullptr ? ctx.view()->snap_mask() : 0;
+    ctx.echo("Current object snap modes: " + snap_list(cur));
+    ctx.set_prompt("Enter list of object snap modes: ");
+}
+
+void OsnapModesCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void OsnapModesCommand::input(CommandContext& ctx, const std::string& text) {
+    std::string u = upper(trimmed(text));
+    for (char& ch : u) {
+        if (ch == ',' || ch == ';') {
+            ch = ' ';
+        }
+    }
+    std::uint32_t mask = 0;
+    std::string tok;
+    std::stringstream ss(u);
+    bool any = false;
+    while (ss >> tok) {
+        any = true;
+        if (tok == "NONE" || tok == "OFF") {
+            mask = 0;
+            continue;
+        }
+        if (tok == "ALL") {
+            for (const SnapCode& c : kSnapCodes) {
+                mask |= core::snap_bit(c.type);
+            }
+            continue;
+        }
+        bool known = false;
+        for (const SnapCode& c : kSnapCodes) {
+            const std::string code(c.code);
+            std::string name = upper(c.name);
+            if (tok == code || tok == name || (tok.size() >= 3 && name.rfind(tok, 0) == 0)) {
+                mask |= core::snap_bit(c.type);
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            ctx.echo("Unknown object snap mode \"" + tok + "\". Use END, MID, CEN, NOD, QUA, INT, PER, TAN, NEA, INS, APP, PAR, NONE or ALL.");
+            return;
+        }
+    }
+    if (!any) {
+        done_ = true;
+        return;
+    }
+    if (ctx.view() != nullptr) {
+        ctx.view()->set_snap_mask(mask);
+    }
+    ctx.echo("Object snap modes: " + snap_list(mask));
     done_ = true;
 }
 

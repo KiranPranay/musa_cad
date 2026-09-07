@@ -68,6 +68,15 @@ public:
     void plot_dialog() override;
     [[nodiscard]] core::MatchPropFilter match_filter() const override;
     void match_settings_dialog() override;
+    [[nodiscard]] std::uint32_t snap_mask() const override;
+    void set_snap_mask(std::uint32_t mask) override;
+    void osnap_settings_dialog() override;
+    void set_osnap_settings_callback(std::function<void()> cb) { osnap_settings_callback_ = std::move(cb); }
+    /// A dialog-driven ghost of the selection (Rotate/Scale dialogs): mode 3 rotates
+    /// about `a` by `param` radians, 4 scales about `a` by `param`; 0 clears.
+    void set_dialog_ghost(int mode, core::Vec2 a, double param);
+    /// The selection's drawn extents from the last snapshot (dialog defaults).
+    bool selection_bounds(core::Vec2& mn, core::Vec2& mx);
     void set_match_cursor(bool on) override;
 
 Q_SIGNALS:
@@ -502,6 +511,13 @@ private:
     std::vector<core::TextStyle> text_styles_;  ///< under layers_mutex_
     std::uint16_t current_text_style_ = 0;
     std::vector<std::string> block_names_;      ///< under layers_mutex_
+    std::function<void()> osnap_settings_callback_;
+    int dialog_ghost_mode_ = 0;
+    core::Vec2 dialog_ghost_a_{};
+    double dialog_ghost_param_ = 0.0;
+    bool has_sel_bounds_ = false;               ///< under grips_mutex_
+    core::Vec2 sel_bounds_min_{};
+    core::Vec2 sel_bounds_max_{};
 
     // Cursor (device px) shared GUI->render for the crosshair.
     std::atomic<bool> cursor_inside_{false};

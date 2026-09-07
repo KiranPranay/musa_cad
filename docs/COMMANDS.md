@@ -42,6 +42,7 @@ commands (Ribbon Phase A):
 | REVCLOUD | Draw a revision cloud, or turn an object into one. |
 | EXPLODE (X) | Break compound objects into their components. |
 | PURGE (PU) | Remove unused layers, dimension styles, table styles, blocks, image definitions or empty groups (type prompt, All by default). |
+| OSNAP (OS, DDOSNAP) / -OSNAP | The running object-snap settings dialog; -OSNAP takes a mode list (END, MID, CEN, NOD, QUA, INT, PER, TAN, NEA, INS, APP, PAR, NONE, ALL). |
 | PEDIT (PE) | Edit a polyline: Close/Open, Join, Edit vertex (Insert/Delete/Move), Spline (a fit spline through the vertices), Decurve, Reverse, Undo; a picked line or arc is converted first. |
 | BLOCK (B, -BLOCK) | Make the selection a block definition (name, base point, select objects); the originals are replaced by one insert in place. |
 | INSERT (I, -INSERT) | Insert a block by name: insertion point, X/Y scale, rotation (? lists blocks). |
@@ -151,6 +152,9 @@ commands (Ribbon Phase A):
 | STYLE (text-style table; width factor and oblique applied to TEXT; DXF STYLE table both ways) | ST | Implemented (backwards/upside-down/vertical deferred; MTEXT keeps fonts directly) |
 | BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented (ATTDEF/ATTRIB and REFEDIT deferred) |
 | PEDIT (Close/Open/Join/Edit vertex/Spline/Decurve/Reverse/Undo) | PE | Implemented (Width, Fit, Ltype gen, Multiple deferred; Spline yields a SPLINE entity) |
+| Object snaps: Insertion, Apparent intersection, Parallel; OSNAP settings dialog; -OSNAP | OS | Implemented (Apparent intersection and Parallel are opt-in, as in AutoCAD) |
+| ROTATE/SCALE [Copy]/[Reference]; Rotate/Scale value dialogs with live ghost | RO / SC | Implemented |
+| Properties palette: feature control frame cells and datum letter editable | PR | Implemented |
 | Properties palette: editable Start/End/Center X-Y, Radius, Position X-Y | PR | Implemented |
 | DXF TOLERANCE: feature control frames both ways (cells joined by %%v, GD&T symbols as {\\Fgdt;x}); datum symbols written as one-cell frames | DXFOUT/DXFIN | Implemented (a datum's leader triangle has no DXF form) |
 | AUDIT | AUDIT | Implemented |

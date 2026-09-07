@@ -4,6 +4,7 @@
 #include "musacad/core/osnap.hpp"
 
 #include "musacad/core/ellipse.hpp"
+#include "musacad/core/native_kernel_2d.hpp"
 
 #include <array>
 #include <cmath>
@@ -155,6 +156,16 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
             consider(SnapType::Endpoint, l->b);
             consider(SnapType::Midpoint, (l->a + l->b) * 0.5);
             if (from_point) {
+                // Parallel: the line through the previous point parallel to this one;
+                // the snap is the cursor's foot on it (AutoCAD's PAR tracking point).
+                const Vec2 pd = l->b - l->a;
+                const double plen2 = length_squared(pd);
+                if (plen2 > 0.0) {
+                    const Vec2 u = pd / std::sqrt(plen2);
+                    consider(SnapType::Parallel, *from_point + u * dot(cursor - *from_point, u));
+                }
+            }
+            if (from_point) {
                 // Foot of perpendicular from the previous point onto the line.
                 const Vec2 ab = l->b - l->a;
                 const double len2 = length_squared(ab);
@@ -201,18 +212,23 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
             break;
         }
         case EntityKind::Insert:
-            consider(SnapType::Node, store.insert(h)->pos); // block insertion point
+            consider(SnapType::Insertion, store.insert(h)->pos); // block insertion point
+            break;
+        case EntityKind::Text:
+            consider(SnapType::Insertion, store.text(h)->pos);
+            break;
+        case EntityKind::MText:
+            consider(SnapType::Insertion, store.mtext(h)->text.pos);
             break;
         case EntityKind::Spline:
-        case EntityKind::Text:
         case EntityKind::Dimension:
         case EntityKind::Leader:
-        case EntityKind::MText:
         case EntityKind::MLeader:
         case EntityKind::Hatch:
         case EntityKind::Fcf:
         case EntityKind::Datum:
         case EntityKind::Image:
+            break; // no object-snap points (nearest, if any, handled below)
         case EntityKind::Ellipse: {
             const EllipseData* e = store.ellipse(h);
             consider(SnapType::Center, e->center);
@@ -231,8 +247,13 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
             }
             break;
         }
-        case EntityKind::Table:
         case EntityKind::Xline:
+            if (from_point) {
+                const XlineData* x = store.xline(h);
+                consider(SnapType::Parallel, *from_point + x->dir * dot(cursor - *from_point, x->dir));
+            }
+            break;
+        case EntityKind::Table:
             break; // no object-snap points (nearest, if any, handled below)
         }
 
@@ -254,6 +275,66 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
                 kernel.intersect(store, candidates[i], candidates[j], hits);
                 for (const Vec2& p : hits) {
                     consider(SnapType::Intersection, p);
+                }
+            }
+        }
+    }
+
+    // Apparent intersection: where the objects WOULD cross if extended -- lines and
+    // construction lines as infinite lines, arcs as their full circles. A real crossing
+    // is already an Intersection (which out-ranks this), so only the extensions matter.
+    if ((enabled_types & snap_bit(SnapType::ApparentIntersection)) != 0) {
+        struct Ext {
+            bool is_line = false;
+            Vec2 a{};
+            Vec2 b{};
+            Vec2 c{};
+            double r = 0.0;
+        };
+        const auto ext_of = [&](EntityHandle h, Ext& e) {
+            switch (h.kind) {
+            case EntityKind::Line:
+                e = {true, store.line(h)->a, store.line(h)->b, {}, 0.0};
+                return true;
+            case EntityKind::Xline:
+                e = {true, store.xline(h)->base, store.xline(h)->base + store.xline(h)->dir, {}, 0.0};
+                return true;
+            case EntityKind::Arc:
+                e = {false, {}, {}, store.arc(h)->center, store.arc(h)->radius};
+                return true;
+            case EntityKind::Circle:
+                e = {false, {}, {}, store.circle(h)->center, store.circle(h)->radius};
+                return true;
+            default:
+                return false;
+            }
+        };
+        for (std::size_t i = 0; i < candidates.size(); ++i) {
+            Ext ei;
+            if (!ext_of(candidates[i], ei)) {
+                continue;
+            }
+            for (std::size_t j = i + 1; j < candidates.size(); ++j) {
+                Ext ej;
+                if (!ext_of(candidates[j], ej)) {
+                    continue;
+                }
+                Vec2 p0{};
+                Vec2 p1{};
+                if (ei.is_line && ej.is_line) {
+                    if (NativeKernel2D::line_line_intersection(ei.a, ei.b, ej.a, ej.b, p0)) {
+                        consider(SnapType::ApparentIntersection, p0);
+                    }
+                } else if (ei.is_line != ej.is_line) {
+                    const Ext& ln = ei.is_line ? ei : ej;
+                    const Ext& ci = ei.is_line ? ej : ei;
+                    const int n = NativeKernel2D::line_circle_intersection(ln.a, ln.b, ci.c, ci.r, p0, p1);
+                    if (n >= 1) {
+                        consider(SnapType::ApparentIntersection, p0);
+                    }
+                    if (n == 2) {
+                        consider(SnapType::ApparentIntersection, p1);
+                    }
                 }
             }
         }

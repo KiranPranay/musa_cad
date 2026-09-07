@@ -208,6 +208,36 @@ void ViewportWindow::match_settings_dialog() {
     }
 }
 
+std::uint32_t ViewportWindow::snap_mask() const {
+    return modes_ ? modes_->snap_mask.load(std::memory_order_relaxed) : core::kAllSnaps;
+}
+
+void ViewportWindow::set_snap_mask(std::uint32_t mask) {
+    if (modes_) {
+        modes_->snap_mask.store(mask, std::memory_order_relaxed);
+    }
+}
+
+void ViewportWindow::osnap_settings_dialog() {
+    if (osnap_settings_callback_) {
+        osnap_settings_callback_(); // MainWindow owns the dialog (GUI thread)
+    }
+}
+
+void ViewportWindow::set_dialog_ghost(int mode, core::Vec2 a, double param) {
+    dialog_ghost_mode_ = mode;
+    dialog_ghost_a_ = a;
+    dialog_ghost_param_ = param;
+    rebuild_overlay();
+}
+
+bool ViewportWindow::selection_bounds(core::Vec2& mn, core::Vec2& mx) {
+    std::scoped_lock lock(grips_mutex_);
+    mn = sel_bounds_min_;
+    mx = sel_bounds_max_;
+    return has_sel_bounds_;
+}
+
 void ViewportWindow::set_match_cursor(bool on) {
     if (on) {
         // A simple drawn paintbrush (Qt has no built-in one): a wooden handle, a metal
@@ -448,6 +478,14 @@ void ViewportWindow::render_loop(std::stop_token token) {
             grips_cache_ = snap.grips;
             text_targets_ = snap.text_edit_targets; // double-click-to-edit hit-test
             selection_summary_ = snap.selection_summary; // PR palette
+            has_sel_bounds_ = !snap.selected_line_vertices.empty();
+            if (has_sel_bounds_) {
+                sel_bounds_min_ = sel_bounds_max_ = snap.selected_line_vertices.front();
+                for (const core::Vec2& p : snap.selected_line_vertices) {
+                    sel_bounds_min_ = {std::min(sel_bounds_min_.x, p.x), std::min(sel_bounds_min_.y, p.y)};
+                    sel_bounds_max_ = {std::max(sel_bounds_max_.x, p.x), std::max(sel_bounds_max_.y, p.y)};
+                }
+            }
             bounds_min_ = snap.bounds_min;
             bounds_max_ = snap.bounds_max;
             has_bounds_ = snap.has_bounds;
@@ -1231,6 +1269,13 @@ void ViewportWindow::rebuild_overlay() {
         build_sub_prompt_ui(ov.command_ui); // buffer is cleared on Enter (per step)
     } else if (!sub_entry_.empty()) {
         sub_entry_.clear(); // command ended / entered a rubber-band: drop stale text
+    }
+    // A dialog-driven ghost (Rotate/Scale dialogs) shows the selection transformed by
+    // the typed value, through the same ghost path the commands' rubber bands use.
+    if (dialog_ghost_mode_ != 0 && ov.ghost_mode == 0) {
+        ov.ghost_mode = dialog_ghost_mode_;
+        ov.ghost_a = dialog_ghost_a_;
+        ov.ghost_param = dialog_ghost_param_;
     }
     // Publish as an immutable shared object; the render thread references it.
     auto published = std::make_shared<const render::RenderOverlay>(std::move(ov));

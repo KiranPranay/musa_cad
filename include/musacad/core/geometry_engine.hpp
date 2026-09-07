@@ -245,8 +245,8 @@ private:
     /// Shared JOIN core: merge every connected sub-chain among `ents` (lines/arcs/open
     /// polylines sharing endpoints within `radius`) into polyline(s), one undo group.
     void join_entities(const std::vector<EntityHandle>& ents, double radius, std::uint64_t group);
-    void apply_rotate(Vec2 base, double angle, std::uint64_t group);
-    void apply_scale(Vec2 base, double factor, std::uint64_t group);
+    void apply_rotate(Vec2 base, double angle, std::uint64_t group, bool copy = false);
+    void apply_scale(Vec2 base, double factor, std::uint64_t group, bool copy = false);
     void apply_array_rect(int rows, int cols, double dx, double dy, double angle,
                           std::uint64_t group);
     void apply_array_path(const ArrayPathCommand& c);
