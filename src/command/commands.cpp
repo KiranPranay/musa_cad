@@ -2228,6 +2228,219 @@ void PickStyleCommand::input(CommandContext& ctx, const std::string& text) {
 }
 
 // ---------------------------------------------------------------------------
+// BLOCK / INSERT / WBLOCK / REGEN
+// ---------------------------------------------------------------------------
+namespace {
+void echo_block_names(CommandContext& ctx) {
+    const std::vector<std::string> names = ctx.block_names();
+    if (names.empty()) {
+        ctx.echo("No blocks defined.");
+        return;
+    }
+    std::string line = "Blocks:";
+    for (const std::string& n : names) {
+        line += " \"" + n + "\"";
+    }
+    ctx.echo(line);
+}
+} // namespace
+
+void BlockCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Name;
+    ctx.set_prompt("Enter block name or [?]: ");
+}
+
+void BlockCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void BlockCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Name:
+        if (u == "?") {
+            echo_block_names(ctx);
+            return;
+        }
+        if (t.empty()) {
+            ctx.echo("A block name is required.");
+            return;
+        }
+        name_ = t;
+        state_ = State::Base;
+        ctx.set_prompt("Specify insertion base point: ");
+        return;
+    case State::Base:
+        if (const auto p = read_point(ctx, text)) {
+            base_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Select;
+            ctx.set_prompt("Select objects: ");
+        }
+        return;
+    case State::Select:
+        if (t.empty()) {
+            if (ctx.selection_count() == 0) {
+                ctx.echo("Nothing selected.");
+                done_ = true;
+                return;
+            }
+            ctx.submit(core::DefineBlockCommand{name_, base_, ctx.group_id()});
+            done_ = true;
+            return;
+        }
+        if (u == "ALL") {
+            ctx.submit(core::SelectAllCommand{});
+            ctx.set_prompt("Select objects: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
+            ctx.set_prompt("Select objects: ");
+        }
+        return;
+    }
+}
+
+void InsertCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Name;
+    ctx.set_prompt("Enter block name or [?]" + (s_last_.empty() ? std::string() : " <" + s_last_ + ">") + ": ");
+}
+
+void InsertCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.set_preview({});
+    done_ = true;
+}
+
+void InsertCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    double v = 0.0;
+    switch (state_) {
+    case State::Name:
+        if (u == "?") {
+            echo_block_names(ctx);
+            return;
+        }
+        if (t.empty() && s_last_.empty()) {
+            ctx.echo("A block name is required.");
+            return;
+        }
+        name_ = t.empty() ? s_last_ : t;
+        {
+            bool known = false;
+            for (const std::string& n : ctx.block_names()) {
+                known = known || n == name_;
+            }
+            if (!known) {
+                ctx.echo("Block \"" + name_ + "\" not found.");
+                return;
+            }
+        }
+        state_ = State::Point;
+        ctx.set_prompt("Specify insertion point or [Scale/Rotate]: ");
+        return;
+    case State::Point:
+        if (u == "S" || u == "SCALE") {
+            state_ = State::ScaleX;
+            ctx.set_prompt("Enter scale factor for XY axes <1>: ");
+            return;
+        }
+        if (u == "R" || u == "ROTATE") {
+            state_ = State::Rotation;
+            ctx.set_prompt("Specify rotation angle <0>: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pos_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::ScaleX;
+            ctx.set_prompt("Enter X scale factor or [Corner/XYZ] <1>: ");
+        }
+        return;
+    case State::ScaleX:
+        if (!t.empty()) {
+            if (!parse_number(t, v) || v == 0.0) {
+                ctx.echo("Enter a non-zero scale factor.");
+                return;
+            }
+            sx_ = v;
+            sy_ = v;
+        }
+        state_ = State::ScaleY;
+        ctx.set_prompt("Enter Y scale factor <use X scale factor>: ");
+        return;
+    case State::ScaleY:
+        if (!t.empty()) {
+            if (!parse_number(t, v) || v == 0.0) {
+                ctx.echo("Enter a non-zero scale factor.");
+                return;
+            }
+            sy_ = v;
+        }
+        state_ = State::Rotation;
+        ctx.set_prompt("Specify rotation angle <0>: ");
+        return;
+    case State::Rotation: {
+        double deg = 0.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            ctx.echo("Enter an angle in degrees.");
+            return;
+        }
+        s_last_ = name_;
+        ctx.submit(core::InsertBlockCommand{name_, pos_, sx_, sy_, core::to_radians(deg), ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void WblockCommand::start(CommandContext& ctx) {
+    state_ = State::Name;
+    ctx.set_prompt("Enter name of existing block or [?/* (whole drawing)] <*>: ");
+}
+
+void WblockCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void WblockCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    if (state_ == State::Name) {
+        if (t == "?") {
+            echo_block_names(ctx);
+            return;
+        }
+        name_ = (t.empty() || t == "*") ? std::string() : t;
+        state_ = State::Path;
+        ctx.set_prompt("Specify output file (.musa): ");
+        return;
+    }
+    if (t.empty()) {
+        ctx.echo("A file name is required.");
+        return;
+    }
+    ctx.submit(core::WriteBlockCommand{name_, t});
+    done_ = true;
+}
+
+void RegenCommand::start(CommandContext& ctx) {
+    ctx.submit(core::RegenCommand{});
+    done_ = true;
+}
+
+void RegenCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
 // STYLE (-STYLE): the command-line flow, prompt by prompt
 // ---------------------------------------------------------------------------
 void StyleCommand::start(CommandContext& ctx) {

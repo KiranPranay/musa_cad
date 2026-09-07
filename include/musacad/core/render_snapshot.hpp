@@ -143,6 +143,7 @@ struct RenderSnapshot {
     std::vector<PageSetup> page_setups; // saved PLOT page setups (for the PLOT dialog)
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)
     std::vector<std::string> group_names; // GROUP table names (for GROUP ?)
+    std::vector<std::string> block_names; // block-definition names (INSERT ?)
     DrawingUnits units;                    // UNITS: display formats (readout, DYN, inquiry)
     std::vector<TextStyle> text_styles;    // STYLE table (TEXT, the palette)
     std::uint16_t current_text_style = 0;
@@ -256,6 +257,7 @@ struct RenderSnapshot {
         page_setups.clear();
         named_views.clear();
         group_names.clear();
+        block_names.clear();
         current_layer = 0;
         has_pending_dim = false;
         pending_dim_version = 0;

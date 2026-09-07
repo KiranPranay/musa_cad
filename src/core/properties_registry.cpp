@@ -341,6 +341,31 @@ std::string font_of(const Command& c) {
         c);
     return out;
 }
+/// Generic numeric field access for the editable geometry rows: `pick` returns a
+/// pointer to the double inside the command (or nullptr for kinds without it).
+template <class Pick>
+PropertyValue read_field(const Command& c, Pick pick) {
+    PropertyValue v;
+    std::visit(
+        [&](const auto& x) {
+            if (const double* d = pick(x)) {
+                v.num = *d;
+            }
+        },
+        c);
+    return v;
+}
+template <class Pick>
+void write_field(Command& c, double value, Pick pick) {
+    std::visit(
+        [&](auto& x) {
+            if (double* d = pick(x)) {
+                *d = value;
+            }
+        },
+        c);
+}
+
 void set_font(Command& c, const std::string& name) {
     std::visit(
         [&](auto& x) {
@@ -586,21 +611,74 @@ const Desc kDescs[] = {
          return v;
      },
      nullptr},
-    {PropertyId::GeomRadius, "Geometry", "Radius", PropEditor::ReadOnly, is_circular,
+    {PropertyId::GeomRadius, "Geometry", "Radius", PropEditor::Number, is_circular,
      [](const Command& c) {
          PropertyValue v;
          std::visit(
              [&](const auto& x) {
                  if constexpr (requires { x.radius; }) {
-                     v.text = fmt(x.radius);
+                     v.num = x.radius;
                  }
              },
              c);
          return v;
      },
-     nullptr},
+     [](Command& c, const PropertyValue& v) {
+         if (v.num > 0.0) {
+             std::visit(
+                 [&](auto& x) {
+                     if constexpr (requires { x.radius; }) {
+                         x.radius = v.num;
+                     }
+                 },
+                 c);
+         }
+     }},
     {PropertyId::GeomPos, "Geometry", "Position", PropEditor::ReadOnly, is_text,
      [](const Command& c) { return read_text_pt(c, false); }, nullptr},
+    // Editable coordinates (issue #32): one row per axis, like AutoCAD's Start X / Start
+    // Y. The engine's apply path re-creates the entity from the edited command, so a
+    // typed value moves the geometry exactly as a grip drag would.
+    {PropertyId::GeomStartX, "Geometry", "Start X", PropEditor::Number, is_line,
+     [](const Command& c) { return read_field(c, [](const auto& x) -> const double* {
+         if constexpr (requires { x.a; }) { return &x.a.x; } else { return nullptr; } }); },
+     [](Command& c, const PropertyValue& v) { write_field(c, v.num, [](auto& x) -> double* {
+         if constexpr (requires { x.a; }) { return &x.a.x; } else { return nullptr; } }); }},
+    {PropertyId::GeomStartY, "Geometry", "Start Y", PropEditor::Number, is_line,
+     [](const Command& c) { return read_field(c, [](const auto& x) -> const double* {
+         if constexpr (requires { x.a; }) { return &x.a.y; } else { return nullptr; } }); },
+     [](Command& c, const PropertyValue& v) { write_field(c, v.num, [](auto& x) -> double* {
+         if constexpr (requires { x.a; }) { return &x.a.y; } else { return nullptr; } }); }},
+    {PropertyId::GeomEndX, "Geometry", "End X", PropEditor::Number, is_line,
+     [](const Command& c) { return read_field(c, [](const auto& x) -> const double* {
+         if constexpr (requires { x.b; }) { return &x.b.x; } else { return nullptr; } }); },
+     [](Command& c, const PropertyValue& v) { write_field(c, v.num, [](auto& x) -> double* {
+         if constexpr (requires { x.b; }) { return &x.b.x; } else { return nullptr; } }); }},
+    {PropertyId::GeomEndY, "Geometry", "End Y", PropEditor::Number, is_line,
+     [](const Command& c) { return read_field(c, [](const auto& x) -> const double* {
+         if constexpr (requires { x.b; }) { return &x.b.y; } else { return nullptr; } }); },
+     [](Command& c, const PropertyValue& v) { write_field(c, v.num, [](auto& x) -> double* {
+         if constexpr (requires { x.b; }) { return &x.b.y; } else { return nullptr; } }); }},
+    {PropertyId::GeomCenterX, "Geometry", "Center X", PropEditor::Number, is_centered,
+     [](const Command& c) { return read_field(c, [](const auto& x) -> const double* {
+         if constexpr (requires { x.center; }) { return &x.center.x; } else { return nullptr; } }); },
+     [](Command& c, const PropertyValue& v) { write_field(c, v.num, [](auto& x) -> double* {
+         if constexpr (requires { x.center; }) { return &x.center.x; } else { return nullptr; } }); }},
+    {PropertyId::GeomCenterY, "Geometry", "Center Y", PropEditor::Number, is_centered,
+     [](const Command& c) { return read_field(c, [](const auto& x) -> const double* {
+         if constexpr (requires { x.center; }) { return &x.center.y; } else { return nullptr; } }); },
+     [](Command& c, const PropertyValue& v) { write_field(c, v.num, [](auto& x) -> double* {
+         if constexpr (requires { x.center; }) { return &x.center.y; } else { return nullptr; } }); }},
+    {PropertyId::GeomPosX, "Geometry", "Position X", PropEditor::Number, is_text,
+     [](const Command& c) { return read_field(c, [](const auto& x) -> const double* {
+         if constexpr (requires { x.pos; }) { return &x.pos.x; } else { return nullptr; } }); },
+     [](Command& c, const PropertyValue& v) { write_field(c, v.num, [](auto& x) -> double* {
+         if constexpr (requires { x.pos; }) { return &x.pos.x; } else { return nullptr; } }); }},
+    {PropertyId::GeomPosY, "Geometry", "Position Y", PropEditor::Number, is_text,
+     [](const Command& c) { return read_field(c, [](const auto& x) -> const double* {
+         if constexpr (requires { x.pos; }) { return &x.pos.y; } else { return nullptr; } }); },
+     [](Command& c, const PropertyValue& v) { write_field(c, v.num, [](auto& x) -> double* {
+         if constexpr (requires { x.pos; }) { return &x.pos.y; } else { return nullptr; } }); }},
 
     // -- Text / MTEXT --
     {PropertyId::TextContent, "Text", "Contents", PropEditor::TextContentEdit, is_text_family,

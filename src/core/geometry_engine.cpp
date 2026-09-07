@@ -2947,6 +2947,182 @@ void GeometryEngine::apply_purge(std::uint8_t what) {
 // reference is reset to the default entry (a re-create, one undo group), a degenerate
 // entity or one referencing a missing definition is erased, and dead group members
 // are dropped. The report follows AutoCAD's AUDIT wording.
+// BLOCK: the selection becomes a definition. Block content is kept in WORLD
+// coordinates with the picked base point as the definition's base, so replacing the
+// originals with one insert AT that base (scale 1, rotation 0) leaves every stroke where
+// it was -- the insert transform is world = pos + R(S(local - base)). One undo group.
+void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
+    prune_selection();
+    if (c.name.empty()) {
+        report("Block: a name is required.");
+        return;
+    }
+    if (selection_.empty()) {
+        report("Block: nothing selected.");
+        return;
+    }
+    BlockDef def;
+    def.name = c.name;
+    def.base = c.base;
+    std::vector<EntityHandle> taken;
+    int skipped = 0;
+    for (const EntityHandle h : selection_) {
+        switch (h.kind) {
+        case EntityKind::Line:
+            def.content.lines.push_back(*store_.line(h));
+            break;
+        case EntityKind::Circle:
+            def.content.circles.push_back(*store_.circle(h));
+            break;
+        case EntityKind::Arc:
+            def.content.arcs.push_back(*store_.arc(h));
+            break;
+        case EntityKind::Polyline: {
+            const PolylineData* pl = store_.polyline(h);
+            const auto v = store_.vertices_of(*pl);
+            const auto b = store_.bulges_of(*pl);
+            def.content.polylines.push_back(BlockPolyline{std::vector<Vec2>(v.begin(), v.end()),
+                                                          std::vector<double>(b.begin(), b.end()),
+                                                          pl->closed, pl->props});
+            break;
+        }
+        case EntityKind::Text: {
+            const TextData* t = store_.text(h);
+            def.content.texts.push_back(BlockText{t->pos, t->height, t->rotation, t->justify,
+                                                  std::string(store_.string_of(*t)), t->props});
+            break;
+        }
+        case EntityKind::MText: {
+            const MTextData* m = store_.mtext(h);
+            def.content.mtexts.push_back(
+                BlockMText{m->text, std::string(store_.string_of(m->text)), m->props});
+            break;
+        }
+        case EntityKind::Insert:
+            def.content.inserts.push_back(*store_.insert(h)); // nests
+            break;
+        case EntityKind::Point:
+        case EntityKind::Spline:
+        case EntityKind::Dimension:
+        case EntityKind::Leader:
+        case EntityKind::MLeader:
+        case EntityKind::Hatch:
+        case EntityKind::Fcf:
+        case EntityKind::Datum:
+        case EntityKind::Image:
+        case EntityKind::Table:
+        case EntityKind::Xline:
+        case EntityKind::Ellipse:
+            ++skipped; // the block content cannot hold this kind yet: left in place
+            continue;
+        }
+        taken.push_back(h);
+    }
+    if (taken.empty()) {
+        report("Block: none of the selected objects can go into a block yet (lines, circles, "
+               "arcs, polylines, text, mtext and inserts can).");
+        return;
+    }
+    std::uint16_t bi = 0xFFFF;
+    for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+        if (store_.block(i)->name == c.name) {
+            bi = i;
+        }
+    }
+    const bool redefined = bi != 0xFFFF;
+    if (redefined) {
+        store_.redefine_block(bi, def);
+    } else {
+        bi = store_.add_block(def);
+    }
+    for (const EntityHandle h : taken) {
+        const Command original = capture_entity(h);
+        remove_indexed(h);
+        push_erase_item(c.group, h, original);
+    }
+    const Command ins = AddInsertCommand{bi, c.base, 1.0, 1.0, 0.0, 0};
+    const EntityHandle nh = create_indexed(ins);
+    push_create_item(c.group, nh, ins);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    std::string msg = std::string(redefined ? "Block \"" : "Block \"") + c.name +
+                      (redefined ? "\" redefined with " : "\" defined with ") +
+                      std::to_string(taken.size()) + (taken.size() == 1 ? " object" : " objects");
+    if (skipped > 0) {
+        msg += " (" + std::to_string(skipped) + " unsupported left in place)";
+    }
+    report(msg + ".");
+}
+
+// WBLOCK: a block's content as a drawing of its own (base point at the origin), or the
+// whole drawing when no name is given.
+void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
+    io::Document doc;
+    std::size_t count = 0;
+    if (c.name.empty()) {
+        doc = io::document_from_store(store_);
+        count = doc.entity_count();
+    } else {
+        const BlockDef* def = nullptr;
+        for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+            if (store_.block(i)->name == c.name) {
+                def = store_.block(i);
+            }
+        }
+        if (def == nullptr) {
+            report("Block \"" + c.name + "\" not found.");
+            return;
+        }
+        const Vec2 o = def->base;
+        for (const LineData& l : def->content.lines) {
+            doc.lines.push_back(io::DocLine{l.a - o, l.b - o, l.props});
+        }
+        for (const CircleData& ci : def->content.circles) {
+            doc.circles.push_back(io::DocCircle{ci.center - o, ci.radius, ci.props});
+        }
+        for (const ArcData& a : def->content.arcs) {
+            doc.arcs.push_back(io::DocArc{a.center - o, a.radius, a.start_angle, a.end_angle, a.props});
+        }
+        for (const BlockPolyline& p : def->content.polylines) {
+            std::vector<Vec2> pts;
+            for (const Vec2& v : p.verts) {
+                pts.push_back(v - o);
+            }
+            doc.polylines.push_back(io::DocPolyline{pts, p.closed, p.props, p.bulges});
+        }
+        for (const BlockText& t : def->content.texts) {
+            doc.texts.push_back(
+                io::DocText{t.pos - o, t.height, t.rotation, t.justify, t.content, t.props});
+        }
+        for (const BlockMText& m : def->content.mtexts) {
+            io::DocMText dm{m.block, m.content, m.props};
+            dm.block.pos = m.block.pos - o;
+            doc.mtexts.push_back(std::move(dm));
+        }
+        if (!def->content.inserts.empty()) {
+            // Nested inserts need their definitions: carry the whole block table.
+            const io::Document whole = io::document_from_store(store_);
+            doc.block_defs = whole.block_defs;
+            for (const InsertData& ni : def->content.inserts) {
+                const BlockDef* nd = store_.block(ni.block);
+                doc.inserts.push_back(io::DocInsert{nd != nullptr ? nd->name : std::string{},
+                                                    ni.pos - o, ni.scale_x, ni.scale_y, ni.rotation,
+                                                    ni.props});
+            }
+        }
+        doc.layers = io::document_from_store(store_).layers;
+        count = doc.entity_count();
+    }
+    const io::IoResult r = io::save_native(doc, c.path);
+    if (!r.ok) {
+        report("Wblock: could not write " + c.path + ": " + r.message);
+        return;
+    }
+    report("Wrote " + std::to_string(count) + (count == 1 ? " object to " : " objects to ") + c.path + ".");
+}
+
 void GeometryEngine::apply_audit(bool fix) {
     int errors = 0;
     int fixed = 0;
@@ -5362,6 +5538,31 @@ void GeometryEngine::apply(const Command& command) {
                 dirty_ = true;
                 geom_dirty_ = true; // texts using the style re-lay-out; the table republishes
                 report("\"" + c.style.name + "\" is now the current text style.");
+            } else if constexpr (std::is_same_v<T, DefineBlockCommand>) {
+                apply_define_block(c);
+            } else if constexpr (std::is_same_v<T, InsertBlockCommand>) {
+                std::uint16_t bi = 0xFFFF;
+                for (std::uint16_t i = 0; i < static_cast<std::uint16_t>(store_.block_count()); ++i) {
+                    if (store_.block(i)->name == c.name) {
+                        bi = i;
+                    }
+                }
+                if (bi == 0xFFFF) {
+                    report("Block \"" + c.name + "\" not found.");
+                } else {
+                    const Command add = AddInsertCommand{bi, c.pos, c.scale_x, c.scale_y, c.rotation, 0};
+                    const EntityHandle nh = create_indexed(add);
+                    push_create_item(c.group, nh, add);
+                    redo_.clear();
+                    geom_dirty_ = true;
+                    dirty_ = true;
+                    report("Inserted \"" + c.name + "\".");
+                }
+            } else if constexpr (std::is_same_v<T, WriteBlockCommand>) {
+                apply_write_block(c);
+            } else if constexpr (std::is_same_v<T, RegenCommand>) {
+                geom_dirty_ = true;
+                report("Regenerating model.");
             } else if constexpr (std::is_same_v<T, SetCurrentTextStyleCommand>) {
                 const std::uint16_t i = store_.text_style_index(c.name);
                 if (i == 0xFFFF) {
@@ -5674,6 +5875,10 @@ void GeometryEngine::rebuild_and_publish() {
     buf.group_names.clear();
     for (const EntityGroup& g : store_.groups()) {
         buf.group_names.push_back(g.name); // GROUP names (feedback / ?)
+    }
+    buf.block_names.clear();
+    for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store_.block_count()); ++bi) {
+        buf.block_names.push_back(store_.block(bi)->name); // INSERT ? / prompt default
     }
 
     // Pending object-dimension def points for the placement preview (Part C).

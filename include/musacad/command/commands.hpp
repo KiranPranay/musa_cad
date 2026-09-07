@@ -626,6 +626,72 @@ private:
     bool done_ = false;
 };
 
+/// BLOCK (B, -BLOCK): name, base point, then "Select objects:"; Enter makes the
+/// selection a block definition and replaces it with one insert in place. Redefining an
+/// existing name updates every insert of it.
+class BlockCommand final : public ICommand {
+public:
+    std::string name() const override { return "BLOCK"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+
+private:
+    enum class State { Name, Base, Select } state_ = State::Name;
+    std::string name_;
+    core::Vec2 base_{};
+    bool done_ = false;
+};
+
+/// INSERT (I, -INSERT): block name (? lists), insertion point, X and Y scale, rotation.
+class InsertCommand final : public ICommand {
+public:
+    std::string name() const override { return "INSERT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Name, Point, ScaleX, ScaleY, Rotation } state_ = State::Name;
+    inline static std::string s_last_;
+    std::string name_;
+    core::Vec2 pos_{};
+    double sx_ = 1.0;
+    double sy_ = 1.0;
+    bool done_ = false;
+};
+
+/// WBLOCK (W): a block by name, or the whole drawing, written to a .musa file.
+class WblockCommand final : public ICommand {
+public:
+    std::string name() const override { return "WBLOCK"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Name, Path } state_ = State::Name;
+    std::string name_;
+    bool done_ = false;
+};
+
+/// REGEN (RE): rebuild and republish the scene.
+class RegenCommand final : public ICommand {
+public:
+    std::string name() const override { return "REGEN"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext&, const std::string&) override {}
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// STYLE (ST, -STYLE): the command-line flow -- name (existing or new), font, fixed
 /// height (0 = ask at TEXT), width factor, obliquing angle; backwards / upside-down /
 /// vertical are reported as not supported. The style becomes current.

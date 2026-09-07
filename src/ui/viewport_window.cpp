@@ -161,6 +161,11 @@ std::uint16_t ViewportWindow::current_text_style() {
     return current_text_style_;
 }
 
+std::vector<std::string> ViewportWindow::block_names() {
+    std::scoped_lock lock(layers_mutex_);
+    return block_names_;
+}
+
 void ViewportWindow::zoom_scale(double factor) {
     std::scoped_lock lock(camera_mutex_);
     const double cx = static_cast<double>(camera_.viewport_width()) * 0.5;
@@ -454,6 +459,7 @@ void ViewportWindow::render_loop(std::stop_token token) {
             units_ = snap.units;
             text_styles_ = snap.text_styles;
             current_text_style_ = snap.current_text_style;
+            block_names_ = snap.block_names;
         }
 
         // Surface the engine's command-result message (honest feedback) once.
