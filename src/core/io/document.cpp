@@ -39,6 +39,13 @@ Document document_from_store(const GeometryStore& store) {
             doc.xlines.push_back(DocXline{x.base, x.dir, x.ray, x.props});
         }
     }
+    const auto& ellipses = store.ellipses();
+    for (std::uint32_t i = 0; i < ellipses.slot_count(); ++i) {
+        if (ellipses.alive(i)) {
+            const EllipseData& e = ellipses.data()[i];
+            doc.ellipses.push_back(DocEllipse{e.center, e.major, e.ratio, e.start, e.end, e.props});
+        }
+    }
     const auto& lines = store.lines();
     for (std::uint32_t i = 0; i < lines.slot_count(); ++i) {
         if (lines.alive(i)) {
@@ -376,6 +383,9 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     for (const DocXline& x : doc.xlines) {
         store.add_xline(x.base, x.dir, x.ray, x.props);
+    }
+    for (const DocEllipse& e : doc.ellipses) {
+        store.add_ellipse(e.center, e.major, e.ratio, e.start, e.end, e.props);
     }
     for (const DocLine& l : doc.lines) {
         store.set_celtscale(store.add_line(l.a, l.b, l.props), l.celtscale);

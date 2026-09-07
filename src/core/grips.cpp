@@ -3,6 +3,8 @@
 
 #include "musacad/core/grips.hpp"
 
+#include "musacad/core/ellipse.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -177,6 +179,10 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
         const XlineData* x = store.xline(h);
         return AddXlineCommand{x->base, x->dir, x->ray, 0, x->props};
     }
+    case EntityKind::Ellipse: {
+        const EllipseData* e = store.ellipse(h);
+        return AddEllipseCommand{e->center, e->major, e->ratio, e->start, e->end, 0, e->props};
+    }
     case EntityKind::Spline:
         break;
     }
@@ -193,6 +199,9 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                 handle = store.add_point(c.p, props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 handle = store.add_xline(c.base, c.dir, c.ray, props_of(c.props));
+            } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
+                handle = store.add_ellipse(c.center, c.major, c.ratio, c.start, c.end,
+                                           props_of(c.props));
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 handle = store.add_line(c.a, c.b, props_of(c.props));
                 store.set_celtscale(handle, c.celtscale);
@@ -273,6 +282,26 @@ void push(std::vector<Grip>& out, Vec2 p, GripKind k, std::uint32_t i) {
 
 void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out) {
     switch (h.kind) {
+    case EntityKind::Ellipse: {
+        // Full ellipse: centre (move) + the four axis endpoints (major ends set the major
+        // radius and rotation, minor ends set the ratio). Elliptical arc: centre, the two
+        // ends (re-parameterise) and the midpoint (scales the ellipse through it) -- the
+        // AutoCAD grip set.
+        const EllipseData* e = store.ellipse(h);
+        push(out, e->center, GripKind::Move, 0);
+        if (ellipse::is_full(*e)) {
+            push(out, ellipse::point_at(*e, 0.0), GripKind::Radius, 1);
+            push(out, ellipse::point_at(*e, kPi), GripKind::Radius, 2);
+            push(out, ellipse::point_at(*e, kHalfPi), GripKind::Radius, 3);
+            push(out, ellipse::point_at(*e, kPi + kHalfPi), GripKind::Radius, 4);
+        } else {
+            const double sw = ellipse::sweep_of(*e);
+            push(out, ellipse::point_at(*e, e->start), GripKind::Endpoint, 1);
+            push(out, ellipse::point_at(*e, e->start + sw), GripKind::Endpoint, 2);
+            push(out, ellipse::point_at(*e, e->start + sw * 0.5), GripKind::Radius, 3);
+        }
+        break;
+    }
     case EntityKind::Xline: {
         // One grip at the root (base point): it moves the whole construction line. The
         // line is infinite, so there is no endpoint to grip; re-aiming is ROTATE's job.
@@ -481,6 +510,40 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 x.base = newpos; // the root grip moves the whole construction line
+            } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
+                const EllipseData e{x.center, x.major, x.ratio, x.start, x.end, {}};
+                if (grip_index == 0) {
+                    x.center = newpos;
+                } else if (ellipse::is_full(e)) {
+                    const Vec2 v = newpos - x.center;
+                    if (grip_index == 1 || grip_index == 2) {
+                        // Major end: new major radius AND rotation; the minor radius is
+                        // kept, so the ratio is re-derived (clamped: minor <= major).
+                        const double minor_r = length(x.major) * x.ratio;
+                        const double ml = length(v);
+                        if (ml > 1e-9) {
+                            x.major = grip_index == 1 ? v : Vec2{-v.x, -v.y};
+                            x.ratio = std::clamp(minor_r / ml, 1e-6, 1.0);
+                        }
+                    } else {
+                        const double ml = length(x.major);
+                        if (ml > 1e-9) {
+                            x.ratio = std::clamp(length(v) / ml, 1e-6, 1.0);
+                        }
+                    }
+                } else if (grip_index == 1) {
+                    x.start = ellipse::param_of(e, newpos);
+                } else if (grip_index == 2) {
+                    x.end = ellipse::param_of(e, newpos);
+                } else {
+                    // Midpoint: scale the ellipse about its centre so the arc passes
+                    // through the new point (ratio and rotation unchanged).
+                    const Vec2 mid = ellipse::point_at(e, e.start + ellipse::sweep_of(e) * 0.5);
+                    const double d0 = length(mid - x.center);
+                    if (d0 > 1e-9) {
+                        x.major = x.major * (length(newpos - x.center) / d0);
+                    }
+                }
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 if (grip_index == 0) {
                     x.a = newpos;

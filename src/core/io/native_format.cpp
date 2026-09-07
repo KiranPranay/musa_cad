@@ -393,6 +393,21 @@ std::string serialize_native(const Document& doc) {
         append_props(s, l.props);
         s += '\n';
     }
+    // ELLIPSE cx cy mx my ratio start end <props7>  (v22).
+    for (const DocEllipse& e : doc.ellipses) {
+        s += "ELLIPSE ";
+        append_vec(s, e.center);
+        s += ' ';
+        append_vec(s, e.major);
+        s += ' ';
+        append_double(s, e.ratio);
+        s += ' ';
+        append_double(s, e.start);
+        s += ' ';
+        append_double(s, e.end);
+        append_props(s, e.props);
+        s += '\n';
+    }
     // XLINE basex basey dirx diry ray <props7>  (v21). Construction line / ray.
     for (const DocXline& x : doc.xlines) {
         s += "XLINE ";
@@ -1627,6 +1642,13 @@ IoResult parse_native(std::string_view text, Document& out) {
                 return fail("POINT record malformed");
             }
             doc.points.push_back(DocPoint{{vals[0], vals[1]}, p});
+        } else if (key == "ELLIPSE") {
+            EntityProps p;
+            if (!read_fixed(tok, 7, p)) {
+                return fail("ELLIPSE record malformed");
+            }
+            doc.ellipses.push_back(DocEllipse{
+                {vals[0], vals[1]}, {vals[2], vals[3]}, vals[4], vals[5], vals[6], p});
         } else if (key == "XLINE") {
             EntityProps p;
             if (!read_fixed(tok, 5, p)) {

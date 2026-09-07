@@ -3,6 +3,8 @@
 
 #include "musacad/core/entity_bounds.hpp"
 
+#include "musacad/core/ellipse.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -41,6 +43,14 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
         out_max = {std::max(a.x, b.x), std::max(a.y, b.y)};
     };
     switch (h.kind) {
+    case EntityKind::Ellipse: {
+        const EllipseData* e = store.ellipse(h);
+        if (e == nullptr) {
+            return false;
+        }
+        ellipse::bounds(*e, out_min, out_max);
+        return true;
+    }
     case EntityKind::Xline:
         // A construction line is infinite: it has no finite AABB, so it is excluded from
         // the spatial index and from ZOOM Extents (as AutoCAD excludes construction

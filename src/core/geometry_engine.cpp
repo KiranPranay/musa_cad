@@ -3,6 +3,8 @@
 
 #include "musacad/core/geometry_engine.hpp"
 
+#include "musacad/core/ellipse.hpp"
+
 #include "musacad/core/dimension.hpp"
 #include "musacad/core/properties_registry.hpp"
 
@@ -209,6 +211,7 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
     // worked, because create_indexed inserts it directly, which is why it went unseen).
     // Pre-existing; fixed here because the GD&T arenas would have inherited it exactly.
     collect(store_.xlines(), EntityKind::Xline);
+    collect(store_.ellipses(), EntityKind::Ellipse);
     collect(store_.hatches(), EntityKind::Hatch);
     collect(store_.fcfs(), EntityKind::Fcf);
     collect(store_.datums(), EntityKind::Datum);
@@ -530,6 +533,8 @@ bool stretch_cmd(Command& c, Vec2 d, std::span<const StretchWindow> windows) {
                 pull(x.p);
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 pull(x.base);
+            } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
+                pull(x.center); // rigid, like a circle: moves whole when its centre is caught
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 pull(x.a);
                 pull(x.b);
@@ -630,6 +635,8 @@ void translate_cmd(Command& c, Vec2 d) {
                 x.p += d;
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 x.base += d;
+            } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
+                x.center += d;
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a += d;
                 x.b += d;
@@ -690,6 +697,23 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
                 const Vec2 tip = refl(x.base + x.dir);
                 x.base = refl(x.base);
                 x.dir = normalized(tip - x.base);
+            } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
+                // Reflection reverses orientation: the mirrored curve is the ellipse with
+                // the reflected axes traversed through parameters -end..-start.
+                const Vec2 tip = refl(x.center + x.major);
+                const EllipseData before{x.center, x.major, x.ratio, x.start, x.end, {}};
+                x.center = refl(x.center);
+                x.major = tip - x.center;
+                if (!ellipse::is_full(before)) {
+                    const auto norm = [](double a) {
+                        a = std::fmod(a, kTwoPi);
+                        return a < 0.0 ? a + kTwoPi : a;
+                    };
+                    const double s = norm(-x.end);
+                    const double e = norm(-x.start);
+                    x.start = s;
+                    x.end = e;
+                }
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = refl(x.a);
                 x.b = refl(x.b);
@@ -762,6 +786,10 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 const Vec2 tip = rot(x.base + x.dir);
                 x.base = rot(x.base);
                 x.dir = normalized(tip - x.base);
+            } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
+                const Vec2 tip = rot(x.center + x.major);
+                x.center = rot(x.center);
+                x.major = tip - x.center;
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = rot(x.a);
                 x.b = rot(x.b);
@@ -837,6 +865,8 @@ Vec2 command_anchor(const Command& c) {
                 out = x.p;
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 out = x.base;
+            } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
+                out = x.center;
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 out = x.a;
             } else if constexpr (std::is_same_v<T, AddCircleCommand>) {
@@ -875,6 +905,9 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 x.p = scl(x.p);
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 x.base = scl(x.base);
+            } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
+                x.center = scl(x.center);
+                x.major = x.major * f;
             } else if constexpr (std::is_same_v<T, AddLineCommand>) {
                 x.a = scl(x.a);
                 x.b = scl(x.b);
@@ -1110,6 +1143,18 @@ void GeometryEngine::apply_list_query(Vec2 at, double radius) {
         pr != nullptr && pr->layer < store_.layers().size() ? store_.layers()[pr->layer].name : "?";
     std::string out = std::string(kind_name(h.kind)) + "  on layer \"" + layer + "\"";
     switch (h.kind) {
+    case EntityKind::Ellipse: {
+        const EllipseData* e = store_.ellipse(h);
+        const double a = length(e->major);
+        out += ",  center (" + num(e->center.x) + "," + num(e->center.y) + "),  major radius " +
+               num(a) + ",  minor radius " + num(a * e->ratio) + ",  rotation " +
+               num(to_degrees(std::atan2(e->major.y, e->major.x))) + " deg";
+        if (!ellipse::is_full(*e)) {
+            out += ",  start parameter " + num(to_degrees(e->start)) + " deg,  end parameter " +
+                   num(to_degrees(e->end)) + " deg";
+        }
+        break;
+    }
     case EntityKind::Xline: {
         const XlineData* x = store_.xline(h);
         out += std::string(x->ray ? ",  ray from (" : ",  construction line through (") +
@@ -2588,6 +2633,7 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
         case EntityKind::Datum:
         case EntityKind::Image:
         case EntityKind::Xline:
+        case EntityKind::Ellipse:
             break; // already simple, or nothing meaningful to break into
         }
         if (parts.size() > before) {
@@ -2718,6 +2764,9 @@ void GeometryEngine::apply_lengthen(const LengthenCommand& c) {
     case EntityKind::Xline:
         report("Lengthen: a construction line is already infinite.");
         return;
+    case EntityKind::Ellipse:
+        report("Lengthen: ellipses are not supported yet (lines, arcs and polylines are).");
+        return;
     case EntityKind::Line: {
         const LineData* l = store_.line(h);
         before = length(l->b - l->a);
@@ -2810,6 +2859,9 @@ void GeometryEngine::apply_break(const BreakCommand& c) {
     switch (h.kind) {
     case EntityKind::Xline:
         report("Break: a construction line cannot be broken.");
+        return;
+    case EntityKind::Ellipse:
+        report("Break: ellipses are not supported yet (lines, arcs, circles and polylines are).");
         return;
     case EntityKind::Line: {
         const LineData* l = store_.line(h);
@@ -3305,6 +3357,7 @@ void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
             using T = std::decay_t<decltype(x)>;
             if constexpr (std::is_same_v<T, AddPointCommand> ||
                           std::is_same_v<T, AddXlineCommand> ||
+                          std::is_same_v<T, AddEllipseCommand> ||
                           std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> || std::is_same_v<T, AddArcCommand> ||
@@ -3713,6 +3766,8 @@ std::optional<JoinSeg> to_join_seg(const GeometryStore& store, EntityHandle h) {
     switch (h.kind) {
     case EntityKind::Xline:
         return std::nullopt; // a construction line has no endpoints to join
+    case EntityKind::Ellipse:
+        return std::nullopt; // not joinable into a polyline
     case EntityKind::Line: {
         const LineData* l = store.line(h);
         if (l == nullptr) {
@@ -3842,6 +3897,9 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
         switch (h.kind) {
         case EntityKind::Xline:
             break; // an infinite line is not a hatch boundary
+        case EntityKind::Ellipse:
+            gather(h, ellipse::is_full(*store_.ellipse(h)));
+            break;
         case EntityKind::Line:
         case EntityKind::Arc:
         case EntityKind::Spline:
@@ -4047,6 +4105,7 @@ void GeometryEngine::apply(const Command& command) {
             using T = std::decay_t<decltype(c)>;
             if constexpr (std::is_same_v<T, AddPointCommand> ||
                           std::is_same_v<T, AddXlineCommand> ||
+                          std::is_same_v<T, AddEllipseCommand> ||
                           std::is_same_v<T, AddLineCommand> ||
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> ||

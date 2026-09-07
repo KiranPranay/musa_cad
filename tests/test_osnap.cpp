@@ -106,3 +106,37 @@ TEST_CASE("OSNAP: endpoint beats nearest within the aperture (priority)") {
     REQUIRE(r.type == SnapType::Endpoint);
     REQUIRE(r.point == Vec2{0, 0});
 }
+
+TEST_CASE("OSNAP: ellipse centre, quadrants, and an elliptical arc's ends and midpoint (#23)") {
+    Scene s;
+    const EntityHandle full = s.store.add_ellipse({0, 0}, {20, 0}, 0.5, 0.0, kTwoPi);
+    s.index(full);
+    SnapResult r = s.snap({0.3, 9.7}, 2.0, snap_bit(SnapType::Quadrant));
+    REQUIRE(r.found);
+    REQUIRE(r.type == SnapType::Quadrant);
+    REQUIRE(std::abs(r.point.x) < 1e-9);
+    REQUIRE(std::abs(r.point.y - 10.0) < 1e-9); // the minor-axis end, not radius 20
+    r = s.snap({19.6, 0.2}, 2.0, snap_bit(SnapType::Quadrant));
+    REQUIRE(r.found);
+    REQUIRE(std::abs(r.point.x - 20.0) < 1e-9);
+    r = s.snap({0.4, 0.2}, 2.0, snap_bit(SnapType::Center));
+    REQUIRE(r.found);
+    REQUIRE(r.type == SnapType::Center);
+    REQUIRE(r.point == Vec2{0, 0});
+
+    const EntityHandle arc = s.store.add_ellipse({100, 0}, {20, 0}, 0.5, 0.0, kHalfPi);
+    s.index(arc);
+    r = s.snap({100.2, 9.8}, 2.0, snap_bit(SnapType::Endpoint));
+    REQUIRE(r.found);
+    REQUIRE(r.type == SnapType::Endpoint);
+    REQUIRE(std::abs(r.point.x - 100.0) < 1e-9);
+    REQUIRE(std::abs(r.point.y - 10.0) < 1e-9);
+    // Midpoint at parameter pi/4: (100 + 20 cos, 10 sin) = (114.142, 7.071).
+    r = s.snap({114.0, 7.2}, 2.0, snap_bit(SnapType::Midpoint));
+    REQUIRE(r.found);
+    REQUIRE(r.type == SnapType::Midpoint);
+    REQUIRE(std::abs(r.point.x - (100.0 + 20.0 * std::cos(kPi / 4.0))) < 1e-9);
+    // The quadrant at parameter pi (80,0) is NOT on this arc, so no quadrant snap there.
+    r = s.snap({80.2, 0.1}, 2.0, snap_bit(SnapType::Quadrant));
+    REQUIRE(!r.found);
+}

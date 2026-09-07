@@ -389,6 +389,7 @@ struct Desc {
 bool any_kind(EntityKind) { return true; }
 bool is_line(EntityKind k) { return k == EntityKind::Line; }
 bool is_circular(EntityKind k) { return k == EntityKind::Circle || k == EntityKind::Arc; }
+bool is_centered(EntityKind k) { return is_circular(k) || k == EntityKind::Ellipse; }
 bool is_text(EntityKind k) { return k == EntityKind::Text || k == EntityKind::MText; }
 bool is_text_only(EntityKind k) { return k == EntityKind::Text; }
 bool is_mtext_only(EntityKind k) { return k == EntityKind::MText; }
@@ -557,7 +558,7 @@ const Desc kDescs[] = {
          return v;
      },
      nullptr},
-    {PropertyId::GeomCenter, "Geometry", "Center", PropEditor::ReadOnly, is_circular,
+    {PropertyId::GeomCenter, "Geometry", "Center", PropEditor::ReadOnly, is_centered,
      [](const Command& c) {
          PropertyValue v;
          std::visit(
@@ -1032,6 +1033,8 @@ const char* kind_name(EntityKind k) noexcept {
         return "Point";
     case EntityKind::Xline:
         return "Construction line";
+    case EntityKind::Ellipse:
+        return "Ellipse";
     case EntityKind::Line:
         return "Line";
     case EntityKind::Circle:
@@ -1105,6 +1108,8 @@ EntityKind kind_of(const Command& c) noexcept {
                 k = EntityKind::Datum;
             } else if constexpr (std::is_same_v<T, AddXlineCommand>) {
                 k = EntityKind::Xline;
+            } else if constexpr (std::is_same_v<T, AddEllipseCommand>) {
+                k = EntityKind::Ellipse;
             } else if constexpr (std::is_same_v<T, AddImageCommand>) {
                 k = EntityKind::Image;
             } else if constexpr (std::is_same_v<T, AddTableCommand>) {

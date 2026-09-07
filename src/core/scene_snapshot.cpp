@@ -220,6 +220,8 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
                   [&](EntityHandle h) { emit_curve(h, store.polyline(h)->props); });
     for_each_live(store.splines(), EntityKind::Spline,
                   [&](EntityHandle h) { emit_curve(h, store.spline(h)->props); });
+    for_each_live(store.ellipses(), EntityKind::Ellipse,
+                  [&](EntityHandle h) { emit_curve(h, store.ellipse(h)->props); });
 
     // Single-line text -> stroke-font segments (thin: text isn't lineweight-driven).
     std::vector<Vec2> tseg;

@@ -7,6 +7,13 @@
 
 namespace musacad::core {
 
+EntityHandle GeometryStore::add_ellipse(Vec2 center, Vec2 major, double ratio, double start,
+                                        double end, EntityProps props) {
+    ratio = std::clamp(ratio, 1e-6, 1.0);
+    const auto slot = ellipses_.insert(EllipseData{center, major, ratio, start, end, props});
+    return EntityHandle{slot.index, slot.generation, EntityKind::Ellipse};
+}
+
 EntityHandle GeometryStore::add_xline(Vec2 base, Vec2 dir, bool ray, EntityProps props) {
     const double len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
     const Vec2 unit = len > 1e-12 ? Vec2{dir.x / len, dir.y / len} : Vec2{1.0, 0.0};
@@ -304,6 +311,8 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return points_.erase(h.index, h.generation);
     case EntityKind::Xline:
         return xlines_.erase(h.index, h.generation);
+    case EntityKind::Ellipse:
+        return ellipses_.erase(h.index, h.generation);
     case EntityKind::Line:
         return lines_.erase(h.index, h.generation);
     case EntityKind::Polyline:
@@ -346,6 +355,8 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return points_.is_valid(h.index, h.generation);
     case EntityKind::Xline:
         return xlines_.is_valid(h.index, h.generation);
+    case EntityKind::Ellipse:
+        return ellipses_.is_valid(h.index, h.generation);
     case EntityKind::Line:
         return lines_.is_valid(h.index, h.generation);
     case EntityKind::Polyline:
@@ -426,6 +437,10 @@ void GeometryStore::clear() noexcept {
     ltscale_ = 1.0;
     blocks_.clear();
     fonts_.assign(1, std::string{}); // reset to just the stroke font
+}
+
+const EllipseData* GeometryStore::ellipse(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::Ellipse ? ellipses_.get(h.index, h.generation) : nullptr;
 }
 
 const XlineData* GeometryStore::xline(EntityHandle h) const noexcept {
@@ -607,6 +622,11 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::Ellipse:
+        if (const EllipseData* d = ellipse(h)) {
+            return &d->props;
+        }
+        break;
     case EntityKind::Line:
         if (const LineData* d = line(h)) {
             return &d->props;
@@ -701,6 +721,12 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
         break;
     case EntityKind::Xline:
         if (XlineData* d = xlines_.get(h.index, h.generation)) {
+            d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::Ellipse:
+        if (EllipseData* d = ellipses_.get(h.index, h.generation)) {
             d->props = p;
             return true;
         }
