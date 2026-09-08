@@ -190,6 +190,9 @@ struct HatchData {
     double pattern_angle = 0.0; ///< radians, CCW
     Vec2 pattern_origin{};
     EntityProps props{};
+    /// GRADIENT pattern: the second colour (the first is the entity's own colour); the
+    /// fill runs from the first to the second along pattern_angle.
+    Rgb color2{};
 };
 
 /// One cell of a feature control frame. A cell is TEXT -- the characteristic symbol,
@@ -435,7 +438,11 @@ public:
     /// Create a HATCH from closed boundary loops (loop 0 = outer, the rest islands),
     /// a pattern name ("SOLID" = filled), and pattern scale/angle(radians)/origin.
     EntityHandle add_hatch(const std::vector<std::vector<Vec2>>& loops, std::string_view pattern,
-                           double scale, double angle, Vec2 origin, EntityProps props = {});
+                           double scale, double angle, Vec2 origin, EntityProps props = {},
+                           Rgb color2 = {});
+    /// WIPEOUTFRAME: whether wipeout boundaries are drawn (AutoCAD's default: shown).
+    [[nodiscard]] bool wipeout_frames() const noexcept { return wipeout_frames_; }
+    void set_wipeout_frames(bool on) noexcept { wipeout_frames_ = on; }
     /// A feature control frame. `cells` are the raw cell strings in order (cell 0 is the
     /// characteristic symbol); they are copied into the shared char pool.
     EntityHandle add_fcf(const std::vector<std::string>& cells, Vec2 pos, double rotation,
@@ -724,7 +731,11 @@ public:
     }
     /// The style a text entity draws with (Standard when its index is stale).
     [[nodiscard]] const TextStyle& text_style_of(const TextData& t) const noexcept {
-        return t.style < text_styles_.size() ? text_styles_[t.style] : text_styles_[0];
+        static const TextStyle kStandard{};
+        if (t.style < text_styles_.size()) {
+            return text_styles_[t.style];
+        }
+        return text_styles_.empty() ? kStandard : text_styles_[0];
     }
     [[nodiscard]] bool text_style_in_use(std::uint16_t index) const noexcept;
     bool remove_text_style(std::uint16_t index);
@@ -884,6 +895,7 @@ private:
     DrawingUnits units_;
     std::vector<TextStyle> text_styles_{TextStyle{}}; // [0] = Standard
     std::uint16_t current_text_style_ = 0;
+    bool wipeout_frames_ = true;
     std::vector<EntityGroup> groups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"

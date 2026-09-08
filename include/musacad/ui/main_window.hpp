@@ -56,6 +56,8 @@ public:
     /// Prints the widget tree and fires the Line/Circle ribbon buttons (for
     /// headless structural verification).
     void dump_ui();
+    /// Developer capture of the GL viewport's next frame to a PNG (see ViewportWindow).
+    void request_viewport_capture(const std::string& png_path);
 
     /// Real-window self-test: select an entity, post a Delete key event, and
     /// confirm it is erased. Returns true on success.

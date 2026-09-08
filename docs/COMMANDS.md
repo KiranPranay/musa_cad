@@ -43,6 +43,8 @@ commands (Ribbon Phase A):
 | EXPLODE (X) | Break compound objects into their components. |
 | PURGE (PU) | Remove unused layers, dimension styles, table styles, blocks, image definitions or empty groups (type prompt, All by default). |
 | OSNAP (OS, DDOSNAP) / -OSNAP | The running object-snap settings dialog; -OSNAP takes a mode list (END, MID, CEN, NOD, QUA, INT, PER, TAN, NEA, INS, APP, PAR, NONE, ALL). |
+| WIPEOUT | Mask polygon from points or a closed polyline ([Polyline], with optional erase); [Frames] ON/OFF shows or hides the boundaries. Hides lines, curves and hatches beneath it; text stays visible. |
+| FIELD | Text carrying %<Date>%, %<Time>%, %<Filename>% or %<Login>%, expanded at layout and refreshed on every regen. |
 | PEDIT (PE) | Edit a polyline: Close/Open, Join, Edit vertex (Insert/Delete/Move), Spline (a fit spline through the vertices), Decurve, Reverse, Undo; a picked line or arc is converted first. |
 | BLOCK (B, -BLOCK) | Make the selection a block definition (name, base point, select objects); the originals are replaced by one insert in place. |
 | INSERT (I, -INSERT) | Insert a block by name: insertion point, X/Y scale, rotation (? lists blocks). |
@@ -71,7 +73,7 @@ commands (Ribbon Phase A):
 | FILLET (F) | Round corners between two intersecting lines, arcs, or polylines. |
 | CHAMFER (CHA) | Bevel corners between two intersecting lines. |
 | MATCHPROP (MA) | Copy properties from a source object to one or more target objects. |
-| HATCH (H) | Fill an enclosed area with a pattern or solid color. |
+| HATCH (H) | Fill an enclosed area with a pattern or solid color; [Gradient] blends the entity colour into a second colour along an angle. |
 | TEXT (DT) | Create a single-line text object. |
 | DIMLINEAR (DLI) | Create a horizontal or vertical linear dimension. |
 | DIMALIGNED (DAL) | Create a dimension aligned with two points. |
@@ -110,7 +112,9 @@ commands (Ribbon Phase A):
 | XLINE / RAY | XL | Planned (Phase 7) |
 | HATCH / BHATCH — **SOLID fill** of a region (Part A). Two boundary modes: **pick an internal point** (the engine traces the enclosing boundary from surrounding geometry — lines, arcs, circles, polylines — building a **planar arrangement** so a partitioning line correctly splits the region; closed entities inside become **islands/holes**) or **pre-select** closed polylines (noun-verb). "Valid hatch boundary not found." when no closed boundary encloses the pick. Fill is **derived, not baked** (rendered via the fill pipeline, so it plots as PDF vectors). Pickable (point-in-region, islands respected), PR-editable (Pattern/Scale/Angle/Origin), MATCHPROP-matchable, native + DXF round-trip. Selected hatch shows a **highlight tint over the fill + a grip at every boundary vertex** (drag to reshape) | H / BHATCH | Implemented (Part A: SOLID; line patterns = Part B) |
 | HATCH **line patterns** (Part B) — `.PAT` parser + a built-in stock library (ANSI31–ANSI38, NET/NET3/GRID, BRICK, BOX, HEX/HONEY, ANGLE, DOTS, CROSS, SQUARE, TRIANG, GRASS, EARTH, STEEL, CONC, INSUL, …; authored from the public .PAT format, **not** copied from acad.pat — load that file for the vendor set). Line families are **generated + clipped to the boundary at render time** (derived-not-baked, even-odd so islands carve out) and plot as vectors. Choose via the command's `[Pattern/Scale/Angle]` options or the PR. SOLID stays the special fill name — one render path, patterns are not a fork | H ▸ Pattern | Implemented (Part B) |
-| HATCH GRADIENT fills | H | Planned (later) |
+| HATCH GRADIENT fills (entity colour to a second colour along an angle; 24 flat bands, so it plots as vectors; DXF gradient block both ways) | H ▸ Gradient | Implemented |
+| WIPEOUT (points, or [Polyline] from a closed polyline with optional erase; [Frames] ON/OFF = WIPEOUTFRAME, saved with the drawing). Masks lines, curves and hatches beneath it; text always shows through (DRAWORDER is not modelled). DXF: a colour-7 solid | WIPEOUT | Implemented |
+| FIELD (Date, Time, Filename, Login) as `%<Date>%`-style codes in any text, expanded at layout and refreshed on every regen | FIELD | Implemented |
 
 ## Modify
 
@@ -239,7 +243,7 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | **Properties palette (PR): dockable, context-sensitive panel for the selection** | PR / PROPERTIES / PROPS / CH | Implemented (Ph22) |
 | PR multiplicity: nothing / one / many-same / many-mixed, with **\*VARIES\*** where values differ; edits set all | — | Implemented (Ph22) |
 | PR universal props: **Layer / Color / Linetype / Lineweight** (ByLayer or override) editable single + multi + mixed | — | Implemented (Ph22) |
-| PR Geometry group (read-only): line length/ends, circle/arc center+radius, text position | — | Implemented (Ph22; numeric geometry editing Planned) |
+| PR Geometry group (editable since issue #32): line length/ends, circle/arc center+radius, text position | — | Implemented (Ph22; numeric geometry editing Planned) |
 | PR full **Text / MTEXT** group: contents, height, rotation, justify, width factor, line spacing, defined width, attachment, **font** | — | Implemented (Ph22; font dropdown real in Ph29) |
 | **Font** dropdown (Standard stroke font + system TrueType/OpenType faces); switching re-renders the selected text as one undo group (varies/set-all) | PR Font | Implemented (Ph29) |
 | Imported text fonts: TTF-by-name resolves to the installed face (filled glyphs); single-stroke SHX fonts (romans/simplex/isocp/txt…) render with the built-in single-stroke font (faithful match); missing → stroke fallback (true SHX binary parsing staged) | — | Implemented (Ph29) |
@@ -252,7 +256,7 @@ leave. Adding them means adding associative arrays first, which is a data-model 
 | **TABLE / TB** — a real table entity: rows x columns with stored column widths and row heights, cell text (with the usual `%%`/`\\U+` codes), per-cell alignment and **merged cells**. Borders, grid and text placement are derived from a **TABLESTYLE** (title / header / data text heights, margin, lineweight, colours), so a style edit re-lays out every table. Selectable as a unit (a click in any cell), grips move it and resize columns, native round-trip. **DXF ACAD_TABLE: not written — stated gap**; cell editing and row/column insert are staged | TB | Implemented (issue #22) |
 | **Raster IMAGE entity** — an image-definition table (parallel to layers/dimstyles/blocks, deduped) plus placements carrying insertion point, size, rotation and an optional clip rectangle. Payload is an external path relative to the drawing **or** base64 embedded in the `.musa`. Selectable (point-in-quad, clip respected), grip-movable/scalable, bounds-correct, native round-trip, and **plots** (rasterised at output resolution, drawn under the vector geometry). Decoding goes through the core `IImageDecoder` seam so core stays Qt-free | — (no command yet) | Partial (issue #10: model + plot; **viewport display, IMAGEATTACH/IMAGECLIP and DXF deferred**) |
 | Per-dimension overrides: resolve override-first-else-style (the Ph12 pattern) in compute_dim_geometry; one undo group; native round-trip; DXF override-vs-style distinction is native-only (stated gap) | — | Implemented (Ph24) |
-| PR numeric **geometry editing** for line/circle/arc/polyline/leader | — | Planned (read-only display today) |
+| PR numeric **geometry editing** — the Geometry group's Start/End, Center/Radius and Position fields edit the entity | — | Implemented (issue #32) |
 | LEADER (simple arrow + line + single-line label, kept for compat) | LEADER | Implemented |
 | **DIM (smart all-in-one; hover previews the type, dispatches by entity)** | DIM | Implemented (line/poly→linear, circle→diameter, arc→radius) |
 | DIMLINEAR (two-point, or `[Object]` → select a line / polyline segment) | DLI | Implemented |
@@ -361,7 +365,7 @@ phase covers **import, display, and selection**; in-app authoring is staged.
 | **Tab-to-tab drag** — drag a selection onto another document's tab to transfer it there (copy → switch → paste, original coordinates) | drag to tab | Implemented (Phase B) |
 | DXF export (R2000 / AC1015; LAYER table + ByLayer colour 256) | File ▸ Export DXF | Implemented |
 | DXF import (LINE/LWPOLYLINE/CIRCLE/ARC/POINT/TEXT/MTEXT/DIMENSION/LEADER; BLOCK defs + INSERT refs; reads the LAYER table + ACI colours) | File ▸ Import DXF | Implemented |
-| DXF import (SPLINE / legacy POLYLINE) | — | Planned (skipped + reported for now) |
+| DXF import (SPLINE / legacy POLYLINE) | — | SPLINE implemented (issue #31: uniform-knot and fit-point splines come in as splines, other knot vectors as polylines); legacy POLYLINE still skipped and reported |
 | Dirty tracking (modified `*` in title, prompt before discard) | — | Implemented |
 | PLOT / PRINT (PDF + installed printers; paper/orientation/area Display·Extents·Window/scale fit·ratio/centre·offset/lineweights/CTB None·Mono·Grayscale/copies; window-pick; print-preview; off-thread; vector output) | Ctrl+P / PLOT / PRINT | Implemented (Phase 30) |
 | Saved page setups (named, persisted in the drawing; recall in the PLOT dialog) | PLOT ▸ Page setup | Implemented (Phase 30) |
@@ -382,7 +386,7 @@ phase covers **import, display, and selection**; in-app authoring is staged.
 | Perpendicular (deferred; line + circle/arc) | Implemented |
 | Tangent (deferred; circle/arc) | Implemented |
 | Centroid of closed polyline — **Musa extension** (no AutoCAD equivalent) | Implemented |
-| Apparent intersection / Insertion / Parallel | Planned (Phase 9) |
+| Apparent intersection / Insertion / Parallel | Implemented (issue #32; Apparent intersection and Parallel are opt-in, as in AutoCAD) |
 
 OSNAP precedence (highest→lowest, within the aperture): Endpoint, Midpoint,
 Center, Node, Quadrant, Intersection, Perpendicular, Tangent, Centroid, Nearest.

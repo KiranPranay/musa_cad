@@ -3,6 +3,7 @@
 
 #include "musacad/core/scene_snapshot.hpp"
 
+#include <limits>
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -89,15 +90,18 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     out.point_batches.clear();
     out.fill_vertices.clear();
     out.fill_batches.clear();
+    out.wipeout_vertices.clear();
     out.text_edit_targets.clear();
     out.layers.assign(store.layers().begin(), store.layers().end());
     out.current_layer = store.current_layer();
     out.page_setups = store.page_setups();
+    out.wipeout_frames = store.wipeout_frames();
 
     // Lines group by (colour, lineweight); points and fills by colour.
     std::map<std::uint64_t, std::vector<Vec2>> line_groups;
     std::map<std::uint32_t, std::vector<Vec2>> point_groups;
     std::map<std::uint32_t, std::vector<Vec2>> fill_groups;
+    std::map<std::uint32_t, std::vector<Vec2>> gradient_groups; // computed colours (GRADIENT bands)
 
     const auto add_line = [&](Rgb c, std::uint8_t lw, Vec2 a, Vec2 b, bool is_text = false,
                               double text_height = 0.0) {
@@ -112,6 +116,10 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
     };
     const auto add_fills = [&](Rgb c, const std::vector<Vec2>& tris) {
         auto& v = fill_groups[pack_rgb(c)];
+        v.insert(v.end(), tris.begin(), tris.end());
+    };
+    const auto add_gradient_fills = [&](Rgb c, const std::vector<Vec2>& tris) {
+        auto& v = gradient_groups[pack_rgb(c)];
         v.insert(v.end(), tris.begin(), tris.end());
     };
 
@@ -492,6 +500,94 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
             htris.clear();
             hatch::triangulate_filled(store.hatch_loops(*hd), htris);
             add_fills(r.color, htris);
+        } else if (pname == "WIPEOUT") {
+            // A wipeout masks what lies beneath: its fill goes to the renderer's mask pass
+            // (background colour, drawn after geometry and before text). Its frame is
+            // ordinary line work in the entity's colour when WIPEOUTFRAME is on.
+            htris.clear();
+            hatch::triangulate_filled(store.hatch_loops(*hd), htris);
+            out.wipeout_vertices.insert(out.wipeout_vertices.end(), htris.begin(), htris.end());
+            if (store.wipeout_frames()) {
+                for (const auto& loop : store.hatch_loops(*hd)) {
+                    for (std::size_t i = 0; i < loop.size(); ++i) {
+                        add_line(r.color, r.lineweight, loop[i], loop[(i + 1) % loop.size()]);
+                    }
+                }
+            }
+        } else if (pname == "GRADIENT") {
+            // A two-colour linear gradient along pattern_angle, drawn as bands: each
+            // triangle of the filled region is clipped to the band strips and coloured by
+            // the band's mix -- no renderer change, and it plots as flat vector fills.
+            htris.clear();
+            hatch::triangulate_filled(store.hatch_loops(*hd), htris);
+            if (!htris.empty()) {
+                const Vec2 axis{std::cos(hd->pattern_angle), std::sin(hd->pattern_angle)};
+                double lo = std::numeric_limits<double>::infinity();
+                double hi = -lo;
+                for (const Vec2& p : htris) {
+                    const double t = dot(p, axis);
+                    lo = std::min(lo, t);
+                    hi = std::max(hi, t);
+                }
+                constexpr int kBands = 24;
+                const double span = std::max(hi - lo, 1e-9);
+                std::vector<Vec2> band_tris;
+                std::vector<Vec2> poly;
+                std::vector<Vec2> clipped;
+                const auto clip_half = [&](const std::vector<Vec2>& in, double offset, bool keep_ge,
+                                           std::vector<Vec2>& outp) {
+                    outp.clear();
+                    const std::size_t n = in.size();
+                    for (std::size_t i = 0; i < n; ++i) {
+                        const Vec2 a = in[i];
+                        const Vec2 b = in[(i + 1) % n];
+                        const double da = dot(a, axis) - offset;
+                        const double db = dot(b, axis) - offset;
+                        const bool ina = keep_ge ? da >= 0.0 : da <= 0.0;
+                        const bool inb = keep_ge ? db >= 0.0 : db <= 0.0;
+                        if (ina) {
+                            outp.push_back(a);
+                        }
+                        if (ina != inb) {
+                            const double t = da / (da - db);
+                            outp.push_back(a + (b - a) * t);
+                        }
+                    }
+                };
+                // Neighbouring bands overlap by a sliver so the seams between them do not
+                // show as hairlines when the fills are antialiased (screen and PDF alike).
+                const double overlap = span / kBands * 0.03;
+                for (int k = 0; k < kBands; ++k) {
+                    const double t0 = lo + span * static_cast<double>(k) / kBands;
+                    const double t1 = lo + span * static_cast<double>(k + 1) / kBands + overlap;
+                    const double mix = (static_cast<double>(k) + 0.5) / kBands;
+                    const auto lerp8 = [mix](std::uint8_t a, std::uint8_t b) {
+                        return static_cast<std::uint8_t>(std::lround(a + (static_cast<double>(b) - a) * mix));
+                    };
+                    const Rgb c{lerp8(r.color.r, hd->color2.r), lerp8(r.color.g, hd->color2.g),
+                                lerp8(r.color.b, hd->color2.b)};
+                    band_tris.clear();
+                    for (std::size_t i = 0; i + 2 < htris.size(); i += 3) {
+                        poly = {htris[i], htris[i + 1], htris[i + 2]};
+                        clip_half(poly, t0, true, clipped);
+                        if (clipped.size() < 3) {
+                            continue;
+                        }
+                        clip_half(clipped, t1, false, poly);
+                        if (poly.size() < 3) {
+                            continue;
+                        }
+                        for (std::size_t j = 1; j + 1 < poly.size(); ++j) {
+                            band_tris.push_back(poly[0]);
+                            band_tris.push_back(poly[j]);
+                            band_tris.push_back(poly[j + 1]);
+                        }
+                    }
+                    if (!band_tris.empty()) {
+                        add_gradient_fills(c, band_tris);
+                    }
+                }
+            }
         } else if (const hatch::Pattern* pat = hatch::builtin_pattern(pname)) {
             // Line patterns (ANSI31 etc.): generate the clipped line families here
             // (derived-not-baked) and route them into the colour/lineweight line groups, so
@@ -544,6 +640,13 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         out.fill_batches.push_back(ColorBatch{unpack_rgb(key),
                                               static_cast<std::uint32_t>(out.fill_vertices.size()),
                                               static_cast<std::uint32_t>(verts.size()), 0});
+        out.fill_vertices.insert(out.fill_vertices.end(), verts.begin(), verts.end());
+    }
+    for (auto& [key, verts] : gradient_groups) {
+        ColorBatch b{unpack_rgb(key), static_cast<std::uint32_t>(out.fill_vertices.size()),
+                     static_cast<std::uint32_t>(verts.size()), 0};
+        b.computed_color = true;
+        out.fill_batches.push_back(b);
         out.fill_vertices.insert(out.fill_vertices.end(), verts.begin(), verts.end());
     }
 

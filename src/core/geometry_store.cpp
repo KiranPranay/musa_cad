@@ -294,7 +294,7 @@ EntityHandle GeometryStore::add_insert(std::uint16_t block, Vec2 pos, double sca
 
 EntityHandle GeometryStore::add_hatch(const std::vector<std::vector<Vec2>>& loops,
                                       std::string_view pattern, double scale, double angle,
-                                      Vec2 origin, EntityProps props) {
+                                      Vec2 origin, EntityProps props, Rgb color2) {
     HatchData d;
     d.vtx_offset = static_cast<std::uint32_t>(hatch_vtx_pool_.size());
     d.loop_offset = static_cast<std::uint32_t>(hatch_loop_lens_.size());
@@ -311,6 +311,7 @@ EntityHandle GeometryStore::add_hatch(const std::vector<std::vector<Vec2>>& loop
     d.pattern_angle = angle;
     d.pattern_origin = origin;
     d.props = props;
+    d.color2 = color2;
     const auto slot = hatches_.insert(d);
     return EntityHandle{slot.index, slot.generation, EntityKind::Hatch};
 }
@@ -445,6 +446,15 @@ void GeometryStore::clear() noexcept {
     layers_.assign(1, Layer{"0"}); // reset to just layer 0
     current_layer_ = 0;
     dimstyles_.assign(1, DimStyle{"Standard"});
+    // Every table a fresh store starts with, restored here too: a store that was moved
+    // out of (a document parked behind another tab) and then cleared must be a fresh
+    // store again, Standard text style included.
+    text_styles_.assign(1, TextStyle{}); // [0] = Standard
+    current_text_style_ = 0;
+    named_views_.clear();
+    groups_.clear();
+    units_ = DrawingUnits{};
+    wipeout_frames_ = true;
     ltscale_ = 1.0;
     blocks_.clear();
     fonts_.assign(1, std::string{}); // reset to just the stroke font

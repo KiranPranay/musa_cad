@@ -3,6 +3,8 @@
 
 #include "musacad/ui/viewport_window.hpp"
 
+#include <vector>
+#include <cstring>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -31,6 +33,7 @@
 #include <QOpenGLContext>
 #include <QResizeEvent>
 #include <QScreen>
+#include <QImage>
 #include <QOpenGLFunctions>
 #include <QSurfaceFormat>
 #include <QKeyEvent>
@@ -117,6 +120,15 @@ void ViewportWindow::set_initial_view(render::Vec2 min_world, render::Vec2 max_w
 void ViewportWindow::zoom_extents() {
     // Deferred to the render thread, which has the snapshot bounds.
     zoom_extents_requested_.store(true, std::memory_order_relaxed);
+}
+
+void ViewportWindow::request_frame_capture(std::string png_path) {
+    {
+        std::scoped_lock lock(capture_mutex_);
+        capture_path_ = std::move(png_path);
+    }
+    capture_requested_.store(true, std::memory_order_release);
+    dirty_.store(true, std::memory_order_release); // make sure a frame is rendered
 }
 
 bool ViewportWindow::current_view(core::Vec2& center, double& scale) {
@@ -534,6 +546,28 @@ void ViewportWindow::render_loop(std::stop_token token) {
         }
         renderer.set_device_pixel_ratio(static_cast<float>(devicePixelRatio()));
         renderer.render(*target, snap, cam);
+        if (capture_requested_.exchange(false, std::memory_order_acq_rel)) {
+            std::string path;
+            {
+                std::scoped_lock lock(capture_mutex_);
+                path = capture_path_;
+            }
+            const int cw = target->width();
+            const int ch = target->height();
+            bool ok = false;
+            if (gf != nullptr && cw > 0 && ch > 0) {
+                std::vector<unsigned char> px(static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch) * 4);
+                gf->glReadPixels(0, 0, cw, ch, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+                QImage img(cw, ch, QImage::Format_RGBA8888);
+                const std::size_t row = static_cast<std::size_t>(cw) * 4;
+                for (int y = 0; y < ch; ++y) { // GL rows run bottom-up
+                    std::memcpy(img.scanLine(y), px.data() + static_cast<std::size_t>(ch - 1 - y) * row, row);
+                }
+                ok = img.save(QString::fromStdString(path), "PNG");
+            }
+            std::printf("[viewport_capture] %s -> %s\n", path.c_str(), ok ? "saved" : "FAILED");
+            std::fflush(stdout);
+        }
         const auto t_before_swap = clock::now();
         context.swapBuffers(this);
         const auto t_after_swap = clock::now();

@@ -160,6 +160,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.display_units = store.units();
     doc.text_styles = store.text_styles();
     doc.current_text_style = store.current_text_style();
+    doc.wipeout_frames = store.wipeout_frames();
     for (const EntityGroup& g : store.groups()) {
         DocGroup dg;
         dg.name = g.name;
@@ -299,7 +300,8 @@ Document document_from_store(const GeometryStore& store) {
             const HatchData& h = hatch_arena.data()[i];
             doc.hatches.push_back(DocHatch{store.hatch_loops(h), std::string(store.string_of(h)),
                                            h.pattern_scale, h.pattern_angle, h.pattern_origin,
-                                           h.props});
+                                           h.props,
+                                           h.color2});
         }
     }
     const auto& fcf_arena = store.fcfs();
@@ -405,6 +407,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_text_styles(doc.text_styles);
     }
     store.set_current_text_style(doc.current_text_style);
+    store.set_wipeout_frames(doc.wipeout_frames);
     store.set_layer_table(doc.layers, doc.current_layer);
     store.set_dimstyle_table(doc.dimstyles);
     store.set_ltscale(doc.ltscale);
@@ -490,7 +493,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     for (const DocHatch& h : doc.hatches) {
         store.add_hatch(h.loops, h.pattern_name, h.pattern_scale, h.pattern_angle, h.pattern_origin,
-                        h.props);
+                        h.props, h.color2);
     }
     {
         std::vector<ImageDef> defs;

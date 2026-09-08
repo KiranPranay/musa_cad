@@ -625,6 +625,13 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_vec(s, h.pattern_origin);
         append_props(s, h.props);
+        // v27: the GRADIENT second colour.
+        s += ' ';
+        append_uint(s, h.color2.r);
+        s += ' ';
+        append_uint(s, h.color2.g);
+        s += ' ';
+        append_uint(s, h.color2.b);
         s += '\n';
         s += escape(h.pattern_name);
         s += '\n';
@@ -779,6 +786,9 @@ std::string serialize_native(const Document& doc) {
     }
     s += "CURTEXTSTYLE ";
     append_uint(s, doc.current_text_style);
+    s += '\n';
+    s += "WIPEOUTFRAME ";
+    append_uint(s, doc.wipeout_frames ? 1 : 0);
     s += '\n';
     // v25: UNITSFMT linear precision angular aprecision clockwise base_angle
     s += "UNITSFMT ";
@@ -1127,6 +1137,12 @@ IoResult parse_native(std::string_view text, Document& out) {
             ts.name = dec(tok[4]);
             ts.font = dec(tok[5]);
             doc.text_styles.push_back(std::move(ts));
+        } else if (key == "WIPEOUTFRAME") {
+            std::uint64_t on = 1;
+            if (tok.size() != 2 || !to_uint(tok[1], on)) {
+                return fail("malformed WIPEOUTFRAME");
+            }
+            doc.wipeout_frames = on != 0;
         } else if (key == "CURTEXTSTYLE") {
             std::uint64_t i = 0;
             if (tok.size() != 2 || !to_uint(tok[1], i)) {
@@ -1791,6 +1807,16 @@ IoResult parse_native(std::string_view text, Document& out) {
                 !to_double(tok[ti + 2], h.pattern_origin.x) ||
                 !to_double(tok[ti + 3], h.pattern_origin.y) || !parse_props(tok, ti + 4, h.props)) {
                 return fail("HATCH fields malformed");
+            }
+            if (tok.size() >= ti + 14) { // v27: the GRADIENT second colour
+                std::uint64_t cr = 0;
+                std::uint64_t cg = 0;
+                std::uint64_t cb = 0;
+                if (!to_uint(tok[ti + 11], cr) || !to_uint(tok[ti + 12], cg) || !to_uint(tok[ti + 13], cb)) {
+                    return fail("HATCH colour malformed");
+                }
+                h.color2 = Rgb{static_cast<std::uint8_t>(cr), static_cast<std::uint8_t>(cg),
+                               static_cast<std::uint8_t>(cb)};
             }
             std::string pat;
             if (!std::getline(in, pat)) {

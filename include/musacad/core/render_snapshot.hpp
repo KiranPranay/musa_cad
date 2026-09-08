@@ -46,6 +46,11 @@ struct ColorBatch {
     /// glyph's on-screen size -- tiny text reads crisp, title-size text keeps full presence.
     /// Derived at snapshot build; not baked, not in the checksum; ignored by PLOT.
     float text_height = 0.0f;
+    /// True for fill batches whose colour was COMPUTED (a gradient band) rather than
+    /// taken from the entity: PLOT keeps such colours as they are, since its
+    /// "near-white means the default pen, plot it black" rule is about the screen
+    /// convention for entity colours and would punch a black band into a gradient.
+    bool computed_color = false;
 };
 
 /// An immutable (from the renderer's perspective) view of the scene, produced
@@ -130,6 +135,8 @@ struct RenderSnapshot {
     std::vector<Vec2> points;
     std::vector<Vec2> line_vertices; // 2 entries per segment, ordered by colour batch
     std::vector<ConstructionLineView> construction_lines; // XLINE/RAY: clipped per-frame
+    std::vector<Vec2> wipeout_vertices; // WIPEOUT masks: triangles drawn in the background colour
+    bool wipeout_frames = true;         // WIPEOUTFRAME
     std::uint64_t checksum = 0;
 
     // Per-colour batches over `line_vertices` / `points` (after ByLayer
@@ -247,6 +254,7 @@ struct RenderSnapshot {
         points.clear();
         line_vertices.clear();
         construction_lines.clear();
+        wipeout_vertices.clear();
         line_batches.clear();
         point_batches.clear();
         fill_vertices.clear();

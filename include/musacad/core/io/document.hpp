@@ -61,7 +61,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 26;
+inline constexpr std::uint32_t kFormatVersion = 27;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -204,6 +204,7 @@ struct DocHatch {
     double pattern_angle = 0.0; ///< radians, CCW
     Vec2 pattern_origin{};
     EntityProps props{};
+    Rgb color2{}; ///< GRADIENT second colour (v27)
     friend bool operator==(const DocHatch&, const DocHatch&) = default;
 };
 
@@ -316,6 +317,7 @@ struct Document {
     DrawingUnits display_units{}; ///< UNITS: display formats (v25)
     std::vector<TextStyle> text_styles; ///< STYLE table (v26; [0] Standard; not in entity_count)
     std::uint16_t current_text_style = 0;
+    bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
 
     std::vector<Layer> layers{Layer{"0"}}; // layer 0 always present
     std::uint16_t current_layer = 0;

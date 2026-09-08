@@ -264,6 +264,7 @@ ViewportRenderer::ViewportRenderer(GpuDevice& device) : device_(device) {
     line_instances_ = device_.create_buffer(BufferUsage::Dynamic);
     point_instances_ = device_.create_buffer(BufferUsage::Dynamic);
     fill_buffer_ = device_.create_buffer(BufferUsage::Dynamic);
+    wipeout_buffer_ = device_.create_buffer(BufferUsage::Dynamic);
     grid_minor_ = device_.create_buffer(BufferUsage::Stream);
     grid_major_ = device_.create_buffer(BufferUsage::Stream);
     overlay_buffer_ = device_.create_buffer(BufferUsage::Stream);
@@ -293,6 +294,17 @@ void ViewportRenderer::upload_scene(const core::RenderSnapshot& snapshot) {
     }
     fill_count_ = snapshot.fill_vertices.size();
     fill_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+
+    scratch_.clear();
+    scratch_.reserve(snapshot.wipeout_vertices.size() * 2);
+    for (const core::Vec2& p : snapshot.wipeout_vertices) {
+        scratch_.push_back(static_cast<float>(p.x));
+        scratch_.push_back(static_cast<float>(p.y));
+    }
+    wipeout_count_ = snapshot.wipeout_vertices.size();
+    if (wipeout_count_ > 0) {
+        wipeout_buffer_->upload(scratch_.data(), scratch_.size() * sizeof(float));
+    }
 
     line_batches_ = snapshot.line_batches;
     point_batches_ = snapshot.point_batches;
@@ -353,56 +365,69 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
     // Scene lines: thick screen-space-expanded quads, one draw per (colour,
     // lineweight) batch. Width is in pixels (zoom-independent). LWDISPLAY off ->
     // a thin default for everything.
-    if (line_count_ > 0) {
-        cmd_->bind_pipeline(*thick_pipeline_);
-        cmd_->set_uniform_mat3("u_transform", view);
-        cmd_->set_uniform_vec2("u_viewport", static_cast<float>(target.width()),
-                               static_cast<float>(target.height()));
-        // HiDPI fix: the framebuffer is in physical pixels, so the effective
-        // density is the logical px/mm times the device-pixel-ratio -- without this
-        // every line is dpr x too thin on a HiDPI display.
-        const float eff_px_per_mm = device_px_per_mm_ * device_pixel_ratio_;
-        // Physical pixels per world unit (camera viewport is the physical framebuffer), used to
-        // taper the text weight to the glyph's on-screen size.
-        const float world_to_px = static_cast<float>(camera.scale());
-        const auto draw_batch = [&](core::Rgb c, std::uint8_t lw, std::uint32_t first,
-                                    std::uint32_t count, bool is_text, float text_height) {
-            // Single-stroke TEXT gets a dedicated, heavier screen weight so it reads crisp
-            // and present (not the 1px hairline that looked dull) -- independent of the
-            // LWDISPLAY toggle, since text carries no real lineweight to display/suppress.
-            // The ~0.5mm weight is a CAP: small text is capped further to a fraction of its
-            // on-screen glyph height so tiny title-block fields aren't blocky, while title-size
-            // text keeps full presence (floored at a 1px hairline). PLOT is a separate path
-            // that honours the entity's 0 weight (hairline), so this never reaches paper.
-            // Line geometry keeps the AutoCAD-accurate weight.
-            float w;
-            if (is_text) {
-                const float cap = lineweight_px(kTextScreenWeightHmm, eff_px_per_mm);
-                const float glyph_px = text_height * world_to_px;
-                w = std::clamp(glyph_px * kTextStrokeFrac, 1.0f, cap);
+    //
+    // Two passes when the scene holds WIPEOUTs: the geometry batches first, then the
+    // fills, then the wipeout masks in the background colour, then the text batches --
+    // so a wipeout hides the line work and hatching beneath it while a label placed on
+    // it (the point of a wipeout) stays readable. AutoCAD's DRAWORDER is not modelled;
+    // this fixed order covers the "mask under a note" use.
+    const auto draw_lines = [&](bool text_pass) {
+        if (line_count_ > 0) {
+            cmd_->bind_pipeline(*thick_pipeline_);
+            cmd_->set_uniform_mat3("u_transform", view);
+            cmd_->set_uniform_vec2("u_viewport", static_cast<float>(target.width()),
+                                   static_cast<float>(target.height()));
+            // HiDPI fix: the framebuffer is in physical pixels, so the effective
+            // density is the logical px/mm times the device-pixel-ratio -- without this
+            // every line is dpr x too thin on a HiDPI display.
+            const float eff_px_per_mm = device_px_per_mm_ * device_pixel_ratio_;
+            // Physical pixels per world unit (camera viewport is the physical framebuffer), used to
+            // taper the text weight to the glyph's on-screen size.
+            const float world_to_px = static_cast<float>(camera.scale());
+            const auto draw_batch = [&](core::Rgb c, std::uint8_t lw, std::uint32_t first,
+                                        std::uint32_t count, bool is_text, float text_height) {
+                // Single-stroke TEXT gets a dedicated, heavier screen weight so it reads crisp
+                // and present (not the 1px hairline that looked dull) -- independent of the
+                // LWDISPLAY toggle, since text carries no real lineweight to display/suppress.
+                // The ~0.5mm weight is a CAP: small text is capped further to a fraction of its
+                // on-screen glyph height so tiny title-block fields aren't blocky, while title-size
+                // text keeps full presence (floored at a 1px hairline). PLOT is a separate path
+                // that honours the entity's 0 weight (hairline), so this never reaches paper.
+                // Line geometry keeps the AutoCAD-accurate weight.
+                float w;
+                if (is_text) {
+                    const float cap = lineweight_px(kTextScreenWeightHmm, eff_px_per_mm);
+                    const float glyph_px = text_height * world_to_px;
+                    w = std::clamp(glyph_px * kTextStrokeFrac, 1.0f, cap);
+                } else {
+                    w = snapshot.lineweight_display ? lineweight_px(lw, eff_px_per_mm)
+                                                    : device_pixel_ratio_;
+                }
+                cmd_->set_uniform_float("u_halfwidth", w * 0.5f);
+                cmd_->set_uniform_vec4("u_color", static_cast<float>(c.r) / 255.0f,
+                                       static_cast<float>(c.g) / 255.0f, static_cast<float>(c.b) / 255.0f,
+                                       1.0f);
+                cmd_->bind_vertex_buffer(0, *line_instances_, first * sizeof(float) * 4);
+                cmd_->draw_instanced(4, count); // 4-vertex triangle strip per segment
+                ++stats_.draw_calls;
+            };
+            if (line_batches_.empty()) {
+                if (!text_pass) {
+                    draw_batch(core::Rgb{static_cast<std::uint8_t>(kSceneColor[0] * 255),
+                                         static_cast<std::uint8_t>(kSceneColor[1] * 255),
+                                         static_cast<std::uint8_t>(kSceneColor[2] * 255)},
+                               25, 0, static_cast<std::uint32_t>(line_count_), false, 0.0f);
+                }
             } else {
-                w = snapshot.lineweight_display ? lineweight_px(lw, eff_px_per_mm)
-                                                : device_pixel_ratio_;
-            }
-            cmd_->set_uniform_float("u_halfwidth", w * 0.5f);
-            cmd_->set_uniform_vec4("u_color", static_cast<float>(c.r) / 255.0f,
-                                   static_cast<float>(c.g) / 255.0f, static_cast<float>(c.b) / 255.0f,
-                                   1.0f);
-            cmd_->bind_vertex_buffer(0, *line_instances_, first * sizeof(float) * 4);
-            cmd_->draw_instanced(4, count); // 4-vertex triangle strip per segment
-            ++stats_.draw_calls;
-        };
-        if (line_batches_.empty()) {
-            draw_batch(core::Rgb{static_cast<std::uint8_t>(kSceneColor[0] * 255),
-                                 static_cast<std::uint8_t>(kSceneColor[1] * 255),
-                                 static_cast<std::uint8_t>(kSceneColor[2] * 255)},
-                       25, 0, static_cast<std::uint32_t>(line_count_), false, 0.0f);
-        } else {
-            for (const core::ColorBatch& b : line_batches_) {
-                draw_batch(b.color, b.lineweight, b.first, b.count, b.is_text, b.text_height);
+                for (const core::ColorBatch& b : line_batches_) {
+                    if (b.is_text == text_pass) {
+                        draw_batch(b.color, b.lineweight, b.first, b.count, b.is_text, b.text_height);
+                    }
+                }
             }
         }
-    }
+    };
+    draw_lines(false);
 
     // Filled arrowheads + SOLID hatches: one draw per colour batch.
     if (fill_count_ > 0 && !fill_batches_.empty()) {
@@ -417,6 +442,17 @@ void ViewportRenderer::render(GpuRenderTarget& target, const core::RenderSnapsho
             ++stats_.draw_calls;
         }
     }
+
+    // WIPEOUT masks: the background colour over everything drawn so far.
+    if (wipeout_count_ > 0) {
+        cmd_->bind_pipeline(*fill_pipeline_);
+        cmd_->set_uniform_mat3("u_transform", view);
+        cmd_->set_uniform_vec4("u_color", kBackground.r, kBackground.g, kBackground.b, 1.0f);
+        cmd_->bind_vertex_buffer(0, *wipeout_buffer_, 0);
+        cmd_->draw_instanced(static_cast<std::uint32_t>(wipeout_count_), 1);
+        ++stats_.draw_calls;
+    }
+    draw_lines(true); // text reads over the masks
 
     // Selected-hatch highlight: tint the picked SOLID fill in the selection colour so a
     // selected hatch reads as selected (the fill above keeps drawing -- this is a

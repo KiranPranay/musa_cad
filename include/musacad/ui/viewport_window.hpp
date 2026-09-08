@@ -98,6 +98,11 @@ public:
     /// Latest measured frames-per-second (thread-safe).
     [[nodiscard]] double fps() const noexcept { return fps_.load(std::memory_order_relaxed); }
 
+    /// Developer capture: the render thread writes its next frame -- the GL framebuffer
+    /// itself, not a window grab, which comes back black for a GL surface under some
+    /// compositors -- to `png_path`. Thread-safe. (MUSACAD_SCREENSHOT uses it.)
+    void request_frame_capture(std::string png_path);
+
     /// Number of currently-selected entities (for enabling Modify buttons).
     [[nodiscard]] int selection_count() const noexcept {
         return selection_count_.load(std::memory_order_relaxed);
@@ -503,6 +508,9 @@ private:
     std::atomic<double> fps_{0.0};
     std::atomic<int> frames_rendered_{0};
     std::atomic<bool> zoom_extents_requested_{false};
+    std::atomic<bool> capture_requested_{false}; ///< request_frame_capture pending
+    std::mutex capture_mutex_;
+    std::string capture_path_;
     std::atomic<bool> view_requested_{false}; ///< VIEW Restore: apply pending_view_* next frame
     core::Vec2 pending_view_center_{};
     double pending_view_scale_ = 1.0;

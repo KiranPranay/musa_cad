@@ -134,12 +134,21 @@ int main(int argc, char* argv[]) {
     // Headless structural check: dump the ribbon/frame widget tree and confirm
     // ribbon buttons fire existing commands, then quit.
     if (qEnvironmentVariableIsSet("MUSACAD_DUMP_UI")) {
-        QTimer::singleShot(600, &window, [&window, &app] {
+        // MUSACAD_SCREENSHOT_DELAY_MS lets a capture wait for a drawing to load and settle.
+        bool delay_ok = false;
+        int delay_ms = qEnvironmentVariable("MUSACAD_SCREENSHOT_DELAY_MS").toInt(&delay_ok);
+        if (!delay_ok || delay_ms < 0) {
+            delay_ms = 600;
+        }
+        QTimer::singleShot(delay_ms, &window, [&window, &app] {
             window.dump_ui();
             if (const QString path = qEnvironmentVariable("MUSACAD_SCREENSHOT"); !path.isEmpty()) {
                 window.grab().save(path);
+                // The GL viewport as rendered (a window grab of a GL surface is black under
+                // some compositors): <path>.viewport.png, written by the render thread.
+                window.request_viewport_capture((path + ".viewport.png").toStdString());
             }
-            app.quit();
+            QTimer::singleShot(400, &app, [&app] { app.quit(); });
         });
     }
 

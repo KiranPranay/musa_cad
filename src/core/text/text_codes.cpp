@@ -5,6 +5,10 @@
 
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
+#include <ctime>
+#include <mutex>
+#include <utility>
 
 namespace musacad::core::text {
 
@@ -41,7 +45,84 @@ int hex_value(char c) {
 
 } // namespace
 
-SubstitutedText substitute_text_codes(std::string_view in) {
+namespace {
+std::mutex g_field_mutex;
+FieldContext g_fields;
+std::string upper_ascii(std::string_view s) {
+    std::string u(s);
+    for (char& c : u) {
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    return u;
+}
+} // namespace
+
+void set_field_context(FieldContext ctx) {
+    const std::scoped_lock lock(g_field_mutex);
+    g_fields = std::move(ctx);
+}
+
+FieldContext field_context() {
+    const std::scoped_lock lock(g_field_mutex);
+    return g_fields;
+}
+
+FieldContext make_field_context(std::string_view document_path) {
+    FieldContext fc;
+    const std::time_t now = std::time(nullptr);
+    std::tm tmv{};
+    localtime_r(&now, &tmv);
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tmv);
+    fc.date = buf;
+    std::strftime(buf, sizeof(buf), "%H:%M", &tmv);
+    fc.time = buf;
+    const std::size_t slash = document_path.find_last_of("/\\");
+    fc.filename = document_path.empty()
+                      ? std::string("Drawing1")
+                      : std::string(document_path.substr(slash == std::string_view::npos ? 0 : slash + 1));
+    const char* user = std::getenv("USER");
+    fc.login = user != nullptr ? user : "";
+    return fc;
+}
+
+std::string expand_fields(std::string_view raw) {
+    if (raw.find("%<") == std::string_view::npos) {
+        return std::string(raw);
+    }
+    const FieldContext fc = field_context();
+    std::string out;
+    out.reserve(raw.size());
+    std::size_t i = 0;
+    while (i < raw.size()) {
+        if (raw[i] == '%' && i + 1 < raw.size() && raw[i + 1] == '<') {
+            const std::size_t close = raw.find(">%", i + 2);
+            if (close != std::string_view::npos) {
+                const std::string name = upper_ascii(raw.substr(i + 2, close - i - 2));
+                if (name == "DATE") {
+                    out += fc.date;
+                } else if (name == "TIME") {
+                    out += fc.time;
+                } else if (name == "FILENAME") {
+                    out += fc.filename;
+                } else if (name == "LOGIN") {
+                    out += fc.login;
+                } else {
+                    out += "####";
+                }
+                i = close + 2;
+                continue;
+            }
+        }
+        out += raw[i];
+        ++i;
+    }
+    return out;
+}
+
+SubstitutedText substitute_text_codes(std::string_view raw_in) {
+    const std::string expanded = expand_fields(raw_in);
+    const std::string_view in = expanded;
     SubstitutedText r;
     r.text.reserve(in.size());
 

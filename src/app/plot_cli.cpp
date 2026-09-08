@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <memory>
 
+#include "musacad/core/text/text_codes.hpp"
 #include "musacad/core/geometry_store.hpp"
 #include "musacad/core/io/document.hpp"
 #include "musacad/core/io/dxf.hpp"
@@ -42,6 +43,7 @@ int run_plot(const CliOptions& o, std::string& error) {
     const ui::QtImageDecoder decoder;
     store.set_image_decoder(&decoder);
     core::io::populate_store(store, doc);
+    core::text::set_field_context(core::text::make_field_context(o.input)); // FIELD values
 
     // 3. The sheet.
     ui::PlotSpec spec;

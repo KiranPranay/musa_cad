@@ -3128,6 +3128,14 @@ void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
     report("Wrote " + std::to_string(count) + (count == 1 ? " object to " : " objects to ") + c.path + ".");
 }
 
+// FIELD values: the date, time, file name and login the text layout substitutes for
+// %<Date>%, %<Time>%, %<Filename>% and %<Login>%. Refreshed on every rebuild, so a
+// field is as current as the last edit or REGEN (AutoCAD's FIELDEVAL on regen).
+text::FieldContext GeometryEngine::field_context_now() const {
+    return text::make_field_context(active_idx_ < doc_metas_.size() ? doc_metas_[active_idx_].path
+                                                                    : std::string());
+}
+
 void GeometryEngine::apply_audit(bool fix) {
     int errors = 0;
     int fixed = 0;
@@ -5078,7 +5086,7 @@ void GeometryEngine::apply_join_selection(double radius, std::uint64_t group) {
 }
 
 void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, double scale,
-                                                double angle, std::uint64_t group) {
+                                                double angle, std::uint64_t group, Rgb color2) {
     // Each selected CLOSED polyline contributes a boundary loop. The even-odd fill makes
     // separate loops fill independently and nested loops (a polyline inside another) read
     // as holes -- no nesting classification needed here.
@@ -5105,6 +5113,7 @@ void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, doub
     cmd.pattern_name = pattern;
     cmd.pattern_scale = scale;
     cmd.pattern_angle = angle;
+    cmd.color2 = color2;
     cmd.group = group; // props unset -> created on the current layer, ByLayer (AutoCAD default)
     const EntityHandle nh = create_indexed(cmd);
     push_create_item(group, nh, cmd);
@@ -5116,7 +5125,7 @@ void GeometryEngine::apply_hatch_from_selection(const std::string& pattern, doub
 }
 
 void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, double scale,
-                                            double angle, std::uint64_t group) {
+                                            double angle, std::uint64_t group, Rgb color2) {
     // Gather candidate boundary edges from every curve-like entity (tessellated, so arcs +
     // bulged polylines follow their true shape), closing the loop for closed shapes.
     std::vector<hatch::Segment> segs;
@@ -5194,6 +5203,7 @@ void GeometryEngine::apply_hatch_pick_point(Vec2 p, const std::string& pattern, 
     cmd.pattern_name = pattern;
     cmd.pattern_scale = scale;
     cmd.pattern_angle = angle;
+    cmd.color2 = color2;
     cmd.group = group;
     const EntityHandle nh = create_indexed(cmd);
     push_create_item(group, nh, cmd);
@@ -5472,10 +5482,10 @@ void GeometryEngine::apply(const Command& command) {
                 apply_join_selection(c.radius, c.group);
             } else if constexpr (std::is_same_v<T, HatchFromSelectionCommand>) {
                 apply_hatch_from_selection(c.pattern_name, c.pattern_scale, c.pattern_angle,
-                                           c.group);
+                                           c.group, c.color2);
             } else if constexpr (std::is_same_v<T, HatchPickPointCommand>) {
                 apply_hatch_pick_point(c.point, c.pattern_name, c.pattern_scale, c.pattern_angle,
-                                       c.group);
+                                       c.group, c.color2);
             } else if constexpr (std::is_same_v<T, RotateSelectionCommand>) {
                 apply_rotate(c.base, c.angle, c.group, c.copy);
             } else if constexpr (std::is_same_v<T, ScaleSelectionCommand>) {
@@ -5540,6 +5550,7 @@ void GeometryEngine::apply(const Command& command) {
                 // arcs at any paper scale), then bump the version the UI waits on. The
                 // store is never mutated; the live snapshot/triple-buffer is untouched.
                 const double tol = c.tolerance > 0.0 ? c.tolerance : kDefaultTessTolerance;
+                text::set_field_context(field_context_now());
                 build_render_snapshot(store_, kernel_, plot_snapshot_, tol, store_.ltscale());
                 plot_version_.fetch_add(1, std::memory_order_release);
             } else if constexpr (std::is_same_v<T, GripDragCommand>) {
@@ -5742,6 +5753,41 @@ void GeometryEngine::apply(const Command& command) {
                 report("Regenerating model.");
             } else if constexpr (std::is_same_v<T, PeditCommand>) {
                 apply_pedit(c);
+            } else if constexpr (std::is_same_v<T, SetWipeoutFramesCommand>) {
+                store_.set_wipeout_frames(c.on);
+                dirty_ = true;
+                geom_dirty_ = true;
+                report(c.on ? "Wipeout frames on." : "Wipeout frames off.");
+            } else if constexpr (std::is_same_v<T, WipeoutFromPolylineCommand>) {
+                const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+                if (h.is_null() || h.kind != EntityKind::Polyline || !store_.polyline(h)->closed) {
+                    report("Wipeout: select a closed polyline.");
+                } else {
+                    std::vector<Vec2> ring;
+                    kernel_.tessellate(store_, h, tess_tolerance_, ring); // arcs become chords
+                    if (ring.size() >= 2 && length_squared(ring.front() - ring.back()) < 1e-18) {
+                        ring.pop_back();
+                    }
+                    if (ring.size() < 3) {
+                        report("Wipeout: that polyline has too few vertices.");
+                    } else {
+                        AddHatchCommand w;
+                        w.loops = {ring};
+                        w.pattern_name = "WIPEOUT";
+                        w.props = store_.polyline(h)->props;
+                        if (c.erase) {
+                            const Command original = capture_entity(h);
+                            remove_indexed(h);
+                            push_erase_item(c.group, h, original);
+                        }
+                        const Command add = w;
+                        push_create_item(c.group, create_indexed(add), add);
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
+                        report("Wipeout created.");
+                    }
+                }
             } else if constexpr (std::is_same_v<T, SetCurrentTextStyleCommand>) {
                 const std::uint16_t i = store_.text_style_index(c.name);
                 if (i == 0xFFFF) {
@@ -6015,6 +6061,7 @@ void GeometryEngine::rebuild_and_publish() {
     if (geom_dirty_) {
         // Curves tessellate to the current zoom bucket's chord tolerance (Part A);
         // stored geometry stays parametric -- only this render payload is sampled.
+        text::set_field_context(field_context_now());
         build_render_snapshot(store_, kernel_, geom_cache_, tess_tolerance_, store_.ltscale());
         geom_dirty_ = false;
         ++geom_version_;
@@ -6031,6 +6078,8 @@ void GeometryEngine::rebuild_and_publish() {
         buf.points = geom_cache_.points;
         buf.line_vertices = geom_cache_.line_vertices;
         buf.construction_lines = geom_cache_.construction_lines;
+        buf.wipeout_vertices = geom_cache_.wipeout_vertices;
+        buf.wipeout_frames = geom_cache_.wipeout_frames;
         buf.line_batches = geom_cache_.line_batches;
         buf.point_batches = geom_cache_.point_batches;
         buf.fill_vertices = geom_cache_.fill_vertices;

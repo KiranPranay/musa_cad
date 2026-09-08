@@ -225,3 +225,22 @@ TEST_CASE("#29 engine: the style resolves on add, is published, and round-trips 
     std::filesystem::remove(d);
     engine.stop();
 }
+
+TEST_CASE("#29 a store moved out of (a parked tab) and cleared is a fresh store again: Standard style, defaults") {
+    GeometryStore s;
+    s.add_text_style(TextStyle{"Notes"});
+    s.set_current_text_style(1);
+    s.set_wipeout_frames(false);
+    GeometryStore parked = std::move(s);
+    s.clear();
+    // Opening a file into a new tab does exactly this, then looks text styles up while
+    // indexing the loaded entities -- a moved-from (empty) style table must not be seen.
+    REQUIRE(s.text_styles().size() == 1);
+    CHECK(s.text_styles()[0].name == "Standard");
+    CHECK(s.current_text_style() == 0);
+    CHECK(s.wipeout_frames());
+    CHECK(s.named_views().empty());
+    const EntityHandle t = s.add_text({0, 0}, 2.5, 0.0, 0, "abc");
+    CHECK(s.text_style_of(*s.text(t)).name == "Standard");
+    CHECK(parked.text_styles().size() == 2);
+}
