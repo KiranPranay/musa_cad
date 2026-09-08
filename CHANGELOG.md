@@ -6,6 +6,56 @@
 All notable changes to Musa CAD are recorded here. This project aims to follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+Everything below is on `main` and in the per-command table in
+[`docs/COMMANDS.md`](docs/COMMANDS.md); the roadmap in
+[`docs/ROADMAP.md`](docs/ROADMAP.md) shows what is still open.
+
+### Added
+- **Draw primitives** (#23) — `SPLINE` (fit and control-vertex methods), `ELLIPSE` (centre,
+  axis-end, rotation, elliptical arcs), `POLYGON`, `POINT`, `XLINE` / `RAY` construction
+  lines, `DONUT`, `REVCLOUD`, and the `RECTANGLE` first-corner options (Chamfer / Fillet /
+  Width / Dimensions / Area / Rotation).
+- **Modify commands** (#27) — `BREAK`, `LENGTHEN`, `ALIGN`, `DIVIDE` / `MEASURE`, `PEDIT`
+  (Close / Open / Join / Edit vertex / Spline / Decurve / Reverse / Undo), and `TRIM` /
+  `EXTEND` / `FILLET` where the modified object is an arc, circle or polyline.
+- **Dimension types** (#28) — `DIMORDINATE`, `DIMJOGGED`, `DIMARC`.
+- **Text styles** (#29) — the `STYLE` table (font, height, width factor, oblique), a current
+  style, a style picker in the properties palette, native and DXF `STYLE` both ways.
+- **Housekeeping and inquiry** (#30) — `UNITS` (formats and precision, used by the readout
+  and by `DIST` / `ID` / `AREA` / `LIST`), `PURGE`, `AUDIT`.
+- **Blocks** (#25) — `BLOCK` / `INSERT` / `WBLOCK` / `EXPLODE` / `REGEN`; **block
+  attributes** (`ATTDEF`, `INSERT` value prompts, `ATTDISP`, `ATTEDIT`); **in-place editing**
+  (`REFEDIT` / `REFSET` / `REFCLOSE`).
+- **Views, groups, masks, fields** (#33) — named views (`VIEW`), `GROUP` / `UNGROUP` /
+  `PICKSTYLE`, `WIPEOUT` (with `WIPEOUTFRAME`), `FIELD` (date, time, file name, login), and
+  `HATCH` gradient fills.
+- **Snapping and input** (#32) — Insertion, Apparent intersection and Parallel snaps, the
+  `OSNAP` settings dialog and `-OSNAP`, `ROTATE` / `SCALE` Copy and Reference options with
+  value dialogs and a live ghost, editable geometry fields in the properties palette, and
+  GD&T frame cell editing.
+- **Interop** (#31) — DXF `TOLERANCE` (GD&T) both ways, DXF `SPLINE` import, the legacy
+  `POLYLINE` / `VERTEX` / `SEQEND` form, `ATTDEF` and `INSERT` + `ATTRIB` both ways, and the
+  gradient-hatch block.
+
+### Changed
+- Plot: fills are drawn as one path per colour, so hatches no longer show hairline seams
+  between triangles; a `WIPEOUT` masks on paper as it does on screen.
+- The `STRETCH` base-point prompt no longer lags the cursor.
+
+### Fixed
+- Undoing an edit twice in a row could leave a duplicate object (stale handles in the
+  undo history after a re-creation).
+- Opening a drawing into a new tab lost the Standard text style and could crash text
+  layout.
+
+### Compatibility
+Native format **v28**. Files from v0.3.0 (v20) open unchanged; files saved by this build
+carry the new tables and entities and need this build or newer.
+
+---
+
 ## v0.3.0 — editing and inquiry
 
 Full notes: [`docs/release-notes/v0.3.0.md`](docs/release-notes/v0.3.0.md). **Linux only.**
