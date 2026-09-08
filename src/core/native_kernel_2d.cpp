@@ -278,9 +278,10 @@ void NativeKernel2D::tessellate(const GeometryStore& store, EntityHandle entity,
         spline::tessellate(store.control_points_of(*sp), sp->degree, out);
         break;
     }
-    case EntityKind::Text: {
+    case EntityKind::Text:
+    case EntityKind::AttDef: {
         // Pick/window-select against the (rotated) bounding box outline.
-        const TextData* t = store.text(entity);
+        const TextData* t = store.text_like(entity);
         const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
                                             store.string_of(*t), t->height);
         const TextStyle& ts = store.text_style_of(*t);
@@ -452,9 +453,10 @@ bool NativeKernel2D::closest_point(const GeometryStore& store, EntityHandle enti
         out_point = best;
         return true;
     }
-    case EntityKind::Text: {
+    case EntityKind::Text:
+    case EntityKind::AttDef: {
         // Closest point on the text bbox; the query inside the box reads distance 0.
-        const TextData* t = store.text(entity);
+        const TextData* t = store.text_like(entity);
         const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
                                             store.string_of(*t), t->height) *
                          store.text_style_of(*t).width_factor;
@@ -866,6 +868,7 @@ bool NativeKernel2D::offset(const GeometryStore& store, EntityHandle entity, dou
     case EntityKind::Point:
     case EntityKind::Spline:
     case EntityKind::Text:
+    case EntityKind::AttDef:
     case EntityKind::Dimension:
     case EntityKind::Leader:
     case EntityKind::MText:

@@ -91,6 +91,7 @@ struct InsertBlockCommand {
     double scale_y = 1.0;
     double rotation = 0.0;
     std::uint64_t group = 0;
+    std::vector<std::string> attribs; ///< attribute values in the block's attdef order
 };
 /// WBLOCK: write a block definition (or the whole drawing when `name` is empty) to a
 /// .musa file; a block's geometry is written with its base point at the origin.
@@ -765,6 +766,7 @@ struct AddInsertCommand {
     double rotation = 0.0; ///< radians, CCW
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    std::vector<std::string> attribs; ///< attribute values in the block's attdef order
 };
 
 /// Create a HATCH from closed boundary loops (loop 0 = outer, the rest islands), a
@@ -779,6 +781,30 @@ struct AddHatchCommand {
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
     Rgb color2{}; ///< GRADIENT: the second colour
+};
+
+/// ATTDEF: an attribute definition. `text` gives the placement, props, font and style
+/// with the TAG as its content (what model space shows); `prompt` and `def` are what
+/// INSERT asks and offers once the definition is inside a block.
+struct AddAttDefCommand {
+    AddTextCommand text;
+    std::string prompt;
+    std::string def;
+    std::uint8_t flags = 0; ///< kAttInvisible | kAttConstant | kAttVerify | kAttPreset
+    std::uint64_t group = 0;
+};
+/// ATTDISP: 0 Normal (each attribute's own Invisible mode), 1 all ON, 2 all OFF.
+struct SetAttDispCommand {
+    std::uint8_t mode = 0;
+};
+/// -ATTEDIT: give the attribute `tag` ("" = every attribute) of the block reference
+/// under `pick` a new value.
+struct SetInsertAttribCommand {
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    std::string tag;
+    std::string value;
+    std::uint64_t group = 0;
 };
 
 /// Create a GD&T feature control frame. `cells` are the ordered cell strings (cell 0 is
@@ -994,7 +1020,8 @@ using Command =
                  CreateGroupCommand, UngroupCommand, SetPickStyleCommand, SetUnitsCommand,
                  AuditCommand, SetTextStyleCommand, SetCurrentTextStyleCommand, DefineBlockCommand,
                  InsertBlockCommand, WriteBlockCommand, RegenCommand, PeditCommand,
-                 SetWipeoutFramesCommand, WipeoutFromPolylineCommand,
+                 SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
+                 SetAttDispCommand, SetInsertAttribCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

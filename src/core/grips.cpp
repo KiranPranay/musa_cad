@@ -56,6 +56,24 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
                               std::string(store.font_name(t->font)),
                               t->style == 0 ? std::string{} : ts.name};
     }
+    case EntityKind::AttDef: {
+        const AttDefData* a = store.attdef(h);
+        const TextStyle& ts = store.text_style_of(a->text);
+        AddAttDefCommand c;
+        c.text = AddTextCommand{a->text.pos,
+                                a->text.height,
+                                a->text.rotation,
+                                a->text.justify,
+                                std::string(store.string_of(a->text)),
+                                0,
+                                a->text.props,
+                                std::string(store.font_name(a->text.font)),
+                                a->text.style == 0 ? std::string{} : ts.name};
+        c.prompt = std::string(store.attdef_prompt(*a));
+        c.def = std::string(store.attdef_default(*a));
+        c.flags = a->flags;
+        return c;
+    }
     case EntityKind::Dimension: {
         const DimData* d = store.dimension(h);
         const DimStyle* st = store.dimstyle(d->style);
@@ -110,8 +128,9 @@ Command capture_entity(const GeometryStore& store, EntityHandle h) {
     }
     case EntityKind::Insert: {
         const InsertData* in = store.insert(h);
-        return AddInsertCommand{in->block,    in->pos, in->scale_x, in->scale_y,
-                                in->rotation, 0,       in->props};
+        AddInsertCommand c{in->block, in->pos, in->scale_x, in->scale_y, in->rotation, 0, in->props, {}};
+        c.attribs = store.insert_attribs(*in);
+        return c;
     }
     case EntityKind::Hatch: {
         const HatchData* hd = store.hatch(h);
@@ -256,6 +275,21 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                                             props_of(c.props), store.add_font(font), style);
 
                 }
+            } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
+                std::uint16_t style = 0;
+                std::string font = c.text.font;
+                if (!c.text.style.empty()) {
+                    const std::uint16_t si = store.text_style_index(c.text.style);
+                    if (si != 0xFFFF) {
+                        style = si;
+                        if (font.empty()) {
+                            font = store.text_styles()[si].font;
+                        }
+                    }
+                }
+                handle = store.add_attdef(c.text.pos, c.text.height, c.text.rotation, c.text.justify,
+                                          c.text.content, c.prompt, c.def, c.flags,
+                                          props_of(c.text.props), store.add_font(font), style);
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
                 handle = store.add_dimension(static_cast<DimType>(c.type), c.a, c.b, c.line_pt,
                                              c.style, props_of(c.props), c.overrides, c.prefix,
@@ -275,7 +309,7 @@ EntityHandle add_command_to_store(GeometryStore& store, const Command& cmd, Enti
                                            c.overrides);
             } else if constexpr (std::is_same_v<T, AddInsertCommand>) {
                 handle = store.add_insert(c.block, c.pos, c.scale_x, c.scale_y, c.rotation,
-                                          props_of(c.props));
+                                          props_of(c.props), c.attribs);
             } else if constexpr (std::is_same_v<T, AddHatchCommand>) {
                 handle = store.add_hatch(c.loops, c.pattern_name, c.pattern_scale, c.pattern_angle,
                                          c.pattern_origin, props_of(c.props), c.color2);
@@ -396,6 +430,10 @@ void grips_of(const GeometryStore& store, EntityHandle h, std::vector<Grip>& out
     case EntityKind::Text: {
         const TextData* t = store.text(h);
         push(out, t->pos, GripKind::Move, 0);
+        break;
+    }
+    case EntityKind::AttDef: {
+        push(out, store.attdef(h)->text.pos, GripKind::Move, 0);
         break;
     }
     case EntityKind::Dimension: {
@@ -629,6 +667,8 @@ Command edit_for_grip_drag(const GeometryStore& store, EntityHandle h, std::uint
                 if (grip_index < x.points.size()) {
                     x.points[grip_index] = newpos;
                 }
+            } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
+                x.text.pos = newpos;
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 x.pos = newpos;
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {

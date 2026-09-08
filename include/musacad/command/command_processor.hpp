@@ -99,6 +99,18 @@ public:
     [[nodiscard]] std::uint16_t current_text_style() const override { return current_text_style_; }
     void set_block_names(std::vector<std::string> v) { block_names_ = std::move(v); }
     [[nodiscard]] std::vector<std::string> block_names() const override { return block_names_; }
+    /// Per block (parallel to the names): its attributes, for INSERT's value prompts.
+    void set_block_attdefs(std::vector<std::vector<core::BlockAttDefInfo>> v) {
+        block_attdefs_ = std::move(v);
+    }
+    [[nodiscard]] std::vector<core::BlockAttDefInfo> block_attdefs(const std::string& block) const override {
+        for (std::size_t i = 0; i < block_names_.size() && i < block_attdefs_.size(); ++i) {
+            if (block_names_[i] == block) {
+                return block_attdefs_[i];
+            }
+        }
+        return {};
+    }
     [[nodiscard]] core::DrawingUnits units() const override { return units_; }
     [[nodiscard]] std::vector<core::NamedView> named_views() const override { return named_views_; }
 
@@ -155,6 +167,7 @@ private:
     std::vector<core::TextStyle> text_styles_;
     std::uint16_t current_text_style_ = 0;
     std::vector<std::string> block_names_;
+    std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_;
     CommandOutput& output_;
     CommandRegistry registry_;
 

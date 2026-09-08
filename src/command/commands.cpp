@@ -2934,11 +2934,219 @@ void InsertCommand::input(CommandContext& ctx, const std::string& text) {
             ctx.echo("Enter an angle in degrees.");
             return;
         }
-        s_last_ = name_;
-        ctx.submit(core::InsertBlockCommand{name_, pos_, sx_, sy_, core::to_radians(deg), ctx.group_id()});
+        rot_ = core::to_radians(deg);
+        // Attributes: every value starts at its default; the ones that are neither
+        // Constant nor Preset are asked for, as AutoCAD does with ATTDIA off.
+        attdefs_ = ctx.block_attdefs(name_);
+        values_.clear();
+        for (const core::BlockAttDefInfo& a : attdefs_) {
+            values_.push_back(a.def);
+        }
+        attrib_index_ = 0;
+        if (!attdefs_.empty()) {
+            ctx.echo("Enter attribute values");
+        }
+        next_attrib_or_finish(ctx);
+        return;
+    }
+    case State::Attrib:
+        if (!t.empty()) {
+            values_[attrib_index_] = t;
+        }
+        ++attrib_index_;
+        next_attrib_or_finish(ctx);
+        return;
+    }
+}
+
+void InsertCommand::next_attrib_or_finish(CommandContext& ctx) {
+    while (attrib_index_ < attdefs_.size()) {
+        const core::BlockAttDefInfo& a = attdefs_[attrib_index_];
+        if ((a.flags & (core::kAttConstant | core::kAttPreset)) == 0) {
+            state_ = State::Attrib;
+            const std::string label = a.prompt.empty() ? a.tag : a.prompt;
+            ctx.set_prompt(label + (a.def.empty() ? ": " : " <" + a.def + ">: "));
+            return;
+        }
+        ++attrib_index_;
+    }
+    s_last_ = name_;
+    ctx.submit(core::InsertBlockCommand{name_, pos_, sx_, sy_, rot_, ctx.group_id(), values_});
+    done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// ATTDEF / ATTDISP / ATTEDIT
+// ---------------------------------------------------------------------------
+void AttdefCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Modes;
+    flags_ = 0;
+    height_ = s_height_;
+    prompt_modes(ctx);
+}
+
+void AttdefCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void AttdefCommand::prompt_modes(CommandContext& ctx) {
+    const auto yn = [this](std::uint8_t bit) { return (flags_ & bit) != 0 ? "Y" : "N"; };
+    ctx.echo(std::string("Current attribute modes: Invisible=") + yn(core::kAttInvisible) +
+             " Constant=" + yn(core::kAttConstant) + " Verify=" + yn(core::kAttVerify) +
+             " Preset=" + yn(core::kAttPreset));
+    ctx.set_prompt("Enter an option to change [Invisible/Constant/Verify/Preset] <done>: ");
+}
+
+void AttdefCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Modes:
+        if (u == "I" || u == "INVISIBLE") {
+            flags_ ^= core::kAttInvisible;
+        } else if (u == "C" || u == "CONSTANT") {
+            flags_ ^= core::kAttConstant;
+        } else if (u == "V" || u == "VERIFY") {
+            flags_ ^= core::kAttVerify;
+        } else if (u == "P" || u == "PRESET") {
+            flags_ ^= core::kAttPreset;
+        } else if (t.empty()) {
+            state_ = State::Tag;
+            ctx.set_prompt("Enter attribute tag name: ");
+            return;
+        } else {
+            ctx.echo("Enter Invisible, Constant, Verify, Preset, or press Enter.");
+            return;
+        }
+        prompt_modes(ctx);
+        return;
+    case State::Tag:
+        if (t.empty() || t.find(' ') != std::string::npos) {
+            ctx.echo("A tag is required and cannot contain spaces.");
+            return;
+        }
+        tag_ = u; // tags are upper-case, as in AutoCAD
+        state_ = State::Prompt;
+        ctx.set_prompt("Enter attribute prompt: ");
+        return;
+    case State::Prompt:
+        prompt_ = t;
+        state_ = State::Default;
+        ctx.set_prompt((flags_ & core::kAttConstant) != 0 ? "Enter attribute value: "
+                                                          : "Enter default attribute value: ");
+        return;
+    case State::Default:
+        default_ = t;
+        state_ = State::Point;
+        ctx.set_prompt("Specify start point: ");
+        return;
+    case State::Point:
+        if (const auto p = read_point(ctx, text)) {
+            pos_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Height;
+            ctx.set_prompt("Specify height <" + fmt4(height_) + ">: ");
+        }
+        return;
+    case State::Height: {
+        if (!t.empty()) {
+            double h = 0.0;
+            if (!parse_number(t, h) || h <= 0.0) {
+                ctx.echo("Enter a height greater than 0.");
+                return;
+            }
+            height_ = h;
+        }
+        state_ = State::Rotation;
+        ctx.set_prompt("Specify rotation angle of text <0>: ");
+        return;
+    }
+    case State::Rotation: {
+        double deg = 0.0;
+        if (!t.empty() && !parse_number(t, deg)) {
+            ctx.echo("Enter an angle in degrees.");
+            return;
+        }
+        s_height_ = height_;
+        std::string style_name;
+        const std::vector<core::TextStyle> styles = ctx.text_styles();
+        const std::uint16_t cur = ctx.current_text_style();
+        if (cur > 0 && cur < styles.size()) {
+            style_name = styles[cur].name;
+        }
+        core::AddAttDefCommand c;
+        c.text.pos = pos_;
+        c.text.height = height_;
+        c.text.rotation = core::to_radians(deg);
+        c.text.content = tag_;
+        c.text.style = style_name;
+        c.prompt = prompt_;
+        c.def = default_;
+        c.flags = flags_;
+        c.group = ctx.group_id();
+        ctx.submit(std::move(c));
         done_ = true;
         return;
     }
+    }
+}
+
+void AttdispCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter attribute visibility setting [Normal/ON/OFF] <Normal>: ");
+}
+
+void AttdispCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void AttdispCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    std::uint8_t mode = 0;
+    if (u == "ON") {
+        mode = 1;
+    } else if (u == "OFF") {
+        mode = 2;
+    } else if (!(u.empty() || u == "N" || u == "NORMAL")) {
+        ctx.echo("Enter Normal, ON or OFF.");
+        return;
+    }
+    ctx.submit(core::SetAttDispCommand{mode});
+    done_ = true;
+}
+
+void AtteditCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Pick;
+    ctx.set_prompt("Select block reference: ");
+}
+
+void AtteditCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void AtteditCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    switch (state_) {
+    case State::Pick:
+        if (const auto p = read_point(ctx, text)) {
+            pick_ = *p;
+            state_ = State::Tag;
+            ctx.set_prompt("Enter attribute tag to change <all>: ");
+        }
+        return;
+    case State::Tag:
+        tag_ = upper(t);
+        state_ = State::Value;
+        ctx.set_prompt("Enter new attribute value: ");
+        return;
+    case State::Value:
+        ctx.submit(core::SetInsertAttribCommand{pick_, ctx.pick_radius(), tag_, t, ctx.group_id()});
+        done_ = true;
+        return;
     }
 }
 

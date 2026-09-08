@@ -490,6 +490,32 @@ std::string serialize_native(const Document& doc) {
         s += t.font; // v10: font name on its own line (single-line; "" = stroke)
         s += '\n';
     }
+    for (const DocAttDef& a : doc.attdefs) {
+        // v28: ATTDEF = a TEXT record (+ modes as a 15th token) whose content line is the
+        // tag, then the font line, then the prompt and default lines.
+        s += "ATTDEF ";
+        append_vec(s, a.text.pos);
+        s += ' ';
+        append_double(s, a.text.height);
+        s += ' ';
+        append_double(s, a.text.rotation);
+        s += ' ';
+        append_uint(s, a.text.justify);
+        append_props(s, a.text.props);
+        s += ' ';
+        append_uint(s, a.text.style);
+        s += ' ';
+        append_uint(s, a.flags);
+        s += '\n';
+        s += a.text.content;
+        s += '\n';
+        s += a.text.font;
+        s += '\n';
+        s += a.prompt;
+        s += '\n';
+        s += a.def;
+        s += '\n';
+    }
     for (const DocDim& d : doc.dims) {
         s += "DIM ";
         append_uint(s, d.type);
@@ -648,9 +674,17 @@ std::string serialize_native(const Document& doc) {
         s += ' ';
         append_double(s, ins.rotation);
         append_props(s, ins.props);
+        s += ' ';
+        append_uint(s, ins.attribs.size()); // v28: attribute lines that follow the name
         s += '\n';
         s += escape(ins.block_name); // own line: may contain spaces
         s += '\n';
+        for (const DocAttrib& a : ins.attribs) {
+            s += a.tag; // a tag has no spaces (AutoCAD forbids them); the value may
+            s += ' ';
+            s += a.value;
+            s += '\n';
+        }
     };
     const auto emit_block_content = [&](const DocBlockDef& b) {
         for (const DocLine& l : b.lines) {
@@ -713,6 +747,32 @@ std::string serialize_native(const Document& doc) {
             s += t.content;
             s += '\n';
             s += t.font; // v10
+            s += '\n';
+        }
+        for (const DocAttDef& a : b.attdefs) {
+            // v28: ATTDEF = a TEXT record (+ modes as a 15th token) whose content line is the
+            // tag, then the font line, then the prompt and default lines.
+            s += "ATTDEF ";
+            append_vec(s, a.text.pos);
+            s += ' ';
+            append_double(s, a.text.height);
+            s += ' ';
+            append_double(s, a.text.rotation);
+            s += ' ';
+            append_uint(s, a.text.justify);
+            append_props(s, a.text.props);
+            s += ' ';
+            append_uint(s, a.text.style);
+            s += ' ';
+            append_uint(s, a.flags);
+            s += '\n';
+            s += a.text.content;
+            s += '\n';
+            s += a.text.font;
+            s += '\n';
+            s += a.prompt;
+            s += '\n';
+            s += a.def;
             s += '\n';
         }
         for (const DocMText& m : b.mtexts) {
@@ -789,6 +849,9 @@ std::string serialize_native(const Document& doc) {
     s += '\n';
     s += "WIPEOUTFRAME ";
     append_uint(s, doc.wipeout_frames ? 1 : 0);
+    s += '\n';
+    s += "ATTDISP ";
+    append_uint(s, doc.attdisp);
     s += '\n';
     // v25: UNITSFMT linear precision angular aprecision clockwise base_angle
     s += "UNITSFMT ";
@@ -1002,6 +1065,7 @@ IoResult parse_native(std::string_view text, Document& out) {
     std::vector<DocArc>* t_arcs = &doc.arcs;
     std::vector<DocPolyline>* t_polylines = &doc.polylines;
     std::vector<DocText>* t_texts = &doc.texts;
+    std::vector<DocAttDef>* t_attdefs = &doc.attdefs;
     std::vector<DocMText>* t_mtexts = &doc.mtexts;
     std::vector<DocInsert>* t_inserts = &doc.inserts;
     const auto target_model = [&] {
@@ -1010,6 +1074,7 @@ IoResult parse_native(std::string_view text, Document& out) {
         t_arcs = &doc.arcs;
         t_polylines = &doc.polylines;
         t_texts = &doc.texts;
+        t_attdefs = &doc.attdefs;
         t_mtexts = &doc.mtexts;
         t_inserts = &doc.inserts;
     };
@@ -1019,6 +1084,7 @@ IoResult parse_native(std::string_view text, Document& out) {
         t_arcs = &cur_block.arcs;
         t_polylines = &cur_block.polylines;
         t_texts = &cur_block.texts;
+        t_attdefs = &cur_block.attdefs;
         t_mtexts = &cur_block.mtexts;
         t_inserts = &cur_block.inserts;
     };
@@ -1137,6 +1203,12 @@ IoResult parse_native(std::string_view text, Document& out) {
             ts.name = dec(tok[4]);
             ts.font = dec(tok[5]);
             doc.text_styles.push_back(std::move(ts));
+        } else if (key == "ATTDISP") {
+            std::uint64_t mode = 0;
+            if (tok.size() != 2 || !to_uint(tok[1], mode) || mode > 2) {
+                return fail("malformed ATTDISP");
+            }
+            doc.attdisp = static_cast<std::uint8_t>(mode);
         } else if (key == "WIPEOUTFRAME") {
             std::uint64_t on = 1;
             if (tok.size() != 2 || !to_uint(tok[1], on)) {
@@ -1382,6 +1454,39 @@ IoResult parse_native(std::string_view text, Document& out) {
                                         props,
                                         std::move(tfont),
                                         static_cast<std::uint16_t>(tstyle)});
+        } else if (key == "ATTDEF") {
+            // ATTDEF px py height rot justify <props7> style flags; then the tag line, the
+            // font line, the prompt line and the default line (v28).
+            vals.clear();
+            EntityProps props;
+            std::uint64_t justify = 0;
+            std::uint64_t astyle = 0;
+            std::uint64_t aflags = 0;
+            if (tok.size() != 15 || !parse_doubles(tok, 1, 4, vals) || !to_uint(tok[5], justify) ||
+                !parse_props(tok, 6, props) || !to_uint(tok[13], astyle) || !to_uint(tok[14], aflags)) {
+                return fail("ATTDEF record malformed");
+            }
+            std::string lines[4];
+            for (std::string& l : lines) {
+                if (!std::getline(in, l)) {
+                    return fail("ATTDEF missing a line (tag, font, prompt, default)");
+                }
+                ++line_no;
+                if (!l.empty() && l.back() == '\r') {
+                    l.pop_back();
+                }
+            }
+            t_attdefs->push_back(DocAttDef{DocText{{vals[0], vals[1]},
+                                                   vals[2],
+                                                   vals[3],
+                                                   static_cast<std::uint8_t>(justify),
+                                                   std::move(lines[0]),
+                                                   props,
+                                                   std::move(lines[1]),
+                                                   static_cast<std::uint16_t>(astyle)},
+                                           std::move(lines[2]),
+                                           std::move(lines[3]),
+                                           static_cast<std::uint8_t>(aflags)});
         } else if (key == "DIM") {
             // DIM type ax ay bx by lx ly style <props7> [override] [tolmode up lo]
             // Token count is the version discriminator, as everywhere else in this
@@ -1929,8 +2034,13 @@ IoResult parse_native(std::string_view text, Document& out) {
             // INSERT px py sx sy rot <props7>; block name on the next line (v9).
             vals.clear();
             EntityProps props;
-            if (tok.size() != 13 || !parse_doubles(tok, 1, 5, vals) || !parse_props(tok, 6, props)) {
+            if ((tok.size() != 13 && tok.size() != 14) || !parse_doubles(tok, 1, 5, vals) ||
+                !parse_props(tok, 6, props)) {
                 return fail("INSERT record malformed");
+            }
+            std::uint64_t nattr = 0;
+            if (tok.size() == 14 && !to_uint(tok[13], nattr)) { // v28
+                return fail("INSERT attribute count malformed");
             }
             std::string name;
             if (!std::getline(in, name)) {
@@ -1940,12 +2050,21 @@ IoResult parse_native(std::string_view text, Document& out) {
             if (!name.empty() && name.back() == '\r') {
                 name.pop_back();
             }
-            t_inserts->push_back(DocInsert{unescape(name),
-                                           {vals[0], vals[1]},
-                                           vals[2],
-                                           vals[3],
-                                           vals[4],
-                                           props});
+            DocInsert di{unescape(name), {vals[0], vals[1]}, vals[2], vals[3], vals[4], props, {}};
+            for (std::uint64_t k = 0; k < nattr; ++k) {
+                std::string al;
+                if (!std::getline(in, al)) {
+                    return fail("INSERT missing attribute line");
+                }
+                ++line_no;
+                if (!al.empty() && al.back() == '\r') {
+                    al.pop_back();
+                }
+                const std::size_t sp = al.find(' ');
+                di.attribs.push_back(DocAttrib{al.substr(0, sp),
+                                               sp == std::string::npos ? std::string() : al.substr(sp + 1)});
+            }
+            t_inserts->push_back(std::move(di));
         } else if (key == "BLOCKDEF") {
             // BLOCKDEF basex basey; name on the next line; content until ENDBLOCKDEF (v9).
             vals.clear();

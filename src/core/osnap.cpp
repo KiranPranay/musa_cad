@@ -217,6 +217,9 @@ SnapResult compute_snap(const GeometryStore& store, const IGeometryKernel& kerne
         case EntityKind::Text:
             consider(SnapType::Insertion, store.text(h)->pos);
             break;
+        case EntityKind::AttDef:
+            consider(SnapType::Insertion, store.attdef(h)->text.pos);
+            break;
         case EntityKind::MText:
             consider(SnapType::Insertion, store.mtext(h)->text.pos);
             break;

@@ -323,6 +323,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             processor_->set_text_styles(std::move(tstyles), cur);
         }
         processor_->set_block_names(viewport_->block_names());
+        processor_->set_block_attdefs(viewport_->block_attdefs());
         processor_->set_hovered_kind(viewport_->hovered_kind()); // smart DIM preview
         for (QToolButton* b : selection_required_buttons_) {
             b->setEnabled(sel > 0);

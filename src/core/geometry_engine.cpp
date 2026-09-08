@@ -11,6 +11,7 @@
 #include "musacad/core/properties_registry.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <span>
@@ -202,6 +203,7 @@ std::vector<EntityHandle> GeometryEngine::all_live() const {
     collect(store_.polylines(), EntityKind::Polyline);
     collect(store_.splines(), EntityKind::Spline);
     collect(store_.texts(), EntityKind::Text);
+    collect(store_.attdefs(), EntityKind::AttDef);
     collect(store_.dimensions(), EntityKind::Dimension);
     collect(store_.leaders(), EntityKind::Leader);
     collect(store_.mtexts(), EntityKind::MText);
@@ -658,6 +660,8 @@ void translate_cmd(Command& c, Vec2 d) {
                 for (Vec2& p : x.points) {
                     p += d;
                 }
+            } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
+                x.text.pos += d;
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 x.pos += d;
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
@@ -746,6 +750,9 @@ void mirror_cmd(Command& c, Vec2 A, Vec2 B) {
                 for (double& b : x.bulges) {
                     b = -b; // reflection flips arc orientation
                 }
+            } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
+                x.text.pos = refl(x.text.pos);
+                x.text.rotation = refl_ang(x.text.rotation);
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 x.pos = refl(x.pos);
                 x.rotation = refl_ang(x.rotation);
@@ -821,6 +828,9 @@ void rotate_cmd(Command& c, Vec2 base, double ang) {
                 for (Vec2& p : x.points) {
                     p = rot(p);
                 }
+            } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
+                x.text.pos = rot(x.text.pos);
+                x.text.rotation += ang;
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 x.pos = rot(x.pos);
                 x.rotation += ang;
@@ -895,6 +905,8 @@ Vec2 command_anchor(const Command& c) {
                 out = x.center;
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
                 out = x.points.empty() ? Vec2{0.0, 0.0} : x.points.front();
+            } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
+                out = x.text.pos;
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 out = x.pos;
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {
@@ -945,6 +957,9 @@ void scale_cmd(Command& c, Vec2 base, double f) {
                 for (Vec2& p : x.points) {
                     p = scl(p);
                 }
+            } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
+                x.text.pos = scl(x.text.pos);
+                x.text.height *= f;
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 x.pos = scl(x.pos);
                 x.height *= f;
@@ -1207,6 +1222,25 @@ void GeometryEngine::apply_list_query(Vec2 at, double radius) {
     case EntityKind::Text: {
         const TextData* t = store_.text(h);
         out += ",  height " + fmt_len(t->height) + ",  \"" + std::string(store_.string_of(*t)) + "\"";
+        break;
+    }
+    case EntityKind::AttDef: {
+        const AttDefData* a = store_.attdef(h);
+        out += ",  tag \"" + std::string(store_.string_of(a->text)) + "\",  prompt \"" +
+               std::string(store_.attdef_prompt(*a)) + "\",  default \"" +
+               std::string(store_.attdef_default(*a)) + "\"";
+        if ((a->flags & kAttInvisible) != 0) {
+            out += ",  invisible";
+        }
+        if ((a->flags & kAttConstant) != 0) {
+            out += ",  constant";
+        }
+        if ((a->flags & kAttVerify) != 0) {
+            out += ",  verify";
+        }
+        if ((a->flags & kAttPreset) != 0) {
+            out += ",  preset";
+        }
         break;
     }
     case EntityKind::Dimension: {
@@ -2677,6 +2711,18 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
                 text(bt.content, xf(bt.pos), bt.height * us, bt.rotation + in->rotation, bt.justify,
                      std::string{}, bt.props);
             }
+            for (const BlockAttDef& ba : def.content.attdefs) {
+                // As in AutoCAD, an exploded attribute is its definition again (the tag
+                // shows; the value is dropped).
+                AddAttDefCommand ac;
+                ac.text = AddTextCommand{xf(ba.text.pos), ba.text.height * us,
+                                         ba.text.rotation + in->rotation, ba.text.justify, ba.tag, 0,
+                                         ba.text.props};
+                ac.prompt = ba.prompt;
+                ac.def = ba.def;
+                ac.flags = ba.flags;
+                parts.push_back(std::move(ac));
+            }
             for (const BlockMText& bm : def.content.mtexts) {
                 AddMTextCommand mc;
                 mc.block = bm.block;
@@ -2692,7 +2738,8 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
             for (const InsertData& sub : def.content.inserts) {
                 parts.push_back(AddInsertCommand{sub.block, xf(sub.pos), sub.scale_x * in->scale_x,
                                                  sub.scale_y * in->scale_y,
-                                                 sub.rotation + in->rotation, 0, sub.props});
+                                                 sub.rotation + in->rotation, 0, sub.props,
+                                                 store_.insert_attribs(sub)});
             }
             break;
         }
@@ -2810,6 +2857,7 @@ void GeometryEngine::apply_explode(std::uint64_t group) {
         case EntityKind::Image:
         case EntityKind::Xline:
         case EntityKind::Ellipse:
+        case EntityKind::AttDef:
             break; // already simple, or nothing meaningful to break into
         }
         if (parts.size() > before) {
@@ -2997,6 +3045,17 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
                                                   std::string(store_.string_of(*t)), t->props});
             break;
         }
+        case EntityKind::AttDef: {
+            // The definition joins the block as an attribute: INSERT will ask its prompt.
+            const AttDefData* a = store_.attdef(h);
+            def.content.attdefs.push_back(
+                BlockAttDef{BlockText{a->text.pos, a->text.height, a->text.rotation, a->text.justify,
+                                      std::string(), a->text.props},
+                            std::string(store_.string_of(a->text)),
+                            std::string(store_.attdef_prompt(*a)),
+                            std::string(store_.attdef_default(*a)), a->flags});
+            break;
+        }
         case EntityKind::MText: {
             const MTextData* m = store_.mtext(h);
             def.content.mtexts.push_back(
@@ -3045,7 +3104,7 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
         remove_indexed(h);
         push_erase_item(c.group, h, original);
     }
-    const Command ins = AddInsertCommand{bi, c.base, 1.0, 1.0, 0.0, 0};
+    const Command ins = AddInsertCommand{bi, c.base, 1.0, 1.0, 0.0, 0, {}, {}};
     const EntityHandle nh = create_indexed(ins);
     push_create_item(c.group, nh, ins);
     selection_ = {nh};
@@ -3114,7 +3173,7 @@ void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
                 const BlockDef* nd = store_.block(ni.block);
                 doc.inserts.push_back(io::DocInsert{nd != nullptr ? nd->name : std::string{},
                                                     ni.pos - o, ni.scale_x, ni.scale_y, ni.rotation,
-                                                    ni.props});
+                                                    ni.props, {}});
             }
         }
         doc.layers = io::document_from_store(store_).layers;
@@ -3173,6 +3232,10 @@ void GeometryEngine::apply_audit(bool fix) {
         case EntityKind::Text:
             bad_ref = store_.text(h)->font >= nfonts ||
                       store_.text(h)->style >= store_.text_styles().size();
+            break;
+        case EntityKind::AttDef:
+            bad_ref = store_.attdef(h)->text.font >= nfonts ||
+                      store_.attdef(h)->text.style >= store_.text_styles().size();
             break;
         case EntityKind::Table:
             bad_ref = store_.table(h)->style >= ntstyles;
@@ -3245,6 +3308,9 @@ void GeometryEngine::apply_audit(bool fix) {
                     }
                     if constexpr (std::is_same_v<std::decay_t<decltype(x)>, AddTextCommand>) {
                         x.style.clear(); // back to Standard
+                    }
+                    if constexpr (std::is_same_v<std::decay_t<decltype(x)>, AddAttDefCommand>) {
+                        x.text.style.clear();
                     }
                     if constexpr (requires { x.props; }) {
                         if (bad_layer && x.props.has_value()) {
@@ -4350,6 +4416,11 @@ void modify_cmd_props(Command& c, const std::function<void(EntityProps&)>& fn) {
                     x.props = EntityProps{};
                 }
                 fn(*x.props);
+            } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
+                if (!x.text.props) {
+                    x.text.props = EntityProps{};
+                }
+                fn(*x.text.props);
             }
         },
         c);
@@ -5358,6 +5429,7 @@ void GeometryEngine::apply(const Command& command) {
                           std::is_same_v<T, AddPolylineCommand> ||
                           std::is_same_v<T, AddCircleCommand> ||
                           std::is_same_v<T, AddArcCommand> || std::is_same_v<T, AddTextCommand> ||
+                          std::is_same_v<T, AddAttDefCommand> ||
                           std::is_same_v<T, AddDimensionCommand> ||
                           std::is_same_v<T, AddLeaderCommand> || std::is_same_v<T, AddMTextCommand> ||
                           std::is_same_v<T, AddMLeaderCommand> ||
@@ -5738,7 +5810,9 @@ void GeometryEngine::apply(const Command& command) {
                 if (bi == 0xFFFF) {
                     report("Block \"" + c.name + "\" not found.");
                 } else {
-                    const Command add = AddInsertCommand{bi, c.pos, c.scale_x, c.scale_y, c.rotation, 0};
+                    AddInsertCommand ins{bi, c.pos, c.scale_x, c.scale_y, c.rotation, 0, {}, {}};
+                    ins.attribs = c.attribs;
+                    const Command add = ins;
                     const EntityHandle nh = create_indexed(add);
                     push_create_item(c.group, nh, add);
                     redo_.clear();
@@ -5753,6 +5827,62 @@ void GeometryEngine::apply(const Command& command) {
                 report("Regenerating model.");
             } else if constexpr (std::is_same_v<T, PeditCommand>) {
                 apply_pedit(c);
+            } else if constexpr (std::is_same_v<T, SetAttDispCommand>) {
+                store_.set_attdisp(c.mode);
+                geom_dirty_ = true;
+                dirty_ = true;
+                report(c.mode == 1   ? "Attributes: all on."
+                       : c.mode == 2 ? "Attributes: all off."
+                                     : "Attributes: normal (each attribute's own visibility).");
+            } else if constexpr (std::is_same_v<T, SetInsertAttribCommand>) {
+                const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+                const InsertData* in = store_.insert(h);
+                const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
+                if (bd == nullptr) {
+                    report("Select a block reference.");
+                } else if (bd->content.attdefs.empty()) {
+                    report("That block has no attributes.");
+                } else {
+                    std::vector<std::string> values = store_.insert_attribs(*in);
+                    for (std::size_t i = values.size(); i < bd->content.attdefs.size(); ++i) {
+                        values.push_back(bd->content.attdefs[i].def); // still at the default
+                    }
+                    const auto same_tag = [](std::string_view a, std::string_view b) {
+                        if (a.size() != b.size()) {
+                            return false;
+                        }
+                        for (std::size_t i = 0; i < a.size(); ++i) {
+                            if (std::toupper(static_cast<unsigned char>(a[i])) !=
+                                std::toupper(static_cast<unsigned char>(b[i]))) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    };
+                    bool any = false;
+                    for (std::size_t i = 0; i < bd->content.attdefs.size(); ++i) {
+                        if (c.tag.empty() || same_tag(bd->content.attdefs[i].tag, c.tag)) {
+                            values[i] = c.value;
+                            any = true;
+                        }
+                    }
+                    if (!any) {
+                        report("No attribute tagged \"" + c.tag + "\" on that block.");
+                    } else {
+                        // An edit is an erase + create of the reference, so it undoes as one.
+                        const Command original = capture_entity(h);
+                        remove_indexed(h);
+                        push_erase_item(c.group, h, original);
+                        AddInsertCommand nc = std::get<AddInsertCommand>(original);
+                        nc.attribs = values;
+                        const Command add = nc;
+                        push_create_item(c.group, create_indexed(add), add);
+                        redo_.clear();
+                        geom_dirty_ = true;
+                        dirty_ = true;
+                        report("Attribute updated.");
+                    }
+                }
             } else if constexpr (std::is_same_v<T, SetWipeoutFramesCommand>) {
                 store_.set_wipeout_frames(c.on);
                 dirty_ = true;
@@ -6107,6 +6237,14 @@ void GeometryEngine::rebuild_and_publish() {
     buf.block_names.clear();
     for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store_.block_count()); ++bi) {
         buf.block_names.push_back(store_.block(bi)->name); // INSERT ? / prompt default
+    }
+    buf.block_attdefs.clear();
+    for (std::uint16_t bi = 0; bi < static_cast<std::uint16_t>(store_.block_count()); ++bi) {
+        std::vector<BlockAttDefInfo> infos;
+        for (const BlockAttDef& a : store_.block(bi)->content.attdefs) {
+            infos.push_back(BlockAttDefInfo{a.tag, a.prompt, a.def, a.flags});
+        }
+        buf.block_attdefs.push_back(std::move(infos)); // INSERT's attribute prompts
     }
 
     // Pending object-dimension def points for the placement preview (Part C).

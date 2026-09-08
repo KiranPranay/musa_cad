@@ -15,7 +15,16 @@ std::string block_name_of(const GeometryStore& store, std::uint16_t idx) {
     return b != nullptr ? b->name : std::string();
 }
 DocInsert insert_to_doc(const GeometryStore& store, const InsertData& d) {
-    return DocInsert{block_name_of(store, d.block), d.pos, d.scale_x, d.scale_y, d.rotation, d.props};
+    DocInsert di{block_name_of(store, d.block), d.pos, d.scale_x, d.scale_y, d.rotation, d.props, {}};
+    // Values pair with the definition's attdefs by position; stored by tag so a
+    // re-ordered definition still finds them.
+    const std::vector<std::string> values = store.insert_attribs(d);
+    if (const BlockDef* bd = store.block(d.block); bd != nullptr && !values.empty()) {
+        for (std::size_t i = 0; i < values.size() && i < bd->content.attdefs.size(); ++i) {
+            di.attribs.push_back(DocAttrib{bd->content.attdefs[i].tag, values[i]});
+        }
+    }
+    return di;
 }
 } // namespace
 
@@ -54,6 +63,8 @@ std::uint32_t doc_index_of(const GeometryStore& store, EntityHandle h) {
         return alive_before(store.splines(), h.index);
     case EntityKind::Text:
         return alive_before(store.texts(), h.index);
+    case EntityKind::AttDef:
+        return alive_before(store.attdefs(), h.index);
     case EntityKind::Dimension:
         return alive_before(store.dimensions(), h.index);
     case EntityKind::Leader:
@@ -115,6 +126,9 @@ std::vector<EntityHandle> handles_of_kind(const GeometryStore& store, EntityKind
     case EntityKind::Text:
         collect(store.texts(), EntityKind::Text);
         break;
+    case EntityKind::AttDef:
+        collect(store.attdefs(), EntityKind::AttDef);
+        break;
     case EntityKind::Dimension:
         collect(store.dimensions(), EntityKind::Dimension);
         break;
@@ -161,6 +175,7 @@ Document document_from_store(const GeometryStore& store) {
     doc.text_styles = store.text_styles();
     doc.current_text_style = store.current_text_style();
     doc.wipeout_frames = store.wipeout_frames();
+    doc.attdisp = store.attdisp();
     for (const EntityGroup& g : store.groups()) {
         DocGroup dg;
         dg.name = g.name;
@@ -252,6 +267,17 @@ Document document_from_store(const GeometryStore& store) {
             doc.texts.push_back(DocText{t.pos, t.height, t.rotation, t.justify,
                                         std::string(store.string_of(t)), t.props,
                                         std::string(store.font_name(t.font)), t.style});
+        }
+    }
+    const auto& adefs = store.attdefs();
+    for (std::uint32_t i = 0; i < adefs.slot_count(); ++i) {
+        if (adefs.alive(i)) {
+            const AttDefData& a = adefs.data()[i];
+            doc.attdefs.push_back(DocAttDef{
+                DocText{a.text.pos, a.text.height, a.text.rotation, a.text.justify,
+                        std::string(store.string_of(a.text)), a.text.props,
+                        std::string(store.font_name(a.text.font)), a.text.style},
+                std::string(store.attdef_prompt(a)), std::string(store.attdef_default(a)), a.flags});
         }
     }
     const auto& dims = store.dimensions();
@@ -385,6 +411,11 @@ Document document_from_store(const GeometryStore& store) {
         for (const BlockText& t : b->content.texts) {
             bd.texts.push_back(DocText{t.pos, t.height, t.rotation, t.justify, t.content, t.props});
         }
+        for (const BlockAttDef& a : b->content.attdefs) {
+            bd.attdefs.push_back(DocAttDef{DocText{a.text.pos, a.text.height, a.text.rotation,
+                                                   a.text.justify, a.tag, a.text.props},
+                                           a.prompt, a.def, a.flags});
+        }
         for (const BlockMText& m : b->content.mtexts) {
             bd.mtexts.push_back(DocMText{m.block, m.content, m.props});
         }
@@ -408,6 +439,7 @@ void populate_store(GeometryStore& store, const Document& doc) {
     }
     store.set_current_text_style(doc.current_text_style);
     store.set_wipeout_frames(doc.wipeout_frames);
+    store.set_attdisp(doc.attdisp);
     store.set_layer_table(doc.layers, doc.current_layer);
     store.set_dimstyle_table(doc.dimstyles);
     store.set_ltscale(doc.ltscale);
@@ -451,6 +483,12 @@ void populate_store(GeometryStore& store, const Document& doc) {
                 cb.content.texts.push_back(
                     BlockText{t.pos, t.height, t.rotation, t.justify, t.content, t.props});
             }
+            for (const DocAttDef& a : bd.attdefs) {
+                cb.content.attdefs.push_back(
+                    BlockAttDef{BlockText{a.text.pos, a.text.height, a.text.rotation, a.text.justify,
+                                          a.text.content, a.text.props},
+                                a.text.content, a.prompt, a.def, a.flags});
+            }
             for (const DocMText& m : bd.mtexts) {
                 cb.content.mtexts.push_back(BlockMText{m.block, m.content, m.props});
             }
@@ -462,13 +500,33 @@ void populate_store(GeometryStore& store, const Document& doc) {
         store.set_block_table(std::move(blocks));
     }
     for (const DocInsert& di : doc.inserts) {
-        store.add_insert(resolve_block(di.block_name), di.pos, di.scale_x, di.scale_y, di.rotation,
-                         di.props);
+        const std::uint16_t bi = resolve_block(di.block_name);
+        // Values by tag -> the definition's attdef order (unknown tags are dropped).
+        std::vector<std::string> values;
+        if (const BlockDef* bd = store.block(bi); bd != nullptr && !di.attribs.empty()) {
+            values.reserve(bd->content.attdefs.size());
+            for (const BlockAttDef& a : bd->content.attdefs) {
+                std::string v = a.def;
+                for (const DocAttrib& at : di.attribs) {
+                    if (at.tag == a.tag) {
+                        v = at.value;
+                        break;
+                    }
+                }
+                values.push_back(std::move(v));
+            }
+        }
+        store.add_insert(bi, di.pos, di.scale_x, di.scale_y, di.rotation, di.props, values);
     }
     for (const DocText& t : doc.texts) {
         store.add_text(t.pos, t.height, t.rotation, t.justify, t.content, t.props,
 
                        store.add_font(t.font), t.style);
+    }
+    for (const DocAttDef& a : doc.attdefs) {
+        store.add_attdef(a.text.pos, a.text.height, a.text.rotation, a.text.justify, a.text.content,
+                         a.prompt, a.def, a.flags, a.text.props, store.add_font(a.text.font),
+                         a.text.style);
     }
     for (const DocDim& d : doc.dims) {
         const EntityHandle dh = store.add_dimension(static_cast<DimType>(d.type), d.a, d.b, d.line_pt, d.style, d.props,

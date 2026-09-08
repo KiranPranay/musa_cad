@@ -48,6 +48,9 @@ commands (Ribbon Phase A):
 | PEDIT (PE) | Edit a polyline: Close/Open, Join, Edit vertex (Insert/Delete/Move), Spline (a fit spline through the vertices), Decurve, Reverse, Undo; a picked line or arc is converted first. |
 | BLOCK (B, -BLOCK) | Make the selection a block definition (name, base point, select objects); the originals are replaced by one insert in place. |
 | INSERT (I, -INSERT) | Insert a block by name: insertion point, X/Y scale, rotation (? lists blocks). |
+| ATTDEF (ATT, -ATTDEF) | Define a block attribute: modes (Invisible/Constant/Verify/Preset), tag, prompt, default value, then the text placement. Shows its tag until BLOCK folds it into a definition. |
+| ATTDISP | Attribute visibility: Normal (each attribute's own Invisible mode), ON or OFF for all. |
+| ATTEDIT (-ATTEDIT) | Change one attribute value (by tag, or all) on a block reference. |
 | WBLOCK (W) | Write a block (base point at the origin) or the whole drawing to a .musa file. |
 | REGEN (RE) | Rebuild and redraw the scene. |
 | STYLE (ST, -STYLE) | Named text styles: font, fixed height, width factor, obliquing angle; TEXT uses the current style and the palette's Style dropdown changes it. |
@@ -154,7 +157,8 @@ commands (Ribbon Phase A):
 | GROUP / UNGROUP / PICKSTYLE | G | Implemented (group membership persists in .musa; not on the undo stack) |
 | UNITS (Scientific/Decimal/Engineering/Architectural/Fractional; degrees/DMS/grads/radians/surveyor) | UN | Implemented (dimension text keeps the dimstyle precision, as DIMLUNIT does) |
 | STYLE (text-style table; width factor and oblique applied to TEXT; DXF STYLE table both ways) | ST | Implemented (backwards/upside-down/vertical deferred; MTEXT keeps fonts directly) |
-| BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented (ATTDEF/ATTRIB and REFEDIT deferred) |
+| BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented (REFEDIT deferred) |
+| Block attributes: ATTDEF entities become attributes on BLOCK; INSERT prompts for each value (Constant/Preset skipped); ATTDISP; ATTEDIT; EXPLODE gives the definitions back; native v28 and DXF ATTDEF / INSERT+ATTRIB+SEQEND both ways | ATT / ATTDISP / ATTEDIT | Implemented (the dialog forms EATTEDIT/BATTMAN and multi-line attributes are not) |
 | PEDIT (Close/Open/Join/Edit vertex/Spline/Decurve/Reverse/Undo) | PE | Implemented (Width, Fit, Ltype gen, Multiple deferred; Spline yields a SPLINE entity) |
 | Object snaps: Insertion, Apparent intersection, Parallel; OSNAP settings dialog; -OSNAP | OS | Implemented (Apparent intersection and Parallel are opt-in, as in AutoCAD) |
 | ROTATE/SCALE [Copy]/[Reference]; Rotate/Scale value dialogs with live ghost | RO / SC | Implemented |
@@ -340,7 +344,7 @@ phase covers **import, display, and selection**; in-app authoring is staged.
 | BLOCK / WBLOCK — define a block from selected geometry | B | Staged (authoring half) |
 | REFEDIT — edit a definition; all instances update | — | Staged |
 | EXPLODE — instance → its geometry | X | Staged |
-| ATTDEF / ATTRIB — block attribute text | ATT | Staged |
+| ATTDEF / ATTRIB — block attribute text | ATT | Implemented (issue #25: ATTDEF, INSERT value prompts, ATTDISP, ATTEDIT; DXF ATTDEF and INSERT+ATTRIB) |
 | XREF | XR | Planned |
 
 ## File / Plot
