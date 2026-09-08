@@ -94,6 +94,24 @@ struct TextData {
     EntityProps props{};
 };
 
+/// ATTDEF (attribute definition). A text-like entity that shows its TAG in model
+/// space and becomes an attribute of the block it is defined into (BLOCK); an INSERT
+/// of that block then carries a value per attribute. `text` holds the placement, font,
+/// style and props, with the tag as its content; the prompt and default value live in
+/// the same char pool.
+struct AttDefData {
+    TextData text;
+    std::uint32_t prompt_offset = 0;
+    std::uint32_t prompt_len = 0;
+    std::uint32_t def_offset = 0;
+    std::uint32_t def_len = 0;
+    std::uint8_t flags = 0; ///< kAttInvisible | kAttConstant | kAttVerify | kAttPreset
+};
+inline constexpr std::uint8_t kAttInvisible = 1; ///< the value is not displayed
+inline constexpr std::uint8_t kAttConstant = 2;  ///< always the default; INSERT does not ask
+inline constexpr std::uint8_t kAttVerify = 4;    ///< INSERT asks to confirm the value
+inline constexpr std::uint8_t kAttPreset = 8;    ///< INSERT takes the default without asking
+
 /// A composite dimension. The measured value is COMPUTED from the definition
 /// points (a, b) -- never baked -- so editing them updates the dimension. `line_pt`
 /// positions the dimension line; `style` indexes the dimstyle table. DimType lives
@@ -341,6 +359,10 @@ struct InsertData {
     double scale_y = 1.0;
     double rotation = 0.0; ///< radians, CCW
     EntityProps props{};   ///< the insert's own layer/colour (ByBlock source for members)
+    /// Attribute values, one per definition attdef in order, packed in the char pool
+    /// with 0x1F (unit separator) between them (see insert_attribs). Empty = defaults.
+    std::uint32_t attr_offset = 0;
+    std::uint32_t attr_len = 0;
 };
 
 // Self-contained block-content primitives (pool-free, unlike the model-space
@@ -365,6 +387,15 @@ struct BlockMText {
     std::string content;
     EntityProps props{};
 };
+/// An attribute definition inside a block: where the value is drawn (`text`, whose
+/// content is unused), the tag, the INSERT prompt, the default value and the modes.
+struct BlockAttDef {
+    BlockText text;
+    std::string tag;
+    std::string prompt;
+    std::string def;
+    std::uint8_t flags = 0;
+};
 
 /// The geometry of a block definition. Inserts may nest (a block placing other
 /// blocks); resolution composes transforms with a depth guard.
@@ -375,6 +406,7 @@ struct BlockContent {
     std::vector<BlockPolyline> polylines;
     std::vector<BlockText> texts;
     std::vector<BlockMText> mtexts;
+    std::vector<BlockAttDef> attdefs; ///< attributes (ATTDEF), in prompt order
     std::vector<InsertData> inserts; ///< nested block references
 };
 
@@ -442,6 +474,8 @@ public:
                            Rgb color2 = {});
     /// WIPEOUTFRAME: whether wipeout boundaries are drawn (AutoCAD's default: shown).
     [[nodiscard]] bool wipeout_frames() const noexcept { return wipeout_frames_; }
+    [[nodiscard]] std::uint8_t attdisp() const noexcept { return attdisp_; }
+    void set_attdisp(std::uint8_t mode) noexcept { attdisp_ = mode <= 2 ? mode : 0; }
     void set_wipeout_frames(bool on) noexcept { wipeout_frames_ = on; }
     /// A feature control frame. `cells` are the raw cell strings in order (cell 0 is the
     /// characteristic symbol); they are copied into the shared char pool.
@@ -464,7 +498,19 @@ public:
                            EntityProps props = {});
     /// A model-space block reference into the block-definition table.
     EntityHandle add_insert(std::uint16_t block, Vec2 pos, double scale_x, double scale_y,
-                            double rotation, EntityProps props = {});
+                            double rotation, EntityProps props = {},
+                            const std::vector<std::string>& attribs = {});
+    /// An INSERT's attribute values (unpacked; empty when it carries none).
+    [[nodiscard]] std::vector<std::string> insert_attribs(const InsertData& in) const;
+    /// Replace an INSERT's attribute values (the old bytes stay orphaned in the pool,
+    /// as text edits do).
+    bool set_insert_attribs(EntityHandle h, const std::vector<std::string>& values);
+    /// ATTDEF: a text-like entity showing `tag`; `prompt`/`def` are what INSERT asks
+    /// and offers once the definition is inside a block.
+    EntityHandle add_attdef(Vec2 pos, double height, double rotation, std::uint8_t justify,
+                            std::string_view tag, std::string_view prompt, std::string_view def,
+                            std::uint8_t flags, EntityProps props = {}, std::uint16_t font = 0,
+                            std::uint16_t style = 0);
 
     // --- removal / validity -------------------------------------------------
     bool remove(EntityHandle handle) noexcept;
@@ -485,6 +531,7 @@ public:
     [[nodiscard]] const PolylineData* polyline(EntityHandle h) const noexcept;
     [[nodiscard]] const SplineData* spline(EntityHandle h) const noexcept;
     [[nodiscard]] const TextData* text(EntityHandle h) const noexcept;
+    [[nodiscard]] const AttDefData* attdef(EntityHandle h) const noexcept;
     [[nodiscard]] const DimData* dimension(EntityHandle h) const noexcept;
     [[nodiscard]] const LeaderData* leader(EntityHandle h) const noexcept;
     [[nodiscard]] const MTextData* mtext(EntityHandle h) const noexcept;
@@ -500,6 +547,8 @@ public:
     [[nodiscard]] ImageData* mutable_image(EntityHandle h) noexcept;
     /// The string content of a text entity.
     [[nodiscard]] std::string_view string_of(const TextData& t) const noexcept;
+    [[nodiscard]] std::string_view attdef_prompt(const AttDefData& a) const noexcept;
+    [[nodiscard]] std::string_view attdef_default(const AttDefData& a) const noexcept;
     [[nodiscard]] std::string_view string_of(const LeaderData& l) const noexcept;
     /// A dimension's raw (unexpanded) prefix / suffix strings.
     [[nodiscard]] std::string_view dim_prefix(const DimData& d) const noexcept;
@@ -545,6 +594,18 @@ public:
     }
     [[nodiscard]] const GenerationalArena<SplineData>& splines() const noexcept { return splines_; }
     [[nodiscard]] const GenerationalArena<TextData>& texts() const noexcept { return texts_; }
+    [[nodiscard]] const GenerationalArena<AttDefData>& attdefs() const noexcept { return attdefs_; }
+    /// The TextData behind a Text or an AttDef entity (nullptr for anything else): the
+    /// two share every geometry path -- bounds, pick, snap, layout.
+    [[nodiscard]] const TextData* text_like(EntityHandle h) const noexcept {
+        if (h.kind == EntityKind::Text) {
+            return text(h);
+        }
+        if (const AttDefData* a = attdef(h)) {
+            return &a->text;
+        }
+        return nullptr;
+    }
     [[nodiscard]] const GenerationalArena<DimData>& dimensions() const noexcept { return dims_; }
     [[nodiscard]] const GenerationalArena<LeaderData>& leaders() const noexcept { return leaders_; }
     [[nodiscard]] const GenerationalArena<MTextData>& mtexts() const noexcept { return mtexts_; }
@@ -861,6 +922,7 @@ private:
     GenerationalArena<PolylineData> polylines_;
     GenerationalArena<SplineData> splines_;
     GenerationalArena<TextData> texts_;
+    GenerationalArena<AttDefData> attdefs_;
     GenerationalArena<DimData> dims_;
     GenerationalArena<LeaderData> leaders_;
     GenerationalArena<MTextData> mtexts_;
@@ -896,6 +958,7 @@ private:
     std::vector<TextStyle> text_styles_{TextStyle{}}; // [0] = Standard
     std::uint16_t current_text_style_ = 0;
     bool wipeout_frames_ = true;
+    std::uint8_t attdisp_ = 0; ///< ATTDISP: 0 Normal (per attribute), 1 all ON, 2 all OFF
     std::vector<EntityGroup> groups_;                    // saved PLOT page setups
     std::vector<BlockDef> blocks_;                          // block-definition table
     std::vector<std::string> fonts_{std::string{}};        // font table; [0] = stroke "Standard"

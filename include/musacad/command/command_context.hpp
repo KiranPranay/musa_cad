@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "musacad/core/block_attdef_info.hpp"
 #include "musacad/core/command.hpp"
 #include "musacad/core/named_view.hpp"
 #include "musacad/core/snap.hpp"
@@ -190,6 +191,10 @@ public:
     [[nodiscard]] virtual std::uint16_t current_text_style() const { return 0; }
     /// The drawing's block-definition names (INSERT ? and the prompt default).
     [[nodiscard]] virtual std::vector<std::string> block_names() const { return {}; }       ///< may be null in tests
+    /// A block's attributes (ATTDEFs), in prompt order; INSERT asks for their values.
+    [[nodiscard]] virtual std::vector<core::BlockAttDefInfo> block_attdefs(const std::string& /*block*/) const {
+        return {};
+    }
 };
 
 } // namespace musacad::command

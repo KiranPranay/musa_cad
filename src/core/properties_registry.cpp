@@ -1202,6 +1202,8 @@ const char* kind_name(EntityKind k) noexcept {
         return "Spline";
     case EntityKind::Text:
         return "Text";
+    case EntityKind::AttDef:
+        return "Attribute definition";
     case EntityKind::Table:
         return "Table";
     case EntityKind::Image:
@@ -1243,6 +1245,8 @@ EntityKind kind_of(const Command& c) noexcept {
                 k = EntityKind::Arc;
             } else if constexpr (std::is_same_v<T, AddPolylineCommand>) {
                 k = EntityKind::Polyline;
+            } else if constexpr (std::is_same_v<T, AddAttDefCommand>) {
+                k = EntityKind::AttDef;
             } else if constexpr (std::is_same_v<T, AddTextCommand>) {
                 k = EntityKind::Text;
             } else if constexpr (std::is_same_v<T, AddDimensionCommand>) {

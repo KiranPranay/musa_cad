@@ -539,6 +539,25 @@ std::string serialize_dxf(const Document& doc) {
             code(s, 7, t.font); // style name = font (re-imported via the code-7 fallback)
         }
     }
+    for (const DocAttDef& a : doc.attdefs) {
+        code(s, 0, "ATTDEF");
+        emit_props(s, doc, a.text.props);
+        code_d(s, 10, a.text.pos.x);
+        code_d(s, 20, a.text.pos.y);
+        code_d(s, 30, 0.0);
+        code_d(s, 40, a.text.height);
+        code(s, 1, a.def);            // default value
+        code_d(s, 50, to_degrees(a.text.rotation));
+        code_i(s, 72, a.text.justify);
+        if (a.text.style != 0 && a.text.style < doc.text_styles.size()) {
+            code(s, 7, doc.text_styles[a.text.style].name);
+        } else if (!a.text.font.empty()) {
+            code(s, 7, a.text.font);
+        }
+        code(s, 3, a.prompt);         // prompt
+        code(s, 2, a.text.content);   // tag
+        code_i(s, 70, a.flags);       // 1 invisible, 2 constant, 4 verify, 8 preset
+    }
     for (const DocDim& d : doc.dims) {
         const std::string style =
             d.style < doc.dimstyles.size() ? doc.dimstyles[d.style].name : std::string("Standard");
@@ -807,6 +826,19 @@ std::string serialize_dxf(const Document& doc) {
     const auto emit_insert = [&](const DocInsert& in) {
         code(s, 0, "INSERT");
         emit_props(s, doc, in.props);
+        // Attributes follow as ATTRIB entities (66 = 1) and end with SEQEND, each placed
+        // where the definition's attdef lands under this insert's transform.
+        const DocBlockDef* def = nullptr;
+        for (const DocBlockDef& b : doc.block_defs) {
+            if (b.name == in.block_name) {
+                def = &b;
+                break;
+            }
+        }
+        const bool with_attribs = def != nullptr && !def->attdefs.empty() && !in.attribs.empty();
+        if (with_attribs) {
+            code_i(s, 66, 1);
+        }
         code(s, 2, in.block_name);
         code_d(s, 10, in.pos.x);
         code_d(s, 20, in.pos.y);
@@ -815,6 +847,36 @@ std::string serialize_dxf(const Document& doc) {
         code_d(s, 42, in.scale_y);
         code_d(s, 43, 1.0);
         code_d(s, 50, to_degrees(in.rotation));
+        if (!with_attribs) {
+            return;
+        }
+        const double cs = std::cos(in.rotation);
+        const double sn = std::sin(in.rotation);
+        for (const DocAttDef& a : def->attdefs) {
+            std::string value = a.def;
+            for (const DocAttrib& at : in.attribs) {
+                if (at.tag == a.text.content) {
+                    value = at.value;
+                    break;
+                }
+            }
+            const Vec2 local{(a.text.pos.x - def->base.x) * in.scale_x,
+                             (a.text.pos.y - def->base.y) * in.scale_y};
+            const Vec2 world{in.pos.x + local.x * cs - local.y * sn,
+                             in.pos.y + local.x * sn + local.y * cs};
+            code(s, 0, "ATTRIB");
+            emit_props(s, doc, a.text.props);
+            code_d(s, 10, world.x);
+            code_d(s, 20, world.y);
+            code_d(s, 30, 0.0);
+            code_d(s, 40, a.text.height * std::abs(in.scale_y));
+            code(s, 1, value);
+            code_d(s, 50, to_degrees(a.text.rotation + in.rotation));
+            code_i(s, 72, a.text.justify);
+            code(s, 2, a.text.content);
+            code_i(s, 70, a.flags);
+        }
+        code(s, 0, "SEQEND");
     };
     for (const DocInsert& in : doc.inserts) {
         emit_insert(in);
@@ -886,6 +948,25 @@ std::string serialize_dxf(const Document& doc) {
             }
             for (const DocMText& m : b.mtexts) {
                 emit_mtext(m.block, m.content, m.props);
+            }
+            for (const DocAttDef& a : b.attdefs) {
+                code(s, 0, "ATTDEF");
+                emit_props(s, doc, a.text.props);
+                code_d(s, 10, a.text.pos.x);
+                code_d(s, 20, a.text.pos.y);
+                code_d(s, 30, 0.0);
+                code_d(s, 40, a.text.height);
+                code(s, 1, a.def);            // default value
+                code_d(s, 50, to_degrees(a.text.rotation));
+                code_i(s, 72, a.text.justify);
+                if (a.text.style != 0 && a.text.style < doc.text_styles.size()) {
+                    code(s, 7, doc.text_styles[a.text.style].name);
+                } else if (!a.text.font.empty()) {
+                    code(s, 7, a.text.font);
+                }
+                code(s, 3, a.prompt);         // prompt
+                code(s, 2, a.text.content);   // tag
+                code_i(s, 70, a.flags);       // 1 invisible, 2 constant, 4 verify, 8 preset
             }
             for (const DocInsert& in : b.inserts) {
                 emit_insert(in); // nested block reference
@@ -1256,6 +1337,7 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         std::vector<DocEllipse>* ellipses = nullptr;
         std::vector<DocSpline>* splines = nullptr;
         std::vector<DocFcf>* fcfs = nullptr;
+        std::vector<DocAttDef>* attdefs = nullptr;
     };
 
     const auto build_entity = [&](Sink& sink, const std::string& type,
@@ -1336,6 +1418,55 @@ IoResult parse_dxf(const std::string& text, Document& out) {
             }
             sink.texts->push_back(std::move(t));
             return;
+        }
+        if (type == "ATTDEF") {
+            if (sink.attdefs == nullptr) {
+                ++skipped[type];
+                return;
+            }
+            DocAttDef a;
+            a.text.props = props_of(body);
+            a.text.pos = {getd(body, 10), getd(body, 20)};
+            a.text.height = getd(body, 40, 2.5);
+            a.text.rotation = to_radians(getd(body, 50));
+            if (const std::string* tg = find(body, 2)) {
+                a.text.content = *tg; // the tag
+            }
+            if (const std::string* pr = find(body, 3)) {
+                a.prompt = *pr;
+            }
+            if (const std::string* dv = find(body, 1)) {
+                a.def = dv->substr(0, 256);
+            }
+            if (const std::string* j = find(body, 72)) {
+                a.text.justify = static_cast<std::uint8_t>(to_l(*j));
+            }
+            if (const std::string* f = find(body, 70)) {
+                a.flags = static_cast<std::uint8_t>(to_l(*f) & 15);
+            }
+            a.text.font = font_of_entity(body);
+            if (const std::string* st = find(body, 7)) {
+                if (const auto it = text_style_index.find(*st); it != text_style_index.end()) {
+                    a.text.style = it->second;
+                }
+            }
+            sink.attdefs->push_back(std::move(a));
+            return;
+        }
+        if (type == "ATTRIB") {
+            // Rides with the INSERT just read (66 = 1): its tag/value pair.
+            if (sink.inserts == nullptr || sink.inserts->empty()) {
+                ++skipped[type];
+                return;
+            }
+            const std::string* tg = find(body, 2);
+            const std::string* val = find(body, 1);
+            sink.inserts->back().attribs.push_back(
+                DocAttrib{tg != nullptr ? *tg : std::string(), val != nullptr ? *val : std::string()});
+            return;
+        }
+        if (type == "SEQEND") {
+            return; // closes an INSERT's ATTRIB run (legacy POLYLINEs never reach here)
         }
         if (type == "DIMENSION") {
             if (sink.dims == nullptr) {
@@ -1777,7 +1908,8 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     // (dims/leaders/points inside a block route to the skip catalog).
     Sink model_sink{&doc.lines,  &doc.circles, &doc.arcs,    &doc.polylines, &doc.texts,
                     &doc.mtexts, &doc.dims,    &doc.leaders, &doc.points,    &doc.inserts,
-                    &doc.hatches, &doc.xlines, &doc.ellipses, &doc.splines, &doc.fcfs};
+                    &doc.hatches, &doc.xlines, &doc.ellipses, &doc.splines, &doc.fcfs,
+                    &doc.attdefs};
 
     // The block currently being read in the BLOCKS section. Its sink takes the
     // importable subset; dims/leaders/points/nested-INSERT-targets that a block can't
@@ -1786,7 +1918,8 @@ IoResult parse_dxf(const std::string& text, Document& out) {
     DocBlockDef block;
     Sink block_sink{&block.lines,  &block.circles, &block.arcs, &block.polylines, &block.texts,
                     &block.mtexts, nullptr,        nullptr,     nullptr,          &block.inserts,
-                    nullptr}; // hatches not held inside block definitions
+                    nullptr,       nullptr,        nullptr,     nullptr,          nullptr,
+                    &block.attdefs}; // hatches not held inside block definitions
     bool in_block = false;
 
     while (i < n) {

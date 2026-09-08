@@ -61,6 +61,7 @@ public:
     std::vector<core::TextStyle> text_styles();
     std::uint16_t current_text_style();
     std::vector<std::string> block_names();
+    std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs();
     void zoom_scale(double factor) override;
     void open_properties() override;
     void import_dwg() override;
@@ -519,6 +520,7 @@ private:
     std::vector<core::TextStyle> text_styles_;  ///< under layers_mutex_
     std::uint16_t current_text_style_ = 0;
     std::vector<std::string> block_names_;      ///< under layers_mutex_
+    std::vector<std::vector<core::BlockAttDefInfo>> block_attdefs_; ///< under layers_mutex_
     std::function<void()> osnap_settings_callback_;
     int dialog_ghost_mode_ = 0;
     core::Vec2 dialog_ghost_a_{};

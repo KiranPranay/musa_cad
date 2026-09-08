@@ -263,6 +263,20 @@ void build_render_snapshot(const GeometryStore& store, const IGeometryKernel& ke
         }
     });
 
+    // ATTDEF: in model space an attribute definition shows its TAG (AutoCAD's look
+    // before BLOCK folds it into a definition); values only appear on INSERTs.
+    for_each_live(store.attdefs(), EntityKind::AttDef, [&](EntityHandle h) {
+        const AttDefData* a = store.attdef(h);
+        if (!visible(store, a->text.props)) {
+            return;
+        }
+        const ResolvedProps r = entity_resolved(store, a->text.props);
+        const TextStyle& tstyle = store.text_style_of(a->text);
+        emit_text_run(store.string_of(a->text), a->text.pos, a->text.height, a->text.rotation,
+                      static_cast<text::Justify>(a->text.justify), a->text.font, r.color,
+                      r.lineweight, &tstyle);
+    });
+
     // Dimensions: per-element colours (ext/dim/arrow/text), filled arrowheads, and
     // the measured label -- all computed from def points + style.
     for_each_live(store.dimensions(), EntityKind::Dimension, [&](EntityHandle h) {

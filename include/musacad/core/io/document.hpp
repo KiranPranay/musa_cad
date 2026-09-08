@@ -61,7 +61,7 @@ namespace musacad::core::io {
 /// Older files simply have no IMAGEDEF/IMAGE records.
 /// v17: GD&T entities -- FCF records (cell count, then one cell string per following
 /// line) and DATUM records. Older files simply have no FCF/DATUM records.
-inline constexpr std::uint32_t kFormatVersion = 27;
+inline constexpr std::uint32_t kFormatVersion = 28;
 
 // Self-contained, pool-free records for serialization: own vertices, no
 // generational handles, plus the entity's EntityProps (layer + overrides).
@@ -145,6 +145,20 @@ struct DocText {
     std::uint16_t style = 0; ///< text style index (v26)
     friend bool operator==(const DocText&, const DocText&) = default;
 };
+/// ATTDEF (v28): a text-like definition showing its tag; prompt/default/modes ride along.
+struct DocAttDef {
+    DocText text; ///< placement, props, font, style; `content` = the tag
+    std::string prompt;
+    std::string def;
+    std::uint8_t flags = 0;
+    friend bool operator==(const DocAttDef&, const DocAttDef&) = default;
+};
+/// One attribute value on a block reference (v28), matched to the definition by tag.
+struct DocAttrib {
+    std::string tag;
+    std::string value;
+    friend bool operator==(const DocAttrib&, const DocAttrib&) = default;
+};
 struct DocDim {
     std::uint8_t type = 0;
     Vec2 a;
@@ -218,6 +232,7 @@ struct DocInsert {
     double scale_y = 1.0;
     double rotation = 0.0; ///< radians, CCW
     EntityProps props{};
+    std::vector<DocAttrib> attribs; ///< attribute values (v28)
     friend bool operator==(const DocInsert&, const DocInsert&) = default;
 };
 
@@ -232,6 +247,7 @@ struct DocBlockDef {
     std::vector<DocPolyline> polylines;
     std::vector<DocText> texts;
     std::vector<DocMText> mtexts;
+    std::vector<DocAttDef> attdefs; ///< attribute definitions (v28)
     std::vector<DocInsert> inserts; ///< nested block references
     friend bool operator==(const DocBlockDef&, const DocBlockDef&) = default;
 };
@@ -318,6 +334,7 @@ struct Document {
     std::vector<TextStyle> text_styles; ///< STYLE table (v26; [0] Standard; not in entity_count)
     std::uint16_t current_text_style = 0;
     bool wipeout_frames = true; ///< WIPEOUTFRAME (v27)
+    std::uint8_t attdisp = 0;   ///< ATTDISP (v28): 0 Normal, 1 ON, 2 OFF
 
     std::vector<Layer> layers{Layer{"0"}}; // layer 0 always present
     std::uint16_t current_layer = 0;
@@ -336,6 +353,7 @@ struct Document {
     std::vector<DocPolyline> polylines;
     std::vector<DocSpline> splines;
     std::vector<DocText> texts;
+    std::vector<DocAttDef> attdefs; ///< ATTDEF entities in model space (v28)
     std::vector<DocDim> dims;
     std::vector<DocLeader> leaders;
     std::vector<DocMText> mtexts;
@@ -354,7 +372,7 @@ struct Document {
         return points.size() + xlines.size() + ellipses.size() + lines.size() + circles.size() +
                arcs.size() +
                polylines.size() +
-               splines.size() + texts.size() + dims.size() + leaders.size() + mtexts.size() +
+               splines.size() + texts.size() + attdefs.size() + dims.size() + leaders.size() + mtexts.size() +
                mleaders.size() + hatches.size() + inserts.size() + fcfs.size() + datums.size() +
                images.size() + tables.size();
     }

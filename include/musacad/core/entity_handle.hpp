@@ -30,6 +30,7 @@ enum class EntityKind : std::uint16_t {
     Table, ///< a grid of text cells (BOM, revision block, parts list)
     Xline, ///< construction line: infinite (XLINE) or semi-infinite (RAY)
     Ellipse, ///< ellipse or elliptical arc (centre, major axis, ratio, param range)
+    AttDef,  ///< attribute definition (ATTDEF): text-like, shows its tag; becomes a block attribute
 };
 
 /// Coarse classification of an EntityKind, used by MATCHPROP to decide when
@@ -50,6 +51,7 @@ enum class EntityFamily : std::uint8_t {
 [[nodiscard]] constexpr EntityFamily family_of(EntityKind k) noexcept {
     switch (k) {
     case EntityKind::Text:
+    case EntityKind::AttDef:
     case EntityKind::MText:
     case EntityKind::Leader:
     case EntityKind::MLeader:

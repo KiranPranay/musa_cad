@@ -748,12 +748,70 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class State { Name, Point, ScaleX, ScaleY, Rotation } state_ = State::Name;
+    enum class State { Name, Point, ScaleX, ScaleY, Rotation, Attrib } state_ = State::Name;
     inline static std::string s_last_;
     std::string name_;
     core::Vec2 pos_{};
     double sx_ = 1.0;
     double sy_ = 1.0;
+    double rot_ = 0.0;
+    // Attribute values: one prompt per attribute that is neither Constant nor Preset.
+    std::vector<core::BlockAttDefInfo> attdefs_;
+    std::vector<std::string> values_;
+    std::size_t attrib_index_ = 0;
+    void next_attrib_or_finish(CommandContext& ctx);
+    bool done_ = false;
+};
+
+/// ATTDEF (ATT, -ATTDEF): an attribute definition -- modes, tag, prompt, default, then
+/// the text placement. In model space it shows its tag; BLOCK makes it an attribute.
+class AttdefCommand final : public ICommand {
+public:
+    std::string name() const override { return "ATTDEF"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Modes, Tag, Prompt, Default, Point, Height, Rotation } state_ = State::Modes;
+    void prompt_modes(CommandContext& ctx);
+    std::uint8_t flags_ = 0;
+    std::string tag_;
+    std::string prompt_;
+    std::string default_;
+    core::Vec2 pos_{};
+    inline static double s_height_ = 2.5;
+    double height_ = 2.5;
+    bool done_ = false;
+};
+
+/// ATTDISP: show every attribute, hide every attribute, or let each keep its own mode.
+class AttdispCommand final : public ICommand {
+public:
+    std::string name() const override { return "ATTDISP"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// ATTEDIT (-ATTEDIT): change one attribute value (by tag, or all) of a block reference.
+class AtteditCommand final : public ICommand {
+public:
+    std::string name() const override { return "ATTEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Pick, Tag, Value } state_ = State::Pick;
+    core::Vec2 pick_{};
+    std::string tag_;
     bool done_ = false;
 };
 

@@ -126,8 +126,9 @@ bool entity_aabb(const GeometryStore& store, EntityHandle h, Vec2& out_min, Vec2
         }
         return true;
     }
-    case EntityKind::Text: {
-        const TextData* t = store.text(h);
+    case EntityKind::Text:
+    case EntityKind::AttDef: {
+        const TextData* t = store.text_like(h);
         const double w = text::text_advance(store.font_engine(), store.font_name(t->font),
                                             store.string_of(*t), t->height);
         const TextStyle& ts = store.text_style_of(*t);

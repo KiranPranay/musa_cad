@@ -86,11 +86,11 @@ void emit_polyline_transformed(const Mat3& m, const std::vector<Vec2>& local_cha
 
 void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& xform,
                 const ResolvedProps& inherited, double tol, int depth,
-                std::vector<InsertSeg>& out);
+                const std::vector<std::string>* values, std::vector<InsertSeg>& out);
 
 void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& xform,
                 const ResolvedProps& inherited, double tol, int depth,
-                std::vector<InsertSeg>& out) {
+                const std::vector<std::string>* values, std::vector<InsertSeg>& out) {
     for (const LineData& l : bc.lines) {
         const ResolvedProps rp = member_props(store, l.props, inherited);
         out.push_back(InsertSeg{xform.transform_point(l.a), xform.transform_point(l.b), rp.color,
@@ -176,6 +176,28 @@ void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& 
                                    tseg);
         emit_pairs_transformed(xform, tseg, rp, out);
     }
+    // Attributes: the insert's value (or the definition's default) drawn where the
+    // ATTDEF sits. ATTDISP overrides every attribute's own Invisible mode.
+    const std::uint8_t disp = store.attdisp();
+    for (std::size_t i = 0; i < bc.attdefs.size(); ++i) {
+        const BlockAttDef& a = bc.attdefs[i];
+        const bool invisible = (a.flags & kAttInvisible) != 0;
+        if (disp == 2 || (disp == 0 && invisible)) {
+            continue;
+        }
+        const std::string_view value = (values != nullptr && i < values->size())
+                                           ? std::string_view((*values)[i])
+                                           : std::string_view(a.def);
+        if (value.empty()) {
+            continue;
+        }
+        const ResolvedProps rp = member_props(store, a.text.props, inherited);
+        const auto j = static_cast<text::Justify>(a.text.justify <= 2 ? a.text.justify : 0);
+        tseg.clear();
+        text::append_text_segments(text::substitute_text(value), a.text.pos, a.text.height,
+                                   a.text.rotation, j, tseg);
+        emit_pairs_transformed(xform, tseg, rp, out);
+    }
     for (const BlockMText& mt : bc.mtexts) {
         const ResolvedProps rp = member_props(store, mt.props, inherited);
         const text::MTextLayout lay = text::layout_mtext(mt.block, mt.content);
@@ -190,7 +212,9 @@ void emit_block(const GeometryStore& store, const BlockContent& bc, const Mat3& 
             continue; // dangling nested reference -- skip, stay consistent
         }
         const ResolvedProps inh = member_props(store, nested.props, inherited);
-        emit_block(store, bd->content, xform * insert_matrix(nested), inh, tol, depth + 1, out);
+        const std::vector<std::string> nested_values = store.insert_attribs(nested);
+        emit_block(store, bd->content, xform * insert_matrix(nested), inh, tol, depth + 1,
+                   &nested_values, out);
     }
 }
 
@@ -204,7 +228,8 @@ void resolve_insert(const GeometryStore& store, const InsertData& ins, double to
     }
     const Layer* il = store.layer(ins.props.layer);
     const ResolvedProps inherited = resolve(ins.props, il != nullptr ? *il : Layer{});
-    emit_block(store, bd->content, insert_matrix(ins), inherited, tolerance, 0, out);
+    const std::vector<std::string> values = store.insert_attribs(ins);
+    emit_block(store, bd->content, insert_matrix(ins), inherited, tolerance, 0, &values, out);
 }
 
 } // namespace musacad::core

@@ -286,10 +286,83 @@ EntityHandle GeometryStore::add_mleader(std::span<const Vec2> vertices, std::uin
     return EntityHandle{slot.index, slot.generation, EntityKind::MLeader};
 }
 
+namespace {
+std::string pack_attribs(const std::vector<std::string>& values) {
+    std::string packed;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            packed += '\x1F';
+        }
+        packed += values[i];
+    }
+    return packed;
+}
+} // namespace
+
 EntityHandle GeometryStore::add_insert(std::uint16_t block, Vec2 pos, double scale_x,
-                                       double scale_y, double rotation, EntityProps props) {
-    const auto slot = inserts_.insert(InsertData{block, pos, scale_x, scale_y, rotation, props});
+                                       double scale_y, double rotation, EntityProps props,
+                                       const std::vector<std::string>& attribs) {
+    InsertData d{block, pos, scale_x, scale_y, rotation, props};
+    if (!attribs.empty()) {
+        const std::string packed = pack_attribs(attribs);
+        d.attr_offset = static_cast<std::uint32_t>(string_pool_.size());
+        d.attr_len = static_cast<std::uint32_t>(packed.size());
+        string_pool_.insert(string_pool_.end(), packed.begin(), packed.end());
+    }
+    const auto slot = inserts_.insert(d);
     return EntityHandle{slot.index, slot.generation, EntityKind::Insert};
+}
+
+std::vector<std::string> GeometryStore::insert_attribs(const InsertData& in) const {
+    std::vector<std::string> out;
+    if (in.attr_len == 0) {
+        return out;
+    }
+    const std::string_view packed(string_pool_.data() + in.attr_offset, in.attr_len);
+    std::size_t start = 0;
+    while (true) {
+        const std::size_t sep = packed.find('\x1F', start);
+        out.emplace_back(packed.substr(start, sep == std::string_view::npos ? std::string_view::npos
+                                                                            : sep - start));
+        if (sep == std::string_view::npos) {
+            break;
+        }
+        start = sep + 1;
+    }
+    return out;
+}
+
+bool GeometryStore::set_insert_attribs(EntityHandle h, const std::vector<std::string>& values) {
+    InsertData* d = h.kind == EntityKind::Insert ? inserts_.get(h.index, h.generation) : nullptr;
+    if (d == nullptr) {
+        return false;
+    }
+    const std::string packed = pack_attribs(values);
+    d->attr_offset = static_cast<std::uint32_t>(string_pool_.size());
+    d->attr_len = static_cast<std::uint32_t>(packed.size());
+    string_pool_.insert(string_pool_.end(), packed.begin(), packed.end());
+    return true;
+}
+
+EntityHandle GeometryStore::add_attdef(Vec2 pos, double height, double rotation,
+                                       std::uint8_t justify, std::string_view tag,
+                                       std::string_view prompt, std::string_view def,
+                                       std::uint8_t flags, EntityProps props, std::uint16_t font,
+                                       std::uint16_t style) {
+    AttDefData a;
+    const auto toff = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), tag.begin(), tag.end());
+    a.text = TextData{pos, height, rotation, justify, font, style, toff,
+                      static_cast<std::uint32_t>(tag.size()), props};
+    a.prompt_offset = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), prompt.begin(), prompt.end());
+    a.prompt_len = static_cast<std::uint32_t>(prompt.size());
+    a.def_offset = static_cast<std::uint32_t>(string_pool_.size());
+    string_pool_.insert(string_pool_.end(), def.begin(), def.end());
+    a.def_len = static_cast<std::uint32_t>(def.size());
+    a.flags = flags;
+    const auto slot = attdefs_.insert(a);
+    return EntityHandle{slot.index, slot.generation, EntityKind::AttDef};
 }
 
 EntityHandle GeometryStore::add_hatch(const std::vector<std::vector<Vec2>>& loops,
@@ -337,6 +410,8 @@ bool GeometryStore::remove(EntityHandle h) noexcept {
         return splines_.erase(h.index, h.generation);
     case EntityKind::Text:
         return texts_.erase(h.index, h.generation);
+    case EntityKind::AttDef:
+        return attdefs_.erase(h.index, h.generation);
     case EntityKind::Dimension:
         return dims_.erase(h.index, h.generation);
     case EntityKind::Leader:
@@ -381,6 +456,8 @@ bool GeometryStore::is_valid(EntityHandle h) const noexcept {
         return splines_.is_valid(h.index, h.generation);
     case EntityKind::Text:
         return texts_.is_valid(h.index, h.generation);
+    case EntityKind::AttDef:
+        return attdefs_.is_valid(h.index, h.generation);
     case EntityKind::Dimension:
         return dims_.is_valid(h.index, h.generation);
     case EntityKind::Leader:
@@ -422,6 +499,7 @@ void GeometryStore::clear() noexcept {
     polylines_.clear();
     splines_.clear();
     texts_.clear();
+    attdefs_.clear();
     dims_.clear();
     leaders_.clear();
     mtexts_.clear();
@@ -455,6 +533,7 @@ void GeometryStore::clear() noexcept {
     groups_.clear();
     units_ = DrawingUnits{};
     wipeout_frames_ = true;
+    attdisp_ = 0;
     ltscale_ = 1.0;
     blocks_.clear();
     fonts_.assign(1, std::string{}); // reset to just the stroke font
@@ -488,6 +567,9 @@ const SplineData* GeometryStore::spline(EntityHandle h) const noexcept {
 }
 const TextData* GeometryStore::text(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Text ? texts_.get(h.index, h.generation) : nullptr;
+}
+const AttDefData* GeometryStore::attdef(EntityHandle h) const noexcept {
+    return h.kind == EntityKind::AttDef ? attdefs_.get(h.index, h.generation) : nullptr;
 }
 const DimData* GeometryStore::dimension(EntityHandle h) const noexcept {
     return h.kind == EntityKind::Dimension ? dims_.get(h.index, h.generation) : nullptr;
@@ -529,6 +611,12 @@ const TableData* GeometryStore::table(EntityHandle h) const noexcept {
 }
 std::string_view GeometryStore::string_of(const TextData& t) const noexcept {
     return std::string_view(string_pool_.data() + t.str_offset, t.str_len);
+}
+std::string_view GeometryStore::attdef_prompt(const AttDefData& a) const noexcept {
+    return std::string_view(string_pool_.data() + a.prompt_offset, a.prompt_len);
+}
+std::string_view GeometryStore::attdef_default(const AttDefData& a) const noexcept {
+    return std::string_view(string_pool_.data() + a.def_offset, a.def_len);
 }
 std::string_view GeometryStore::string_of(const LeaderData& l) const noexcept {
     return std::string_view(string_pool_.data() + l.str_offset, l.str_len);
@@ -673,6 +761,11 @@ const EntityProps* GeometryStore::props(EntityHandle h) const noexcept {
             return &d->props;
         }
         break;
+    case EntityKind::AttDef:
+        if (const AttDefData* d = attdef(h)) {
+            return &d->text.props;
+        }
+        break;
     case EntityKind::Text:
         if (const TextData* d = text(h)) {
             return &d->props;
@@ -779,6 +872,12 @@ bool GeometryStore::set_props(EntityHandle h, const EntityProps& p) noexcept {
     case EntityKind::Spline:
         if (SplineData* d = splines_.get(h.index, h.generation)) {
             d->props = p;
+            return true;
+        }
+        break;
+    case EntityKind::AttDef:
+        if (AttDefData* d = attdefs_.get(h.index, h.generation)) {
+            d->text.props = p;
             return true;
         }
         break;

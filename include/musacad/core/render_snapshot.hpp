@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "musacad/core/block_attdef_info.hpp"
 #include "musacad/core/entity_handle.hpp"
 #include "musacad/core/math/math.hpp"
 #include "musacad/core/named_view.hpp"
@@ -151,6 +152,7 @@ struct RenderSnapshot {
     std::vector<NamedView> named_views; // VIEW table (for VIEW Restore / ?)
     std::vector<std::string> group_names; // GROUP table names (for GROUP ?)
     std::vector<std::string> block_names; // block-definition names (INSERT ?)
+    std::vector<std::vector<BlockAttDefInfo>> block_attdefs; // per block: its attributes (INSERT prompts)
     DrawingUnits units;                    // UNITS: display formats (readout, DYN, inquiry)
     std::vector<TextStyle> text_styles;    // STYLE table (TEXT, the palette)
     std::uint16_t current_text_style = 0;
@@ -266,6 +268,7 @@ struct RenderSnapshot {
         named_views.clear();
         group_names.clear();
         block_names.clear();
+        block_attdefs.clear();
         current_layer = 0;
         has_pending_dim = false;
         pending_dim_version = 0;

@@ -168,6 +168,12 @@ CommandRegistry CommandRegistry::make_default() {
         "Edit a polyline: close/open, join, vertices, spline, decurve, reverse.");
     reg({"B", "BLOCK", "-BLOCK"}, [] { return std::make_unique<BlockCommand>(); },
         "assets/ribbon/block.svg", "Make the selection a block definition (replaced by an insert).");
+    reg({"ATT", "ATTDEF", "-ATTDEF"}, [] { return std::make_unique<AttdefCommand>(); }, "",
+        "Define a block attribute: modes, tag, prompt, default value and text placement.");
+    reg({"ATTDISP"}, [] { return std::make_unique<AttdispCommand>(); }, "",
+        "Attribute visibility: Normal (each attribute's own mode), ON or OFF for all.");
+    reg({"ATTEDIT", "-ATTEDIT"}, [] { return std::make_unique<AtteditCommand>(); }, "",
+        "Change an attribute value on a block reference (one tag, or all).");
     reg({"I", "INSERT", "-INSERT"}, [] { return std::make_unique<InsertCommand>(); },
         "assets/ribbon/insert.svg", "Insert a block by name with scale and rotation.");
     reg({"W", "WBLOCK"}, [] { return std::make_unique<WblockCommand>(); }, "",
