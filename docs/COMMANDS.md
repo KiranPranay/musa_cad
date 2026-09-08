@@ -365,7 +365,7 @@ phase covers **import, display, and selection**; in-app authoring is staged.
 | **Tab-to-tab drag** — drag a selection onto another document's tab to transfer it there (copy → switch → paste, original coordinates) | drag to tab | Implemented (Phase B) |
 | DXF export (R2000 / AC1015; LAYER table + ByLayer colour 256) | File ▸ Export DXF | Implemented |
 | DXF import (LINE/LWPOLYLINE/CIRCLE/ARC/POINT/TEXT/MTEXT/DIMENSION/LEADER; BLOCK defs + INSERT refs; reads the LAYER table + ACI colours) | File ▸ Import DXF | Implemented |
-| DXF import (SPLINE / legacy POLYLINE) | — | SPLINE implemented (issue #31: uniform-knot and fit-point splines come in as splines, other knot vectors as polylines); legacy POLYLINE still skipped and reported |
+| DXF import (SPLINE / legacy POLYLINE) | — | Implemented (issue #31): uniform-knot and fit-point splines come in as splines, other knot vectors as polylines; the R12-era POLYLINE/VERTEX/SEQEND form comes in as a polyline (bulges, closed flag, inside blocks too), while 3D polylines and meshes are reported as skipped |
 | Dirty tracking (modified `*` in title, prompt before discard) | — | Implemented |
 | PLOT / PRINT (PDF + installed printers; paper/orientation/area Display·Extents·Window/scale fit·ratio/centre·offset/lineweights/CTB None·Mono·Grayscale/copies; window-pick; print-preview; off-thread; vector output) | Ctrl+P / PLOT / PRINT | Implemented (Phase 30) |
 | Saved page setups (named, persisted in the drawing; recall in the PLOT dialog) | PLOT ▸ Page setup | Implemented (Phase 30) |

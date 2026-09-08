@@ -96,7 +96,7 @@ Model, decoder seam, persistence and plot are done. Remaining: **viewport displa
 
 | Item | Priority |
 |---|---|
-| ~~DXF **SPLINE** import~~ **Done** (#31); legacy **POLYLINE** (VERTEX/SEQEND) import | **P1** |
+| ~~DXF **SPLINE** / legacy **POLYLINE** import~~ | **Done** (#31) ✅ |
 | ~~DXF **TOLERANCE** (GD&T) export/import~~ | **Done** (#31) ✅ |
 | DXF **IMAGE / IMAGEDEF** | **P2** |
 | True **SHX** shape-file parsing (today: faithful substitution) | **P2** |
