@@ -51,6 +51,9 @@ commands (Ribbon Phase A):
 | ATTDEF (ATT, -ATTDEF) | Define a block attribute: modes (Invisible/Constant/Verify/Preset), tag, prompt, default value, then the text placement. Shows its tag until BLOCK folds it into a definition. |
 | ATTDISP | Attribute visibility: Normal (each attribute's own Invisible mode), ON or OFF for all. |
 | ATTEDIT (-ATTEDIT) | Change one attribute value (by tag, or all) on a block reference. |
+| REFEDIT | Edit a block definition in place: the picked reference's members become ordinary objects (the working set) to edit with any command. |
+| REFSET | Add objects to, or remove them from, the working set of the reference being edited. |
+| REFCLOSE | Save the working set back into the block definition (every reference updates) or discard the changes. |
 | WBLOCK (W) | Write a block (base point at the origin) or the whole drawing to a .musa file. |
 | REGEN (RE) | Rebuild and redraw the scene. |
 | STYLE (ST, -STYLE) | Named text styles: font, fixed height, width factor, obliquing angle; TEXT uses the current style and the palette's Style dropdown changes it. |
@@ -157,8 +160,9 @@ commands (Ribbon Phase A):
 | GROUP / UNGROUP / PICKSTYLE | G | Implemented (group membership persists in .musa; not on the undo stack) |
 | UNITS (Scientific/Decimal/Engineering/Architectural/Fractional; degrees/DMS/grads/radians/surveyor) | UN | Implemented (dimension text keeps the dimstyle precision, as DIMLUNIT does) |
 | STYLE (text-style table; width factor and oblique applied to TEXT; DXF STYLE table both ways) | ST | Implemented (backwards/upside-down/vertical deferred; MTEXT keeps fonts directly) |
-| BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented (REFEDIT deferred) |
+| BLOCK / INSERT / WBLOCK (lines, circles, arcs, polylines, text, mtext, nested inserts) | B / I / W | Implemented |
 | Block attributes: ATTDEF entities become attributes on BLOCK; INSERT prompts for each value (Constant/Preset skipped); ATTDISP; ATTEDIT; EXPLODE gives the definitions back; native v28 and DXF ATTDEF / INSERT+ATTRIB+SEQEND both ways | ATT / ATTDISP / ATTEDIT | Implemented (the dialog forms EATTEDIT/BATTMAN and multi-line attributes are not) |
+| REFEDIT / REFSET / REFCLOSE: in-place block editing through a working set, mapped back into the definition's frame on save (needs a positive, uniform scale); Discard restores the reference; undo takes back the save as one step | REFEDIT | Implemented (no fading of the rest of the drawing during the edit) |
 | PEDIT (Close/Open/Join/Edit vertex/Spline/Decurve/Reverse/Undo) | PE | Implemented (Width, Fit, Ltype gen, Multiple deferred; Spline yields a SPLINE entity) |
 | Object snaps: Insertion, Apparent intersection, Parallel; OSNAP settings dialog; -OSNAP | OS | Implemented (Apparent intersection and Parallel are opt-in, as in AutoCAD) |
 | ROTATE/SCALE [Copy]/[Reference]; Rotate/Scale value dialogs with live ghost | RO / SC | Implemented |
