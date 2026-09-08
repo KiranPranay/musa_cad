@@ -64,7 +64,7 @@ Blocks can be imported and placed; they cannot be *created* in-app.
 |---|---|
 | ~~**BLOCK / WBLOCK**~~ — define a block from a selection | **Done** (#25) ✅ |
 | ~~**EXPLODE**~~ — instance → geometry | **Done** (#25) ✅ |
-| **REFEDIT** — edit a definition in place | **P1** |
+| ~~**REFEDIT**~~ — edit a definition in place | **Done** (#25) — REFEDIT / REFSET / REFCLOSE. ✅ |
 | ~~**ATTDEF / ATTRIB**~~ — block attribute text | **Done** (#25) — ATTDEF, INSERT prompts, ATTDISP, ATTEDIT, DXF ATTRIB. ✅ |
 | **XREF** — external references | **P2** |
 

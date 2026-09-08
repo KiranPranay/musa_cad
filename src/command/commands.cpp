@@ -3093,6 +3093,93 @@ void AttdefCommand::input(CommandContext& ctx, const std::string& text) {
     }
 }
 
+void RefeditCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    ctx.set_prompt("Select reference: ");
+}
+
+void RefeditCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void RefeditCommand::input(CommandContext& ctx, const std::string& text) {
+    if (const auto p = read_point(ctx, text)) {
+        ctx.submit(core::RefEditCommand{*p, ctx.pick_radius(), ctx.group_id()});
+        done_ = true;
+    }
+}
+
+void RefsetCommand::start(CommandContext& ctx) {
+    state_ = State::Option;
+    ctx.set_prompt("Enter an option [Add/Remove] <Add>: ");
+}
+
+void RefsetCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void RefsetCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Option:
+        if (u == "R" || u == "REMOVE") {
+            add_ = false;
+        } else if (!(t.empty() || u == "A" || u == "ADD")) {
+            ctx.echo("Enter Add or Remove.");
+            return;
+        }
+        state_ = State::Select;
+        ctx.set_prompt("Select objects: ");
+        return;
+    case State::Select:
+        if (t.empty()) {
+            if (ctx.selection_count() == 0) {
+                ctx.echo("Nothing selected.");
+                done_ = true;
+                return;
+            }
+            ctx.submit(core::RefSetCommand{add_, ctx.group_id()});
+            done_ = true;
+            return;
+        }
+        if (u == "ALL") {
+            ctx.submit(core::SelectAllCommand{});
+            ctx.set_prompt("Select objects: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            ctx.submit(core::SelectPickCommand{*p, ctx.pick_radius(), true, true});
+            ctx.set_prompt("Select objects: ");
+        }
+        return;
+    }
+}
+
+void RefcloseCommand::start(CommandContext& ctx) {
+    ctx.set_prompt("Enter option [Save/Discard reference changes] <Save>: ");
+}
+
+void RefcloseCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void RefcloseCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string u = upper(trimmed(text));
+    bool save = true;
+    if (u == "D" || u == "DISCARD") {
+        save = false;
+    } else if (!(u.empty() || u == "S" || u == "SAVE")) {
+        ctx.echo("Enter Save or Discard.");
+        return;
+    }
+    ctx.submit(core::RefCloseCommand{save, ctx.group_id()});
+    done_ = true;
+}
+
 void AttdispCommand::start(CommandContext& ctx) {
     ctx.set_prompt("Enter attribute visibility setting [Normal/ON/OFF] <Normal>: ");
 }

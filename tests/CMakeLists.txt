@@ -146,6 +146,7 @@ add_executable(musacad_tests
     test_wipeout_field.cpp
     test_dxf_legacy_polyline.cpp
     test_attributes.cpp
+    test_refedit.cpp
     test_fonts.cpp
     test_properties.cpp
     test_linetype.cpp

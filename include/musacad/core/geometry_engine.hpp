@@ -108,6 +108,16 @@ private:
     // single-document code is untouched; INACTIVE documents park their heavy state here
     // (moved in/out on switch -- GeometryStore/SpatialGrid are movable). Display
     // metadata (id/name/path) lives in DocMeta, kept for every document at all times.
+    /// An in-place block edit (REFEDIT .. REFCLOSE): which definition, the reference
+    /// as it was (re-created on close), the model-space working set, and which of
+    /// those were added by REFSET (kept as ordinary objects on Discard).
+    struct RefEditSession {
+        bool active = false;
+        std::uint16_t block = 0;
+        AddInsertCommand insert;
+        std::vector<EntityHandle> working_set;
+        std::vector<EntityHandle> added;
+    };
     struct DocState {
         GeometryStore store;
         SpatialGrid grid;
@@ -124,6 +134,7 @@ private:
         std::uint64_t pending_dim_version = 0;
         bool grip_active = false;
         EntityHandle grip_handle{};
+        RefEditSession refedit;
         std::uint32_t grip_index = 0;
         Vec2 grip_pos{};
         GeometryStore grip_preview_store;
@@ -265,6 +276,13 @@ private:
     void apply_write_block(const WriteBlockCommand& c);
     void apply_pedit(const PeditCommand& c);
     [[nodiscard]] text::FieldContext field_context_now() const;
+    /// The block-content form of `handles` (kinds a block can hold); `taken` lists the
+    /// ones that went in, `skipped` counts the rest.
+    void collect_block_content(const std::vector<EntityHandle>& handles, BlockContent& content,
+                               std::vector<EntityHandle>& taken, int& skipped) const;
+    void apply_refedit(const RefEditCommand& c);
+    void apply_refset(const RefSetCommand& c);
+    void apply_refclose(const RefCloseCommand& c);
     [[nodiscard]] std::string fmt_len(double v) const;
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);
@@ -302,6 +320,7 @@ private:
     std::vector<Group> undo_;
     std::vector<Group> redo_;
     std::vector<EntityHandle> selection_;
+    RefEditSession refedit_;
 
     // MATCHPROP source: the captured source entity (a snapshot of its property values as
     // an Add*Command) plus its handle, set by MatchPropPickSourceCommand and reused by

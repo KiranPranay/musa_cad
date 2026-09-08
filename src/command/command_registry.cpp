@@ -174,6 +174,12 @@ CommandRegistry CommandRegistry::make_default() {
         "Attribute visibility: Normal (each attribute's own mode), ON or OFF for all.");
     reg({"ATTEDIT", "-ATTEDIT"}, [] { return std::make_unique<AtteditCommand>(); }, "",
         "Change an attribute value on a block reference (one tag, or all).");
+    reg({"REFEDIT"}, [] { return std::make_unique<RefeditCommand>(); }, "",
+        "Edit a block definition in place: its members become a working set until REFCLOSE.");
+    reg({"REFSET"}, [] { return std::make_unique<RefsetCommand>(); }, "",
+        "Add objects to, or remove them from, the working set of the reference being edited.");
+    reg({"REFCLOSE"}, [] { return std::make_unique<RefcloseCommand>(); }, "",
+        "Save the working set back into the block definition, or discard the changes.");
     reg({"I", "INSERT", "-INSERT"}, [] { return std::make_unique<InsertCommand>(); },
         "assets/ribbon/insert.svg", "Insert a block by name with scale and rotation.");
     reg({"W", "WBLOCK"}, [] { return std::make_unique<WblockCommand>(); }, "",

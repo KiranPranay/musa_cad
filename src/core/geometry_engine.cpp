@@ -3004,51 +3004,39 @@ void GeometryEngine::apply_purge(std::uint8_t what) {
 // coordinates with the picked base point as the definition's base, so replacing the
 // originals with one insert AT that base (scale 1, rotation 0) leaves every stroke where
 // it was -- the insert transform is world = pos + R(S(local - base)). One undo group.
-void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
-    prune_selection();
-    if (c.name.empty()) {
-        report("Block: a name is required.");
-        return;
-    }
-    if (selection_.empty()) {
-        report("Block: nothing selected.");
-        return;
-    }
-    BlockDef def;
-    def.name = c.name;
-    def.base = c.base;
-    std::vector<EntityHandle> taken;
-    int skipped = 0;
-    for (const EntityHandle h : selection_) {
+void GeometryEngine::collect_block_content(const std::vector<EntityHandle>& handles,
+                                           BlockContent& content, std::vector<EntityHandle>& taken,
+                                           int& skipped) const {
+    for (const EntityHandle h : handles) {
         switch (h.kind) {
         case EntityKind::Line:
-            def.content.lines.push_back(*store_.line(h));
+            content.lines.push_back(*store_.line(h));
             break;
         case EntityKind::Circle:
-            def.content.circles.push_back(*store_.circle(h));
+            content.circles.push_back(*store_.circle(h));
             break;
         case EntityKind::Arc:
-            def.content.arcs.push_back(*store_.arc(h));
+            content.arcs.push_back(*store_.arc(h));
             break;
         case EntityKind::Polyline: {
             const PolylineData* pl = store_.polyline(h);
             const auto v = store_.vertices_of(*pl);
             const auto b = store_.bulges_of(*pl);
-            def.content.polylines.push_back(BlockPolyline{std::vector<Vec2>(v.begin(), v.end()),
+            content.polylines.push_back(BlockPolyline{std::vector<Vec2>(v.begin(), v.end()),
                                                           std::vector<double>(b.begin(), b.end()),
                                                           pl->closed, pl->props});
             break;
         }
         case EntityKind::Text: {
             const TextData* t = store_.text(h);
-            def.content.texts.push_back(BlockText{t->pos, t->height, t->rotation, t->justify,
+            content.texts.push_back(BlockText{t->pos, t->height, t->rotation, t->justify,
                                                   std::string(store_.string_of(*t)), t->props});
             break;
         }
         case EntityKind::AttDef: {
             // The definition joins the block as an attribute: INSERT will ask its prompt.
             const AttDefData* a = store_.attdef(h);
-            def.content.attdefs.push_back(
+            content.attdefs.push_back(
                 BlockAttDef{BlockText{a->text.pos, a->text.height, a->text.rotation, a->text.justify,
                                       std::string(), a->text.props},
                             std::string(store_.string_of(a->text)),
@@ -3058,12 +3046,12 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
         }
         case EntityKind::MText: {
             const MTextData* m = store_.mtext(h);
-            def.content.mtexts.push_back(
+            content.mtexts.push_back(
                 BlockMText{m->text, std::string(store_.string_of(m->text)), m->props});
             break;
         }
         case EntityKind::Insert:
-            def.content.inserts.push_back(*store_.insert(h)); // nests
+            content.inserts.push_back(*store_.insert(h)); // nests
             break;
         case EntityKind::Point:
         case EntityKind::Spline:
@@ -3082,6 +3070,24 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
         }
         taken.push_back(h);
     }
+}
+
+void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
+    prune_selection();
+    if (c.name.empty()) {
+        report("Block: a name is required.");
+        return;
+    }
+    if (selection_.empty()) {
+        report("Block: nothing selected.");
+        return;
+    }
+    BlockDef def;
+    def.name = c.name;
+    def.base = c.base;
+    std::vector<EntityHandle> taken;
+    int skipped = 0;
+    collect_block_content(selection_, def.content, taken, skipped);
     if (taken.empty()) {
         report("Block: none of the selected objects can go into a block yet (lines, circles, "
                "arcs, polylines, text, mtext and inserts can).");
@@ -3122,6 +3128,172 @@ void GeometryEngine::apply_define_block(const DefineBlockCommand& c) {
 
 // WBLOCK: a block's content as a drawing of its own (base point at the origin), or the
 // whole drawing when no name is given.
+void GeometryEngine::apply_refedit(const RefEditCommand& c) {
+    if (refedit_.active) {
+        report("A reference is already being edited; REFCLOSE it first.");
+        return;
+    }
+    const EntityHandle h = pick_nearest(c.pick, c.pick_radius);
+    const InsertData* in = store_.insert(h);
+    const BlockDef* bd = in != nullptr ? store_.block(in->block) : nullptr;
+    if (bd == nullptr) {
+        report("REFEDIT: select a block reference.");
+        return;
+    }
+    // The working set is mapped back into the definition's frame on save, which
+    // needs an invertible, shape-preserving transform: a positive uniform scale.
+    if (!(in->scale_x > 0.0) || std::abs(in->scale_x - in->scale_y) > 1e-9) {
+        report("REFEDIT needs a reference with a positive, uniform scale.");
+        return;
+    }
+    RefEditSession session;
+    session.block = in->block;
+    session.insert = std::get<AddInsertCommand>(capture_entity(h));
+    session.insert.group = 0;
+    // Its members become ordinary objects at the reference's place (EXPLODE's path, so
+    // nested references stay references and attributes become their definitions).
+    selection_ = {h};
+    const std::size_t before = undo_.size();
+    apply_explode(c.group);
+    if (!store_.is_valid(h) && (undo_.size() > before || (!undo_.empty() && undo_.back().id == c.group))) {
+        session.working_set = selection_;
+        session.active = true;
+        refedit_ = std::move(session);
+        report("Reference \"" + bd->name + "\" open for editing: " +
+               std::to_string(refedit_.working_set.size()) +
+               " object(s) in the working set. REFSET adds or removes objects; REFCLOSE saves "
+               "or discards.");
+    } else {
+        report("REFEDIT: that reference has nothing to edit.");
+    }
+}
+
+void GeometryEngine::apply_refset(const RefSetCommand& c) {
+    (void)c.group;
+    if (!refedit_.active) {
+        report("No reference is being edited (REFEDIT first).");
+        return;
+    }
+    prune_selection();
+    if (selection_.empty()) {
+        report("REFSET: nothing selected.");
+        return;
+    }
+    const auto in_set = [&](EntityHandle h) {
+        for (const EntityHandle w : refedit_.working_set) {
+            if (w == h) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::size_t n = 0;
+    if (c.add) {
+        for (const EntityHandle h : selection_) {
+            if (!in_set(h)) {
+                refedit_.working_set.push_back(h);
+                refedit_.added.push_back(h);
+                ++n;
+            }
+        }
+        report(std::to_string(n) + " object(s) added to the working set.");
+    } else {
+        for (const EntityHandle h : selection_) {
+            const auto it = std::find(refedit_.working_set.begin(), refedit_.working_set.end(), h);
+            if (it != refedit_.working_set.end()) {
+                refedit_.working_set.erase(it);
+                ++n;
+            }
+        }
+        report(std::to_string(n) + " object(s) removed from the working set.");
+    }
+}
+
+void GeometryEngine::apply_refclose(const RefCloseCommand& c) {
+    if (!refedit_.active) {
+        report("No reference is being edited (REFEDIT first).");
+        return;
+    }
+    RefEditSession session = std::move(refedit_);
+    refedit_ = RefEditSession{};
+    const BlockDef* bd = store_.block(session.block);
+    if (bd == nullptr) {
+        report("REFCLOSE: the block definition is gone; the working set stays as it is.");
+        return;
+    }
+    std::vector<EntityHandle> live;
+    for (const EntityHandle h : session.working_set) {
+        if (store_.is_valid(h)) {
+            live.push_back(h);
+        }
+    }
+    const auto was_added = [&](EntityHandle h) {
+        return std::find(session.added.begin(), session.added.end(), h) != session.added.end();
+    };
+    std::size_t saved = 0;
+    int skipped = 0;
+    if (c.save) {
+        // Map each working-set object into the definition's frame: the inverse of the
+        // reference's transform, then the block's base point.
+        const AddInsertCommand& ins = session.insert;
+        const double s = ins.scale_x > 0.0 ? ins.scale_x : 1.0;
+        std::vector<EntityHandle> temp;
+        std::vector<EntityHandle> source;
+        for (const EntityHandle h : live) {
+            Command local = capture_entity(h);
+            translate_cmd(local, Vec2{-ins.pos.x, -ins.pos.y});
+            rotate_cmd(local, Vec2{0.0, 0.0}, -ins.rotation);
+            scale_cmd(local, Vec2{0.0, 0.0}, 1.0 / s);
+            translate_cmd(local, bd->base);
+            temp.push_back(create_indexed(local));
+            source.push_back(h);
+        }
+        BlockDef def;
+        def.name = bd->name;
+        def.base = bd->base;
+        std::vector<EntityHandle> taken;
+        collect_block_content(temp, def.content, taken, skipped);
+        for (std::size_t i = 0; i < temp.size(); ++i) {
+            const bool went_in =
+                std::find(taken.begin(), taken.end(), temp[i]) != taken.end();
+            remove_indexed(temp[i]); // the local copies served only the content build
+            if (went_in) {
+                const Command original = capture_entity(source[i]);
+                remove_indexed(source[i]);
+                push_erase_item(c.group, source[i], original);
+                ++saved;
+            }
+        }
+        store_.redefine_block(session.block, def);
+    } else {
+        for (const EntityHandle h : live) {
+            if (was_added(h)) {
+                continue; // REFSET-added objects go back to being ordinary objects
+            }
+            const Command original = capture_entity(h);
+            remove_indexed(h);
+            push_erase_item(c.group, h, original);
+        }
+    }
+    const Command add = session.insert;
+    const EntityHandle nh = create_indexed(add);
+    push_create_item(c.group, nh, add);
+    selection_ = {nh};
+    redo_.clear();
+    geom_dirty_ = true;
+    dirty_ = true;
+    if (c.save) {
+        std::string msg = "Reference \"" + bd->name + "\" saved with " + std::to_string(saved) +
+                          " object(s)";
+        if (skipped > 0) {
+            msg += " (" + std::to_string(skipped) + " unsupported left in place)";
+        }
+        report(msg + ".");
+    } else {
+        report("Reference \"" + bd->name + "\" changes discarded.");
+    }
+}
+
 void GeometryEngine::apply_write_block(const WriteBlockCommand& c) {
     io::Document doc;
     std::size_t count = 0;
@@ -5827,6 +5999,12 @@ void GeometryEngine::apply(const Command& command) {
                 report("Regenerating model.");
             } else if constexpr (std::is_same_v<T, PeditCommand>) {
                 apply_pedit(c);
+            } else if constexpr (std::is_same_v<T, RefEditCommand>) {
+                apply_refedit(c);
+            } else if constexpr (std::is_same_v<T, RefSetCommand>) {
+                apply_refset(c);
+            } else if constexpr (std::is_same_v<T, RefCloseCommand>) {
+                apply_refclose(c);
             } else if constexpr (std::is_same_v<T, SetAttDispCommand>) {
                 store_.set_attdisp(c.mode);
                 geom_dirty_ = true;
@@ -6001,6 +6179,7 @@ void GeometryEngine::reset_active_state() {
     undo_.clear();
     redo_.clear();
     selection_.clear();
+    refedit_ = RefEditSession{};
     geom_cache_.clear();
     geom_dirty_ = true;
     geom_version_ = 0;
@@ -6028,6 +6207,7 @@ void GeometryEngine::park_active(DocState& d) {
     d.undo = std::move(undo_);
     d.redo = std::move(redo_);
     d.selection = std::move(selection_);
+    d.refedit = std::move(refedit_);
     d.geom_cache = std::move(geom_cache_);
     d.geom_dirty = geom_dirty_;
     d.geom_version = geom_version_;
@@ -6054,6 +6234,7 @@ void GeometryEngine::load_active(DocState& d) {
     undo_ = std::move(d.undo);
     redo_ = std::move(d.redo);
     selection_ = std::move(d.selection);
+    refedit_ = std::move(d.refedit);
     geom_cache_ = std::move(d.geom_cache);
     geom_dirty_ = true; // force a rebuild at the current zoom for the new active document
     geom_version_ = d.geom_version;

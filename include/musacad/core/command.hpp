@@ -793,6 +793,27 @@ struct AddAttDefCommand {
     std::uint8_t flags = 0; ///< kAttInvisible | kAttConstant | kAttVerify | kAttPreset
     std::uint64_t group = 0;
 };
+/// REFEDIT: open the block reference under `pick` for in-place editing. Its members
+/// become ordinary model-space objects (the working set) at the reference's place;
+/// REFCLOSE saves them back into the definition or discards the changes.
+struct RefEditCommand {
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    std::uint64_t group = 0;
+};
+/// REFSET: add the selection to the working set (they join the block on save) or take
+/// it out (they stay ordinary objects).
+struct RefSetCommand {
+    bool add = true;
+    std::uint64_t group = 0;
+};
+/// REFCLOSE: end the in-place edit. `save` rewrites the block definition from the
+/// working set (in the reference's own frame); otherwise the working set is dropped
+/// and the reference comes back untouched.
+struct RefCloseCommand {
+    bool save = true;
+    std::uint64_t group = 0;
+};
 /// ATTDISP: 0 Normal (each attribute's own Invisible mode), 1 all ON, 2 all OFF.
 struct SetAttDispCommand {
     std::uint8_t mode = 0;
@@ -1021,7 +1042,8 @@ using Command =
                  AuditCommand, SetTextStyleCommand, SetCurrentTextStyleCommand, DefineBlockCommand,
                  InsertBlockCommand, WriteBlockCommand, RegenCommand, PeditCommand,
                  SetWipeoutFramesCommand, WipeoutFromPolylineCommand, AddAttDefCommand,
-                 SetAttDispCommand, SetInsertAttribCommand,
+                 SetAttDispCommand, SetInsertAttribCommand, RefEditCommand, RefSetCommand,
+                 RefCloseCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

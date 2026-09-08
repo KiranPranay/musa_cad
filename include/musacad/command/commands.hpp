@@ -786,6 +786,49 @@ private:
     bool done_ = false;
 };
 
+/// REFEDIT: pick a block reference to edit its definition in place (its members become
+/// a working set of ordinary objects); REFCLOSE ends the edit.
+class RefeditCommand final : public ICommand {
+public:
+    std::string name() const override { return "REFEDIT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
+/// REFSET: add objects to, or remove them from, the working set of a REFEDIT.
+class RefsetCommand final : public ICommand {
+public:
+    std::string name() const override { return "REFSET"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+    bool in_selection_phase() const override { return !done_ && state_ == State::Select; }
+
+private:
+    enum class State { Option, Select } state_ = State::Option;
+    bool add_ = true;
+    bool done_ = false;
+};
+
+/// REFCLOSE: save the working set back into the block definition, or discard.
+class RefcloseCommand final : public ICommand {
+public:
+    std::string name() const override { return "REFCLOSE"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    bool done_ = false;
+};
+
 /// ATTDISP: show every attribute, hide every attribute, or let each keep its own mode.
 class AttdispCommand final : public ICommand {
 public:
