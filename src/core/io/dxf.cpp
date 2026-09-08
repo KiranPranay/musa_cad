@@ -1717,6 +1717,62 @@ IoResult parse_dxf(const std::string& text, Document& out) {
         }
     };
 
+    // Legacy POLYLINE (the R12-era form): a header entity, then one VERTEX entity per
+    // vertex, then SEQEND. Folded into the LWPOLYLINE pair list and handed to the same
+    // builder, so the two forms cannot drift apart. 3D polylines and polygon/polyface
+    // meshes (header flag bits 8, 16, 64) are not plane polylines: reported as skipped.
+    // Spline-frame control vertices (vertex flag 16) are the invisible frame of a
+    // spline-fit polyline; the fitted vertices (flag 8) that follow them are the curve.
+    std::vector<Pair> legacy_poly;
+    bool in_legacy_poly = false;
+    bool legacy_poly_skip = false;
+    const auto legacy_polyline = [&](Sink& sink, const std::string& type,
+                                     const std::vector<Pair>& body) {
+        if (type == "POLYLINE") {
+            legacy_poly.clear();
+            const std::string* hf = find(body, 70);
+            const long flags = hf != nullptr ? to_l(*hf) : 0;
+            legacy_poly_skip = (flags & (8 | 16 | 64)) != 0;
+            if (legacy_poly_skip) {
+                ++skipped["POLYLINE (3D/mesh)"];
+            }
+            for (const Pair& q : body) {
+                // The header's 10/20/30 is a dummy point and 66 the "vertices follow" flag.
+                if (q.code != 10 && q.code != 20 && q.code != 30 && q.code != 66) {
+                    legacy_poly.push_back(q);
+                }
+            }
+            in_legacy_poly = true;
+            return true;
+        }
+        if (!in_legacy_poly) {
+            return false;
+        }
+        if (type == "VERTEX") {
+            const std::string* vf = find(body, 70);
+            const long flags = vf != nullptr ? to_l(*vf) : 0;
+            if (!legacy_poly_skip && (flags & 16) == 0) {
+                const std::string* px = find(body, 10);
+                const std::string* py = find(body, 20);
+                legacy_poly.push_back(Pair{10, px != nullptr ? *px : std::string("0")});
+                legacy_poly.push_back(Pair{20, py != nullptr ? *py : std::string("0")});
+                if (const std::string* b = find(body, 42)) {
+                    legacy_poly.push_back(Pair{42, *b});
+                }
+            }
+            return true;
+        }
+        if (type == "SEQEND") {
+            if (!legacy_poly_skip) {
+                build_entity(sink, "LWPOLYLINE", legacy_poly);
+            }
+            in_legacy_poly = false;
+            legacy_poly_skip = false;
+            return true;
+        }
+        return false;
+    };
+
     // Model space writes to every doc vector; block content takes the importable subset
     // (dims/leaders/points inside a block route to the skip catalog).
     Sink model_sink{&doc.lines,  &doc.circles, &doc.arcs,    &doc.polylines, &doc.texts,
@@ -1788,7 +1844,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                 body.push_back(pairs[i]);
                 ++i;
             }
-            build_entity(model_sink, type, body);
+            if (!legacy_polyline(model_sink, type, body)) {
+                build_entity(model_sink, type, body);
+            }
             continue;
         }
         if (section == "BLOCKS") {
@@ -1813,7 +1871,9 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                     in_block = false;
                 }
             } else if (in_block) {
-                build_entity(block_sink, type, body); // entities accumulate into the block
+                if (!legacy_polyline(block_sink, type, body)) {
+                    build_entity(block_sink, type, body); // entities accumulate into the block
+                }
             }
             continue;
         }
