@@ -47,6 +47,24 @@ struct SubstitutedText {
 /// A malformed escape stays literal.
 [[nodiscard]] SubstitutedText substitute_text_codes(std::string_view raw);
 
+/// FIELDS (AutoCAD FIELD): `%<Date>%`, `%<Time>%`, `%<Filename>%` and `%<Login>%` in
+/// any text are replaced at layout time with the values the engine publishes before
+/// each rebuild (set_field_context); an unknown field shows as "####", as AutoCAD
+/// shows an invalid one. Expansion runs before the %% / \U+ codes.
+struct FieldContext {
+    std::string date;
+    std::string time;
+    std::string filename;
+    std::string login;
+};
+void set_field_context(FieldContext ctx);
+[[nodiscard]] FieldContext field_context();
+/// The context for a drawing at `document_path` right now: today's date, the time to the
+/// minute, the file name (or "Drawing1" for an unsaved drawing) and the login name. The
+/// engine publishes it before every rebuild; the headless plot before its one build.
+[[nodiscard]] FieldContext make_field_context(std::string_view document_path);
+[[nodiscard]] std::string expand_fields(std::string_view raw);
+
 /// Convenience wrapper returning only the visible string (for measurement / callers
 /// that do not draw the over/under-line decoration).
 [[nodiscard]] std::string substitute_text(std::string_view raw);

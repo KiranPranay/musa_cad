@@ -256,12 +256,48 @@ public:
     bool done() const override { return done_; }
 
 private:
-    enum class Mode { PickPoint, Pattern, Scale, Angle };
+    enum class Mode { PickPoint, Pattern, Scale, Angle, GradientColor, GradientAngle };
     bool done_ = false;
     Mode mode_ = Mode::PickPoint;
-    std::string pattern_ = "SOLID"; // SOLID or a known line pattern (e.g. ANSI31)
+    std::string pattern_ = "SOLID"; // SOLID, GRADIENT, or a known line pattern (e.g. ANSI31)
     double scale_ = 1.0;
-    double angle_ = 0.0; // radians (pattern rotation)
+    double angle_ = 0.0; // radians (pattern rotation / gradient direction)
+    core::Rgb color2_{255, 255, 255}; // GRADIENT: the second colour
+};
+
+/// WIPEOUT: a mask polygon (a hatch with the WIPEOUT pattern) from picked points, or
+/// [Polyline] from a closed polyline; [Frames] toggles WIPEOUTFRAME.
+class WipeoutCommand final : public ICommand {
+public:
+    std::string name() const override { return "WIPEOUT"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { First, Next, Frames, PolyPick, PolyErase } state_ = State::First;
+    std::vector<core::Vec2> pts_;
+    core::Vec2 poly_pick_{};
+    bool done_ = false;
+};
+
+/// FIELD: place a text whose content is a field code (%<Date>%, %<Time>%, %<Filename>%,
+/// %<Login>%), expanded at layout time and refreshed on every regen.
+class FieldCommand final : public ICommand {
+public:
+    std::string name() const override { return "FIELD"; }
+    void start(CommandContext& ctx) override;
+    void input(CommandContext& ctx, const std::string& text) override;
+    void cancel(CommandContext& ctx) override;
+    bool done() const override { return done_; }
+
+private:
+    enum class State { Name, Point, Height, Rotation } state_ = State::Name;
+    std::string code_;
+    core::Vec2 pos_{};
+    double height_ = 2.5;
+    bool done_ = false;
 };
 
 /// TOLERANCE / TOL -- a GD&T feature control frame. Command-line Q&A: the cells are

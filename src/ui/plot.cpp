@@ -16,6 +16,7 @@
 #include <QPageSize>
 #include <QPaintDevice>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPdfWriter>
 #include <QPen>
 #include <QPointF>
@@ -172,10 +173,11 @@ std::unique_ptr<ImageSource> make_store_image_source(const core::GeometryStore& 
     return std::make_unique<StoreImageSource>(store, decoder, drawing_dir);
 }
 
-core::Rgb plot_color(core::Rgb resolved, PlotSpec::Style style) {
+core::Rgb plot_color(core::Rgb resolved, PlotSpec::Style style, bool computed_color) {
     core::Rgb c = resolved;
-    // White-on-dark-screen geometry must show on white paper: near-white -> black.
-    if (c.r >= 240 && c.g >= 240 && c.b >= 240) {
+    // White-on-dark-screen geometry must show on white paper: near-white -> black. A
+    // computed colour (a gradient band) is what it says and stays.
+    if (!computed_color && c.r >= 240 && c.g >= 240 && c.b >= 240) {
         c = {0, 0, 0};
     }
     switch (style) {
@@ -289,40 +291,59 @@ void paint_plot(QPaintDevice& device, const core::RenderSnapshot& snap, const Pl
         }
     }
 
-    // Filled triangles (outline-font glyphs, arrowheads): one brush per colour batch.
-    QPolygonF tri(3);
-    for (const core::ColorBatch& b : snap.fill_batches) {
-        const core::Rgb c = plot_color(b.color, spec.style);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QBrush(QColor(c.r, c.g, c.b)));
-        for (std::uint32_t i = 0; i + 2 < b.count; i += 3) {
-            const std::uint32_t base = b.first + i;
-            tri[0] = to_dev(snap.fill_vertices[base]);
-            tri[1] = to_dev(snap.fill_vertices[base + 1]);
-            tri[2] = to_dev(snap.fill_vertices[base + 2]);
-            p.drawPolygon(tri);
+    // Filled triangles (outline-font glyphs, arrowheads, hatches): one path per colour
+    // batch, filled in one go. Triangles drawn one at a time leave antialiasing hairlines
+    // along every shared edge (a gradient's bands, a solid hatch's fan); one path with the
+    // winding rule rasterises their union, seamlessly.
+    const auto fill_triangles = [&](const core::Vec2* verts, std::size_t count, QColor color) {
+        QPainterPath path;
+        path.setFillRule(Qt::WindingFill);
+        for (std::size_t i = 0; i + 2 < count; i += 3) {
+            path.moveTo(to_dev(verts[i]));
+            path.lineTo(to_dev(verts[i + 1]));
+            path.lineTo(to_dev(verts[i + 2]));
+            path.closeSubpath();
         }
+        p.fillPath(path, QBrush(color));
+    };
+    for (const core::ColorBatch& b : snap.fill_batches) {
+        const core::Rgb c = plot_color(b.color, spec.style, b.computed_color);
+        fill_triangles(snap.fill_vertices.data() + b.first, b.count, QColor(c.r, c.g, c.b));
     }
+    p.setPen(Qt::NoPen);
     p.setBrush(Qt::NoBrush);
 
     // Line segments: one pen per (colour, lineweight) batch. Pen width is the entity's
     // real lineweight in paper millimetres -- independent of the drawing scale.
-    for (const core::ColorBatch& b : snap.line_batches) {
-        const core::Rgb c = plot_color(b.color, spec.style);
-        double width_px = 0.0; // 0 = a cosmetic 1px hairline
-        if (spec.plot_lineweights && snap.lineweight_display && b.lineweight > 0) {
-            width_px = (static_cast<double>(b.lineweight) / 100.0) * dpx / kMmPerInch;
+    // Geometry first, then the WIPEOUT masks in the paper colour, then text -- the
+    // viewport's order, so a note on a mask plots readable and the line work under the
+    // mask does not.
+    const auto draw_lines = [&](bool text_pass) {
+        for (const core::ColorBatch& b : snap.line_batches) {
+            if (b.is_text != text_pass) {
+                continue;
+            }
+            const core::Rgb c = plot_color(b.color, spec.style);
+            double width_px = 0.0; // 0 = a cosmetic 1px hairline
+            if (spec.plot_lineweights && snap.lineweight_display && b.lineweight > 0) {
+                width_px = (static_cast<double>(b.lineweight) / 100.0) * dpx / kMmPerInch;
+            }
+            QPen pen(QColor(c.r, c.g, c.b));
+            pen.setWidthF(width_px);
+            pen.setCapStyle(Qt::RoundCap);
+            pen.setJoinStyle(Qt::RoundJoin);
+            p.setPen(pen);
+            // Segment-unit batches via the shared iterator (no mis-indexing -> no phantom lines).
+            core::for_each_line_segment(snap, b, [&](const core::Vec2& a, const core::Vec2& c) {
+                p.drawLine(QLineF(to_dev(a), to_dev(c)));
+            });
         }
-        QPen pen(QColor(c.r, c.g, c.b));
-        pen.setWidthF(width_px);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
-        p.setPen(pen);
-        // Segment-unit batches via the shared iterator (no mis-indexing -> no phantom lines).
-        core::for_each_line_segment(snap, b, [&](const core::Vec2& a, const core::Vec2& c) {
-            p.drawLine(QLineF(to_dev(a), to_dev(c)));
-        });
+    };
+    draw_lines(false);
+    if (!snap.wipeout_vertices.empty()) {
+        fill_triangles(snap.wipeout_vertices.data(), snap.wipeout_vertices.size(), QColor(Qt::white));
     }
+    draw_lines(true);
 
     // Standalone points: small filled dots.
     for (const core::ColorBatch& b : snap.point_batches) {

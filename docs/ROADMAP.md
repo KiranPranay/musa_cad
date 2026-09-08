@@ -22,8 +22,8 @@ The dimension model is strong (value computed from def points, never baked, one 
 |---|---|---|
 | ~~**Text override**~~ | **Done** (#20) — `<>` expands to the measurement. | ✅ |
 | ~~**Text reposition grip**~~ | **Done** (#21) — text grip on all five types, connector leader, "home text". | ✅ |
-| **DIMBASELINE / DIMCONTINUE** | Chain and stack dimensions off the last one's extension line. | **P1** |
-| **DIMJOGGED / DIMARC / DIMORDINATE** | Jogged radius for large radii; arc-length; ordinate (X/Y datum) dimensions. | **P1** |
+| ~~**DIMBASELINE / DIMCONTINUE**~~ | **Done** (#28) — DBA / DCO chain from the last dimension's extension line. | ✅ |
+| ~~**DIMJOGGED / DIMARC / DIMORDINATE**~~ | **Done** (#28) — DJO / DAR / DOR, native and DXF. | ✅ |
 | **Narrow-dimension fit for radial/angular** | The ISO 129-1 fallback covers linear/aligned only. | **P2** |
 | **Short-leader variant for outside text** | ISO 129-1 permits the value on a short leader. | **P2** |
 
@@ -32,8 +32,8 @@ The dimension model is strong (value computed from def points, never baked, one 
 | Item | AutoCAD behaviour | Priority |
 |---|---|---|
 | ~~**TABLE entity + TABLESTYLE**~~ | **Done** (#22) — merged cells, per-cell alignment, style-driven text heights. Cell editing staged. | ✅ |
-| **Text STYLE table** | Named text styles (font, height, width factor, oblique) that entities reference, like DIMSTYLE. Today a text entity carries a raw font index. | **P1** |
-| **FIELD** | Auto-updating text (date, filename, sheet number, object property). | **P2** |
+| ~~**Text STYLE table**~~ | **Done** (#29) — STYLE / -STYLE, a current style, PR style picker, native + DXF STYLE table. | ✅ |
+| **FIELD** | ~~Date, time, filename, login~~ **Done** (#33), refreshed on regen. Still open: sheet number and object-property fields. | **P2** |
 
 ## C. Missing draw primitives — [#23](https://github.com/MusaCAD/MusaCAD/issues/23), [#33](https://github.com/MusaCAD/MusaCAD/issues/33)
 
@@ -41,20 +41,20 @@ The store already has arenas for splines and points; the *commands* are missing.
 
 | Item | Priority |
 |---|---|
-| **SPLINE**, **ELLIPSE**, **POLYGON**, **POINT**, **XLINE / RAY** commands | **P1** |
-| **DONUT**, **REVCLOUD**, **WIPEOUT** | **P2** |
-| RECTANGLE first-corner options (Chamfer / Fillet / Width) | **P2** |
-| HATCH gradient fills | **P2** |
+| ~~**SPLINE**, **ELLIPSE**, **POLYGON**, **POINT**, **XLINE / RAY** commands~~ | **Done** (#23) ✅ |
+| ~~**DONUT**, **REVCLOUD**, **WIPEOUT**~~ | **Done** (#23, #33) ✅ |
+| ~~RECTANGLE first-corner options (Chamfer / Fillet / Width)~~ | **Done** (#23) ✅ |
+| ~~HATCH gradient fills~~ | **Done** (#33) — two colours along an angle, DXF gradient block both ways. ✅ |
 
 ## D. Missing modify commands — [#24](https://github.com/MusaCAD/MusaCAD/issues/24), [#27](https://github.com/MusaCAD/MusaCAD/issues/27)
 
 | Item | Priority |
 |---|---|
 | ~~**STRETCH**~~ | **Done** (#24) | ✅ |
-| **BREAK**, **LENGTHEN**, **ALIGN** | **P1** |
-| **DIVIDE / MEASURE** (point or block at intervals) | **P2** |
-| **PEDIT** + add/remove polyline vertex via grips | **P1** |
-| TRIM / EXTEND / FILLET on **curve entities** (arc/circle/polyline as the *modified* entity) | **P1** |
+| ~~**BREAK**, **LENGTHEN**, **ALIGN**~~ | **Done** (#27) ✅ |
+| ~~**DIVIDE / MEASURE**~~ | **Done** (#27) — points at intervals; the Block option is still open. ✅ |
+| ~~**PEDIT**~~ | **Done** (#27) — Close/Open, Join, Edit vertex (Insert/Delete/Move), Spline, Decurve, Reverse, Undo. ✅ |
+| ~~TRIM / EXTEND / FILLET on **curve entities**~~ | **Done** (#27) ✅ |
 
 ## E. Block authoring — [#25](https://github.com/MusaCAD/MusaCAD/issues/25)
 
@@ -62,8 +62,8 @@ Blocks can be imported and placed; they cannot be *created* in-app.
 
 | Item | Priority |
 |---|---|
-| **BLOCK / WBLOCK** — define a block from a selection | **P0** |
-| **EXPLODE** — instance → geometry | **P0** |
+| ~~**BLOCK / WBLOCK**~~ — define a block from a selection | **Done** (#25) ✅ |
+| ~~**EXPLODE**~~ — instance → geometry | **Done** (#25) ✅ |
 | **REFEDIT** — edit a definition in place | **P1** |
 | **ATTDEF / ATTRIB** — block attribute text (title blocks!) | **P1** |
 | **XREF** — external references | **P2** |
@@ -79,16 +79,16 @@ Model, decoder seam, persistence and plot are done. Remaining: **viewport displa
 | Item | Priority |
 |---|---|
 | **Layouts / paper space + viewports** — the single biggest structural gap for sheet production | **P0** |
-| **Named views (VIEW)**, **REGEN**, **VPORTS** | **P2** |
+| ~~**Named views (VIEW)**, **REGEN**~~ **Done** (#33); **VPORTS** | **P2** |
 
 ## H. Inquiry and drawing housekeeping — [#30](https://github.com/MusaCAD/MusaCAD/issues/30)
 
 | Item | Priority |
 |---|---|
-| **DIST / AREA / ID / LIST** | **P1** |
-| **PURGE / AUDIT** | **P2** |
-| **UNITS** (drawing units + precision) | **P1** |
-| **GROUP** | **P2** |
+| ~~**DIST / AREA / ID / LIST**~~ | **Done** (#30) ✅ |
+| ~~**PURGE / AUDIT**~~ | **Done** (#30) ✅ |
+| ~~**UNITS** (drawing units + precision)~~ | **Done** (#30) ✅ |
+| ~~**GROUP**~~ | **Done** (#33) — GROUP / UNGROUP / PICKSTYLE. ✅ |
 
 ## I. Interop gaps — [#31](https://github.com/MusaCAD/MusaCAD/issues/31)
 
@@ -96,8 +96,8 @@ Model, decoder seam, persistence and plot are done. Remaining: **viewport displa
 
 | Item | Priority |
 |---|---|
-| DXF **SPLINE** / legacy **POLYLINE** import | **P1** |
-| DXF **TOLERANCE** (GD&T) export/import | **P1** |
+| ~~DXF **SPLINE** import~~ **Done** (#31); legacy **POLYLINE** (VERTEX/SEQEND) import | **P1** |
+| ~~DXF **TOLERANCE** (GD&T) export/import~~ | **Done** (#31) ✅ |
 | DXF **IMAGE / IMAGEDEF** | **P2** |
 | True **SHX** shape-file parsing (today: faithful substitution) | **P2** |
 
@@ -105,9 +105,9 @@ Model, decoder seam, persistence and plot are done. Remaining: **viewport displa
 
 | Item | Priority |
 |---|---|
-| PR **numeric geometry editing** (line/circle/arc/polyline/leader are read-only) | **P1** |
-| OSNAP settings dialog; **apparent intersection / insertion / parallel** snaps | **P2** |
-| Input dialogs for Rotate/Scale + live ghost preview | **P2** |
+| ~~PR **numeric geometry editing**~~ | **Done** (#32) — Start/End, Center/Radius and Position fields edit the entity. ✅ |
+| ~~OSNAP settings dialog; **apparent intersection / insertion / parallel** snaps~~ | **Done** (#32) ✅ |
+| ~~Input dialogs for Rotate/Scale + live ghost preview~~ | **Done** (#32) ✅ |
 
 ---
 

@@ -778,6 +778,7 @@ struct AddHatchCommand {
     Vec2 pattern_origin{};
     std::uint64_t group = 0;
     std::optional<EntityProps> props = {};
+    Rgb color2{}; ///< GRADIENT: the second colour
 };
 
 /// Create a GD&T feature control frame. `cells` are the ordered cell strings (cell 0 is
@@ -852,6 +853,7 @@ struct HatchFromSelectionCommand {
     double pattern_scale = 1.0;
     double pattern_angle = 0.0; ///< radians, CCW
     std::uint64_t group = 0;
+    Rgb color2{}; ///< GRADIENT: the second colour
 };
 
 /// HATCH "Pick internal point" mode: the engine traces the closed boundary enclosing
@@ -861,6 +863,20 @@ struct HatchPickPointCommand {
     std::string pattern_name = "SOLID";
     double pattern_scale = 1.0;
     double pattern_angle = 0.0; ///< radians, CCW
+    std::uint64_t group = 0;
+    Rgb color2{}; ///< GRADIENT: the second colour
+};
+
+/// WIPEOUT [Frames]: show or hide wipeout boundaries (WIPEOUTFRAME).
+struct SetWipeoutFramesCommand {
+    bool on = true;
+};
+/// WIPEOUT [Polyline]: a wipeout from the closed polyline under `pick` (arc segments
+/// tessellated), optionally erasing the polyline.
+struct WipeoutFromPolylineCommand {
+    Vec2 pick{};
+    double pick_radius = 0.0;
+    bool erase = false;
     std::uint64_t group = 0;
 };
 
@@ -978,6 +994,7 @@ using Command =
                  CreateGroupCommand, UngroupCommand, SetPickStyleCommand, SetUnitsCommand,
                  AuditCommand, SetTextStyleCommand, SetCurrentTextStyleCommand, DefineBlockCommand,
                  InsertBlockCommand, WriteBlockCommand, RegenCommand, PeditCommand,
+                 SetWipeoutFramesCommand, WipeoutFromPolylineCommand,
                  DividePathCommand, BreakCommand,
                  AlignSelectionCommand, LengthenCommand, PurgeCommand, StretchPreviewCommand,
                  RevcloudObjectCommand, RevcloudReverseCommand, ExplodeSelectionCommand,

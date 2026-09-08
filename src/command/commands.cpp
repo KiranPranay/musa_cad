@@ -889,11 +889,11 @@ void HatchCommand::start(CommandContext& ctx) {
     // Noun-verb: with closed boundaries already selected, fill them immediately ("Select
     // objects" mode). Otherwise the default is AutoCAD's "Pick internal point".
     if (ctx.has_selection()) {
-        ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.group_id()});
+        ctx.submit(core::HatchFromSelectionCommand{pattern_, scale_, angle_, ctx.group_id(), color2_});
         done_ = true;
         return;
     }
-    ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle]: ");
+    ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle/Gradient]: ");
 }
 
 void HatchCommand::input(CommandContext& ctx, const std::string& text) {
@@ -910,7 +910,7 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
             }
         }
         mode_ = Mode::PickPoint;
-        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle]: ");
+        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle/Gradient]: ");
         return;
     }
     if (mode_ == Mode::Scale) {
@@ -922,7 +922,7 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
         } catch (...) {
         }
         mode_ = Mode::PickPoint;
-        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle]: ");
+        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle/Gradient]: ");
         return;
     }
     if (mode_ == Mode::Angle) {
@@ -931,7 +931,43 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
         } catch (...) {
         }
         mode_ = Mode::PickPoint;
-        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle]: ");
+        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle/Gradient]: ");
+        return;
+    }
+    if (mode_ == Mode::GradientColor) {
+        // The second colour as r,g,b; Enter keeps the current one. The first colour is
+        // the entity colour (ByLayer resolves through the layer), as AutoCAD's
+        // one-colour gradient works.
+        if (!t.empty()) {
+            int r = 0;
+            int g = 0;
+            int b = 0;
+            if (std::sscanf(t.c_str(), "%d,%d,%d", &r, &g, &b) != 3 || r < 0 || g < 0 || b < 0 ||
+                r > 255 || g > 255 || b > 255) {
+                ctx.echo("Enter the colour as r,g,b (0-255 each).");
+                return;
+            }
+            color2_ = core::Rgb{static_cast<std::uint8_t>(r), static_cast<std::uint8_t>(g),
+                                static_cast<std::uint8_t>(b)};
+        }
+        mode_ = Mode::GradientAngle;
+        ctx.set_prompt("Specify gradient angle <" +
+                       std::to_string(std::lround(core::to_degrees(angle_))) + ">: ");
+        return;
+    }
+    if (mode_ == Mode::GradientAngle) {
+        if (!t.empty()) {
+            try {
+                angle_ = core::to_radians(std::stod(t));
+            } catch (...) {
+                ctx.echo("Enter an angle in degrees.");
+                return;
+            }
+        }
+        pattern_ = "GRADIENT";
+        ctx.echo("Pattern: GRADIENT");
+        mode_ = Mode::PickPoint;
+        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle/Gradient]: ");
         return;
     }
 
@@ -943,6 +979,12 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
     if (up == "P" || up == "PATTERN") {
         mode_ = Mode::Pattern;
         ctx.set_prompt("Pattern name (SOLID, ANSI31, ...) <" + pattern_ + ">: ");
+        return;
+    }
+    if (up == "G" || up == "GRADIENT") {
+        mode_ = Mode::GradientColor;
+        ctx.set_prompt("Specify second colour as r,g,b <" + std::to_string(color2_.r) + "," +
+                       std::to_string(color2_.g) + "," + std::to_string(color2_.b) + ">: ");
         return;
     }
     if (up == "S" || up == "SCALE") {
@@ -958,8 +1000,8 @@ void HatchCommand::input(CommandContext& ctx, const std::string& text) {
     if (const auto p = read_point(ctx, text)) {
         // Click inside a closed region -> trace its boundary (+ islands) and hatch it. Each
         // pick is its own undo group; the command stays active for more picks.
-        ctx.submit(core::HatchPickPointCommand{*p, pattern_, scale_, angle_, ctx.new_group()});
-        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle] or Enter to finish: ");
+        ctx.submit(core::HatchPickPointCommand{*p, pattern_, scale_, angle_, ctx.new_group(), color2_});
+        ctx.set_prompt("Pick internal point or [Pattern/Scale/Angle/Gradient] or Enter to finish: ");
     }
 }
 
@@ -2385,6 +2427,196 @@ void OsnapModesCommand::input(CommandContext& ctx, const std::string& text) {
     }
     ctx.echo("Object snap modes: " + snap_list(mask));
     done_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// WIPEOUT / FIELD
+// ---------------------------------------------------------------------------
+void WipeoutCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::First;
+    pts_.clear();
+    ctx.set_prompt("Specify first point or [Frames/Polyline] <Polyline>: ");
+}
+
+void WipeoutCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    ctx.set_preview({});
+    done_ = true;
+}
+
+void WipeoutCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::First:
+        if (u == "F" || u == "FRAMES") {
+            state_ = State::Frames;
+            ctx.set_prompt("Enter mode [ON/OFF] <ON>: ");
+            return;
+        }
+        if (t.empty() || u == "P" || u == "POLYLINE") {
+            state_ = State::PolyPick;
+            ctx.set_prompt("Select a closed polyline: ");
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pts_ = {*p};
+            ctx.set_last_point(*p);
+            state_ = State::Next;
+            ctx.set_preview({PreviewKind::Polyline, pts_});
+            ctx.set_prompt("Specify next point: ");
+        }
+        return;
+    case State::Next:
+        if (t.empty() || u == "C" || u == "CLOSE") {
+            if (pts_.size() < 3) {
+                ctx.echo("A wipeout needs at least three points.");
+                return;
+            }
+            core::AddHatchCommand w;
+            w.loops = {pts_};
+            w.pattern_name = "WIPEOUT";
+            w.group = ctx.group_id();
+            ctx.submit(std::move(w));
+            ctx.set_preview({});
+            ctx.echo("Wipeout created.");
+            done_ = true;
+            return;
+        }
+        if (u == "U" || u == "UNDO") {
+            if (!pts_.empty()) {
+                pts_.pop_back();
+            }
+            if (pts_.empty()) {
+                state_ = State::First;
+                ctx.set_preview({});
+                ctx.set_prompt("Specify first point or [Frames/Polyline] <Polyline>: ");
+            } else {
+                ctx.set_last_point(pts_.back());
+                ctx.set_preview({PreviewKind::Polyline, pts_});
+            }
+            return;
+        }
+        if (const auto p = read_point(ctx, text)) {
+            pts_.push_back(*p);
+            ctx.set_last_point(*p);
+            ctx.set_preview({PreviewKind::Polyline, pts_});
+            ctx.set_prompt(pts_.size() >= 3 ? "Specify next point or [Undo/Close] <Close>: "
+                                            : "Specify next point or [Undo]: ");
+        }
+        return;
+    case State::Frames:
+        if (u == "OFF") {
+            ctx.submit(core::SetWipeoutFramesCommand{false});
+        } else if (t.empty() || u == "ON") {
+            ctx.submit(core::SetWipeoutFramesCommand{true});
+        } else {
+            ctx.echo("Enter ON or OFF.");
+            return;
+        }
+        done_ = true;
+        return;
+    case State::PolyPick:
+        if (const auto p = read_point(ctx, text)) {
+            poly_pick_ = *p;
+            state_ = State::PolyErase;
+            ctx.set_prompt("Erase polyline? [Yes/No] <No>: ");
+        }
+        return;
+    case State::PolyErase: {
+        bool erase = false;
+        if (u == "Y" || u == "YES") {
+            erase = true;
+        } else if (!t.empty() && u != "N" && u != "NO") {
+            ctx.echo("Enter Yes or No.");
+            return;
+        }
+        ctx.submit(core::WipeoutFromPolylineCommand{poly_pick_, ctx.pick_radius(), erase, ctx.group_id()});
+        done_ = true;
+        return;
+    }
+    }
+}
+
+void FieldCommand::start(CommandContext& ctx) {
+    ctx.clear_last_point();
+    state_ = State::Name;
+    ctx.set_prompt("Enter field name [Date/Time/Filename/Login]: ");
+}
+
+void FieldCommand::cancel(CommandContext& ctx) {
+    ctx.echo("*Cancel*");
+    done_ = true;
+}
+
+void FieldCommand::input(CommandContext& ctx, const std::string& text) {
+    const std::string t = trimmed(text);
+    const std::string u = upper(t);
+    switch (state_) {
+    case State::Name:
+        if (u == "D" || u == "DATE") {
+            code_ = "%<Date>%";
+        } else if (u == "T" || u == "TIME") {
+            code_ = "%<Time>%";
+        } else if (u == "F" || u == "FILENAME") {
+            code_ = "%<Filename>%";
+        } else if (u == "L" || u == "LOGIN") {
+            code_ = "%<Login>%";
+        } else {
+            ctx.echo("Enter Date, Time, Filename or Login.");
+            return;
+        }
+        state_ = State::Point;
+        ctx.set_prompt("Specify start point: ");
+        return;
+    case State::Point:
+        if (const auto p = read_point(ctx, text)) {
+            pos_ = *p;
+            ctx.set_last_point(*p);
+            state_ = State::Height;
+            ctx.set_prompt("Specify text height <" + fmt4(height_) + ">: ");
+        }
+        return;
+    case State::Height:
+        if (!t.empty()) {
+            double h = 0.0;
+            try {
+                h = std::stod(t);
+            } catch (...) {
+                h = 0.0;
+            }
+            if (h <= 0.0) {
+                ctx.echo("Enter a height greater than 0.");
+                return;
+            }
+            height_ = h;
+        }
+        state_ = State::Rotation;
+        ctx.set_prompt("Specify rotation angle <0>: ");
+        return;
+    case State::Rotation: {
+        double deg = 0.0;
+        if (!t.empty()) {
+            try {
+                deg = std::stod(t);
+            } catch (...) {
+                ctx.echo("Enter an angle in degrees.");
+                return;
+            }
+        }
+        core::AddTextCommand tc;
+        tc.pos = pos_;
+        tc.height = height_;
+        tc.rotation = core::to_radians(deg);
+        tc.content = code_;
+        tc.group = ctx.group_id();
+        ctx.submit(std::move(tc));
+        ctx.echo("Field placed; it updates on the next regen.");
+        done_ = true;
+        return;
+    }
+    }
 }
 
 // ---------------------------------------------------------------------------

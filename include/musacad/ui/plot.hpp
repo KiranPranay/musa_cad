@@ -60,7 +60,9 @@ struct PlotSpec {
 /// not a fork). Always maps near-white to black so white-on-dark-screen geometry is
 /// visible on white paper (the universal CAD rule). Then: None = as-is; Monochrome =
 /// black; Grayscale = the colour's luminance.
-[[nodiscard]] core::Rgb plot_color(core::Rgb resolved, PlotSpec::Style style);
+[[nodiscard]] /// `computed_color`: the batch colour was computed (a gradient band) and is kept as is,
+/// exempt from the near-white-plots-black screen convention.
+core::Rgb plot_color(core::Rgb resolved, PlotSpec::Style style, bool computed_color = false);
 
 /// THE shared plot renderer: paint `snap`'s geometry onto `device` for the world rectangle
 /// [amin, amax], applying the world->paper transform (scale fit/ratio, centring/offset,

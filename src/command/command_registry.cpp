@@ -156,6 +156,10 @@ CommandRegistry CommandRegistry::make_default() {
         "assets/ribbon/xline.svg", "Draw an infinite construction line.");
     reg({"RAY"}, [] { return std::make_unique<XlineCommand>(true); },
         "assets/ribbon/ray.svg", "Draw a semi-infinite construction line.");
+    reg({"WIPEOUT"}, [] { return std::make_unique<WipeoutCommand>(); }, "",
+        "Mask what lies beneath a polygon (text still shows through); [Frames] and [Polyline].");
+    reg({"FIELD"}, [] { return std::make_unique<FieldCommand>(); }, "",
+        "Place text showing the date, time, file name or login, refreshed on regen.");
     reg({"OS", "OSNAP", "DDOSNAP"}, [] { return std::make_unique<OsnapCommand>(); }, "",
         "Open the running object snap settings.");
     reg({"-OSNAP"}, [] { return std::make_unique<OsnapModesCommand>(); }, "",

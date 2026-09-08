@@ -1135,6 +1135,12 @@ void dump_widget(QObject* obj, int depth) {
 }
 } // namespace
 
+void MainWindow::request_viewport_capture(const std::string& png_path) {
+    if (viewport_ != nullptr) {
+        viewport_->request_frame_capture(png_path);
+    }
+}
+
 void MainWindow::dump_ui() {
     std::printf("===== Ribbon (menu widget) =====\n");
     if (QWidget* mw = menuWidget()) {

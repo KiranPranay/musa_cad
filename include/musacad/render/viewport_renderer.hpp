@@ -110,6 +110,7 @@ private:
     std::unique_ptr<GpuBuffer> line_instances_;
     std::unique_ptr<GpuBuffer> point_instances_;
     std::unique_ptr<GpuBuffer> fill_buffer_;
+    std::unique_ptr<GpuBuffer> wipeout_buffer_; ///< WIPEOUT mask triangles (background colour)
     std::unique_ptr<GpuBuffer> grid_minor_;
     std::unique_ptr<GpuBuffer> grid_major_;
     std::unique_ptr<GpuBuffer> overlay_buffer_;
@@ -135,6 +136,7 @@ private:
     std::size_t line_count_ = 0;  ///< scene line instances currently on GPU
     std::size_t point_count_ = 0; ///< scene point instances currently on GPU
     std::size_t fill_count_ = 0;  ///< scene fill vertices currently on GPU
+    std::size_t wipeout_count_ = 0; ///< WIPEOUT mask vertices currently on GPU
     // Per-colour(+weight) batches over the uploaded scene buffers (cached at upload
     // time; one small draw per batch resolves per-entity colour/lineweight).
     std::vector<core::ColorBatch> line_batches_;

@@ -740,16 +740,26 @@ std::string serialize_dxf(const Document& doc) {
     // HATCH: AutoCAD-standard codes. Each boundary loop is emitted as a polyline path
     // (code 92 bit 2 = polyline); the outer (loop 0) also sets the external bit (1).
     for (const DocHatch& h : doc.hatches) {
+        const bool wipeout = h.pattern_name == "WIPEOUT";
+        const bool gradient = h.pattern_name == "GRADIENT";
         code(s, 0, "HATCH");
-        emit_props(s, doc, h.props);
+        if (wipeout) {
+            // A wipeout has no hatch form: written as a solid in colour 7, which every
+            // AutoCAD background renders in its own contrast (white on black, black on
+            // white) -- the closest a plain HATCH gets to a mask.
+            code(s, 8, h.props.layer < doc.layers.size() ? doc.layers[h.props.layer].name : std::string("0"));
+            code_i(s, 62, 7);
+        } else {
+            emit_props(s, doc, h.props);
+        }
         code_d(s, 10, 0.0); // elevation point + normal (planar at z=0)
         code_d(s, 20, 0.0);
         code_d(s, 30, 0.0);
         code_d(s, 210, 0.0);
         code_d(s, 220, 0.0);
         code_d(s, 230, 1.0);
-        code(s, 2, h.pattern_name);
-        code_i(s, 70, h.pattern_name == "SOLID" ? 1 : 0); // solid-fill flag
+        code(s, 2, (wipeout || gradient) ? std::string("SOLID") : h.pattern_name);
+        code_i(s, 70, (h.pattern_name == "SOLID" || wipeout || gradient) ? 1 : 0); // solid-fill flag
         code_i(s, 71, 0);                                  // non-associative
         code_i(s, 91, static_cast<long>(h.loops.size()));  // boundary path count
         for (std::size_t i = 0; i < h.loops.size(); ++i) {
@@ -770,6 +780,28 @@ std::string serialize_dxf(const Document& doc) {
         code_i(s, 98, 1);  // one seed point = the pattern origin
         code_d(s, 10, h.pattern_origin.x);
         code_d(s, 20, h.pattern_origin.y);
+        if (gradient) {
+            // AutoCAD's gradient block: two colour stops (the entity colour and the second
+            // colour) along pattern_angle, linear.
+            const Rgb c1 = h.props.color_by_layer()
+                               ? (h.props.layer < doc.layers.size() ? doc.layers[h.props.layer].color
+                                                                     : Rgb{255, 255, 255})
+                               : h.props.color;
+            code_i(s, 450, 1);
+            code_i(s, 451, 0);
+            code_d(s, 460, h.pattern_angle);
+            code_d(s, 461, 0.0);
+            code_i(s, 452, 0);
+            code_d(s, 462, 1.0);
+            code_i(s, 453, 2);
+            code_d(s, 463, 0.0);
+            code_i(s, 63, 5);
+            code_i(s, 421, true_color(c1));
+            code_d(s, 463, 1.0);
+            code_i(s, 63, 2);
+            code_i(s, 421, true_color(h.color2));
+            code(s, 470, "LINEAR");
+        }
     }
     // Model-space block references.
     const auto emit_insert = [&](const DocInsert& in) {
@@ -1446,6 +1478,20 @@ IoResult parse_dxf(const std::string& text, Document& out) {
                         h.pattern_origin = p; // seed / origin (last one wins)
                     }
                 }
+            }
+            if (const std::string* g = find(body, 450); g != nullptr && to_l(*g) == 1) {
+                // A gradient fill: the second 421 stop is the second colour, 460 the angle.
+                int stops = 0;
+                for (const Pair& gp : body) {
+                    if (gp.code == 421) {
+                        ++stops;
+                        if (stops == 2) {
+                            h.color2 = from_true_color(to_l(gp.value));
+                        }
+                    }
+                }
+                h.pattern_name = "GRADIENT";
+                h.pattern_angle = getd(body, 460, 0.0);
             }
             sink.hatches->push_back(std::move(h));
             return;

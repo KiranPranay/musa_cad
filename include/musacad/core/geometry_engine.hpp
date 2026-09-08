@@ -19,6 +19,7 @@
 #include "musacad/core/native_kernel_2d.hpp"
 #include "musacad/core/render_snapshot.hpp"
 #include "musacad/core/spatial_grid.hpp"
+#include "musacad/core/text/text_codes.hpp"
 #include "musacad/core/threading/mpsc_queue.hpp"
 #include "musacad/core/threading/triple_buffer.hpp"
 
@@ -237,11 +238,11 @@ private:
     void apply_join_selection(double radius, std::uint64_t group);
     /// HATCH "Select objects" mode: build a hatch from the selected closed polylines.
     void apply_hatch_from_selection(const std::string& pattern, double scale, double angle,
-                                    std::uint64_t group);
+                                    std::uint64_t group, Rgb color2 = {});
     /// HATCH "Pick internal point" mode: trace the boundary enclosing `p` (+ islands) from
     /// the surrounding geometry and create the hatch. Shared boundary builder below.
     void apply_hatch_pick_point(Vec2 p, const std::string& pattern, double scale, double angle,
-                                std::uint64_t group);
+                                std::uint64_t group, Rgb color2 = {});
     /// Shared JOIN core: merge every connected sub-chain among `ents` (lines/arcs/open
     /// polylines sharing endpoints within `radius`) into polyline(s), one undo group.
     void join_entities(const std::vector<EntityHandle>& ents, double radius, std::uint64_t group);
@@ -263,6 +264,7 @@ private:
     void apply_define_block(const DefineBlockCommand& c);
     void apply_write_block(const WriteBlockCommand& c);
     void apply_pedit(const PeditCommand& c);
+    [[nodiscard]] text::FieldContext field_context_now() const;
     [[nodiscard]] std::string fmt_len(double v) const;
     [[nodiscard]] std::string fmt_ang(double radians) const;
     void apply_revcloud_object(const RevcloudObjectCommand& c);
